@@ -229,37 +229,52 @@ pub fn print_block_statistics(traces: &[Block]) {
     let continuous_reqs = traces.iter().filter(|t| t.continuous).count();
     println!("연속적 요청 비율: {:.1}%", (continuous_reqs as f64 / traces.len() as f64) * 100.0);
     
-    // I/O 타입별 통계
-    let reads = traces.iter().filter(|t| t.io_type.starts_with('R')).count();
-    let writes = traces.iter().filter(|t| t.io_type.starts_with('W')).count();
-    println!("읽기 요청: {} ({:.1}%)", reads, (reads as f64 / traces.len() as f64) * 100.0);
-    println!("쓰기 요청: {} ({:.1}%)", writes, (writes as f64 / traces.len() as f64) * 100.0);
+    // I/O 타입 첫 글자 기준으로 그룹화하여 통계
+    // 첫 글자별 요청 수 계산
+    let mut io_type_groups: HashMap<String, usize> = HashMap::new();
+    for trace in traces {
+        if let Some(first_char) = trace.io_type.chars().next() {
+            let group = first_char.to_string();
+            *io_type_groups.entry(group).or_insert(0) += 1;
+        }
+    }
 
-    // 지연 시간 통계 추가 (Block I/O 타입별)
+    // 각 그룹별 비율 출력
+    for (group, count) in io_type_groups.iter() {
+        println!("{} 요청: {} ({:.1}%)", group, count, (*count as f64 / traces.len() as f64) * 100.0);
+    }
+
+    // 지연 시간 통계 추가 (Block I/O 타입 첫 글자 기준 그룹별)
     println!("\n[Block I/O 지연 시간 통계]");
     
-    // dtoc, ctoc는 block_rq_complete 이벤트에서 측정
+    // dtoc, ctoc는 block_rq_complete 이벤트에서 측정 (첫 글자 기준 그룹화)
     let mut complete_iotype_groups: HashMap<String, Vec<&Block>> = HashMap::new();
     for trace in traces.iter().filter(|t| t.action == "block_rq_complete") {
-        complete_iotype_groups.entry(trace.io_type.clone())
-            .or_insert_with(Vec::new)
-            .push(trace);
+        if let Some(first_char) = trace.io_type.chars().next() {
+            let group = first_char.to_string();
+            complete_iotype_groups.entry(group)
+                .or_insert_with(Vec::new)
+                .push(trace);
+        }
     }
 
-    // ctod는 block_rq_issue 이벤트에서 측정
+    // ctod는 block_rq_issue 이벤트에서 측정 (첫 글자 기준 그룹화)
     let mut issue_iotype_groups: HashMap<String, Vec<&Block>> = HashMap::new();
     for trace in traces.iter().filter(|t| t.action == "block_rq_issue") {
-        issue_iotype_groups.entry(trace.io_type.clone())
-            .or_insert_with(Vec::new)
-            .push(trace);
+        if let Some(first_char) = trace.io_type.chars().next() {
+            let group = first_char.to_string();
+            issue_iotype_groups.entry(group)
+                .or_insert_with(Vec::new)
+                .push(trace);
+        }
     }
 
-    // 각 지연 시간 유형별로 통계 테이블 출력
+    // 각 지연 시간 유형별로 통계 테이블 출력 (첫 글자 기준 그룹화)
     print_latency_stats_by_iotype(&complete_iotype_groups, "Device to Complete (dtoc)", |trace| trace.dtoc);
     print_latency_stats_by_iotype(&issue_iotype_groups, "Complete to Device (ctod)", |trace| trace.ctod);
     print_latency_stats_by_iotype(&complete_iotype_groups, "Complete to Complete (ctoc)", |trace| trace.ctoc);
     
-    // 지연 시간 범위별 분포 통계
+    // 지연 시간 범위별 분포 통계 (첫 글자 기준 그룹화)
     println!("\n[Block I/O Device to Complete (dtoc) 범위별 분포]");
     print_latency_ranges_by_iotype(&complete_iotype_groups, "Device to Complete (dtoc)", |trace| trace.dtoc);
     
@@ -269,9 +284,9 @@ pub fn print_block_statistics(traces: &[Block]) {
     println!("\n[Block I/O Complete to Complete (ctoc) 범위별 분포]");
     print_latency_ranges_by_iotype(&complete_iotype_groups, "Complete to Complete (ctoc)", |trace| trace.ctoc);
     
-    // 사이즈 분포 통계
+    // 사이즈 분포 통계 (첫 글자 기준 그룹화)
     println!("\n[Block I/O 요청 크기 분포]");
-    // I/O 타입별로 사이즈 집계 (complete_iotype_groups 사용)
+    // I/O 타입 첫 글자별로 사이즈 집계
     for (io_type, traces) in complete_iotype_groups.iter() {
         let size_counts = count_sizes(traces, |trace| trace.size);
         println!("\nI/O 타입 {} 크기 분포:", io_type);
