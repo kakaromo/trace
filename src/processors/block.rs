@@ -2,38 +2,38 @@ use std::collections::{HashMap, HashSet};
 use crate::models::Block;
 use crate::utils::constants::MILLISECONDS;
 
-// Block 레이턴시 후처리 함수
+// Block latency post-processing function
 pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
-    // 이벤트가 없으면 빈 벡터 반환
+    // Return an empty vector if there are no events
     if block_list.is_empty() {
         return block_list;
     }
     
-    // 시작 시간 기록
+    // Record start time
     let start_time = std::time::Instant::now();
-    println!("Block 지연 시간 처리 시작 (이벤트 수: {})", block_list.len());
+    println!("Starting Block latency processing (events: {})", block_list.len());
     
-    // 1. 시간순 정렬
-    println!("  Block 데이터 시간순 정렬 중...");
+    // 1. Sort by timestamp
+    println!("  Sorting Block data by timestamp...");
     let mut sorted_blocks = block_list;
     sorted_blocks.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
 
-    // 2. 중복 block_rq_issue 제거 (사전 작업)
-    println!("  중복 이벤트 필터링 중...");
-    // 키를 (sector, io_type, size)로 확장하여 동일 크기의 요청만 중복으로 처리
+    // 2. Remove duplicate block_rq_issue (pre-processing)
+    println!("  Filtering duplicate events...");
+    // Extend the key to (sector, io_type, size) to process only requests of the same size as duplicates
     let mut processed_issues = HashSet::with_capacity(sorted_blocks.len() / 5);
     let mut deduplicated_blocks = Vec::with_capacity(sorted_blocks.len());
 
-    // 프로그레스 카운터 - 중복 제거 단계
+    // Progress counter - duplicate removal stage
     let total_blocks = sorted_blocks.len();
-    let report_interval = (total_blocks / 10).max(1); // 10% 간격으로 진행 상황 보고
+    let report_interval = (total_blocks / 10).max(1); // Report progress at 10% intervals
     let mut last_reported = 0;
     
     for (idx, block) in sorted_blocks.into_iter().enumerate() {
-        // 진행 상황 보고 (10% 간격)
+        // Report progress (10% intervals)
         if idx >= last_reported + report_interval {
             let progress = (idx * 100) / total_blocks;
-            println!("  중복 제거 진행률: {}% ({}/{})", progress, idx, total_blocks);
+            println!("  Duplicate removal progress: {}% ({}/{})", progress, idx, total_blocks);
             last_reported = idx;
         }
         
@@ -48,7 +48,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                 "other"
             };
 
-            // 키를 (sector, io_operation, size)로 확장
+            // Extend the key to (sector, io_operation, size)
             let key = (block.sector, io_operation.to_string(), block.size);
 
             if processed_issues.contains(&key) {
@@ -57,7 +57,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
 
             processed_issues.insert(key);
         } else if block.action == "block_rq_complete" {
-            // complete일 경우 중복 체크 목록에서 제거
+            // Remove from duplicate check list for complete
             let io_operation = if block.io_type.starts_with('R') {
                 "read"
             } else if block.io_type.starts_with('W') {
@@ -68,7 +68,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                 "other"
             };
 
-            // write 이고 size가 0인 경우에 Flush 표시가 2번 발생 (중복 제거) FF->WS 이런식으로 들어올 수 있음
+            // If write and size is 0, Flush is marked twice (remove duplicates) FF->WS can occur
             if block.io_type.starts_with('W') && block.size == 0 {
                 continue;
             }
@@ -80,15 +80,15 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
         deduplicated_blocks.push(block);
     }
 
-    println!("  중복 제거 후 이벤트 수: {}", deduplicated_blocks.len());
+    println!("  Number of events after duplicate removal: {}", deduplicated_blocks.len());
     
-    // 메모리 최적화를 위한 용량 조절
+    // Adjust capacity for memory optimization
     processed_issues.clear();
     processed_issues.shrink_to_fit();
     
-    // 3. 중복이 제거된 데이터에 대해 후처리 진행
-    // (연속성, 지연 시간 등 처리)
-    println!("  Block 지연 시간 및 연속성 계산 중...");
+    // 3. Post-process the deduplicated data
+    // (Continuity, latency, etc.)
+    println!("  Calculating Block latency and continuity...");
     let mut filtered_blocks = Vec::with_capacity(deduplicated_blocks.len());
     let mut req_times: HashMap<(u64, String), f64> = HashMap::with_capacity(deduplicated_blocks.len() / 5);
     let mut current_qd: u32 = 0;
@@ -99,20 +99,20 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     let mut first_c: bool = false;
     let mut first_complete_time: f64 = 0.0;
 
-    // 프로그레스 카운터 - 지연 시간 계산 단계
+    // Progress counter - latency calculation stage
     let total_dedup = deduplicated_blocks.len();
     let report_interval_2 = (total_dedup / 10).max(1); 
     let mut last_reported_2 = 0;
     
     for (idx, mut block) in deduplicated_blocks.into_iter().enumerate() {
-        // 진행 상황 보고 (10% 간격)
+        // Report progress (10% intervals)
         if idx >= last_reported_2 + report_interval_2 {
             let progress = (idx * 100) / total_dedup;
-            println!("  지연 시간 계산 진행률: {}% ({}/{})", progress, idx, total_dedup);
+            println!("  Latency calculation progress: {}% ({}/{})", progress, idx, total_dedup);
             last_reported_2 = idx;
         }
         
-        // 기본적으로 continuous를 false로 설정
+        // Set continuous to false by default
         block.continuous = false;
 
         let io_operation = if block.io_type.starts_with('R') {
@@ -129,7 +129,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
 
         match block.action.as_str() {
             "block_rq_issue" => {
-                // 연속성 체크
+                // Check continuity
                 if io_operation != "other" {
                     if let (Some(end_sector), Some(prev_type)) =
                         (prev_end_sector, prev_io_type.as_ref())
@@ -139,16 +139,16 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                         }
                     }
 
-                    // 현재 요청의 끝 sector 및 io_type 업데이트
+                    // Update the end sector and io_type of the current request
                     prev_end_sector = Some(block.sector + block.size as u64);
                     prev_io_type = Some(io_operation.to_string());
                 }
 
-                // 요청 시간 기록 및 QD 업데이트
+                // Record request time and update QD
                 req_times.insert(key, block.time);
                 current_qd += 1;
 
-                // ctod는 block_rq_issue(Device)에서 계산 - 마지막 complete에서 현재 device까지
+                // ctod is calculated in block_rq_issue(Device) - from the last complete to the current device
                 if let Some(t) = last_complete_qd0_time {
                     block.ctod = (block.time - t) * MILLISECONDS as f64;
                 }
@@ -159,7 +159,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                 }
             }
             "block_rq_complete" => {
-                // complete는 항상 continuous = false
+                // complete is always continuous = false
                 if let Some(first_issue_time) = req_times.remove(&key) {
                     block.dtoc = (block.time - first_issue_time) * MILLISECONDS as f64;
                 }
@@ -189,11 +189,11 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
         filtered_blocks.push(block);
     }
 
-    // 메모리 최적화를 위해 벡터 크기 조정
+    // Adjust vector size for memory optimization
     filtered_blocks.shrink_to_fit();
     
     let elapsed = start_time.elapsed();
-    println!("Block 지연 시간 처리 완료: {:.2}초", elapsed.as_secs_f64());
+    println!("Block latency processing completed: {:.2} seconds", elapsed.as_secs_f64());
     
     filtered_blocks
 }

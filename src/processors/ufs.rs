@@ -8,45 +8,45 @@ use std::time::Instant;
 pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let start_time = Instant::now();
     let ufs_count = ufs_list.len();
-    println!("UFS 후처리 시작: {} 이벤트", ufs_count);
+    println!("Starting UFS post-processing: {} events", ufs_count);
 
-    // time 기준으로 오름차순 정렬 (병렬 정렬 사용)
+    // Sort by time in ascending order (using parallel sort)
     ufs_list.par_sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
-    println!("UFS 정렬 완료: {:.2}초", start_time.elapsed().as_secs_f64());
+    println!("UFS sorting complete: {:.2}s", start_time.elapsed().as_secs_f64());
 
-    // 파일 크기에 따라 처리 방식 결정
+    // Determine processing method based on file size
     if ufs_count > 1_000_000 {
-        // 대용량 처리: 청크 분할 후 병렬 처리 후 통합
+        // Large-scale processing: Split into chunks, process in parallel, then merge
         chunk_based_processing(ufs_list)
     } else {
-        // 소량 처리: 기존 방식
+        // Small-scale processing: Use existing sequential method
         sequential_processing(ufs_list)
     }
 }
 
-// 대용량 데이터를 위한 청크 기반 병렬 처리
+// Chunk-based parallel processing for large datasets
 fn chunk_based_processing(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let start_time = Instant::now();
     let ufs_count = ufs_list.len();
     
-    // 데이터를 그룹화하여 병렬 처리 가능하게 함
-    // Tag별로 그룹화하여 독립적으로 처리
+    // Group data for parallel processing
+    // Group by tag for independent processing
     let mut tag_groups: HashMap<u32, Vec<usize>> = HashMap::new();
     
-    // 첫 번째 단계: 인덱스와 태그 정보 수집
+    // First step: Collect index and tag information
     for (idx, ufs) in ufs_list.iter().enumerate() {
         tag_groups.entry(ufs.tag).or_default().push(idx);
     }
     
-    println!("UFS 태그 그룹화 완료: {} 그룹, {:.2}초", 
+    println!("UFS tag grouping complete: {} groups, {:.2}s", 
              tag_groups.len(), start_time.elapsed().as_secs_f64());
 
-    // 두 번째 단계: 태그 그룹별로 병렬 처리
+    // Second step: Process each tag group in parallel
     let processed_indices = Arc::new(Mutex::new(HashMap::new()));
     
     tag_groups.par_iter().for_each(|(_tag, indices)| {
         if indices.len() < 2 {
-            return; // 단일 이벤트는 처리할 필요 없음
+            return; // No need to process single events
         }
         
         let mut req_times: HashMap<(u32, String), f64> = HashMap::new();
@@ -57,30 +57,30 @@ fn chunk_based_processing(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
         let mut first_c: bool = false;
         let mut first_complete_time: f64 = 0.0;
         
-        // 각 태그 그룹의 모든 이벤트 처리
+        // Process all events in each tag group
         let mut tag_results = HashMap::new();
         
         for &idx in indices {
             let ufs = &ufs_list[idx];
-            let mut result_ufs = ufs.clone(); // 수정할 복사본 생성
+            let mut result_ufs = ufs.clone(); // Create a copy to modify
             
             match ufs.action.as_str() {
                 "send_req" => {
-                    // 연속성 체크: 이전 send_req가 있는 경우
+                    // Check continuity: if previous send_req exists
                     if let Some((prev_lba, prev_size, prev_opcode)) = &prev_send_req {
                         let prev_end_addr = prev_lba + *prev_size as u64;
-                        // 현재 요청의 시작 주소가 이전 요청의 끝 주소와 같고, opcode가 같은 경우
+                        // Current request's start address equals previous request's end address and opcode is the same
                         result_ufs.continuous = ufs.lba == prev_end_addr && &ufs.opcode == prev_opcode;
                     } else {
                         result_ufs.continuous = false;
                     }
 
-                    // 현재 send_req 정보 저장
+                    // Store current send_req information
                     prev_send_req = Some((ufs.lba, ufs.size, ufs.opcode.clone()));
                     req_times.insert((ufs.tag, ufs.opcode.clone()), ufs.time);
                     current_qd += 1;
                     
-                    // ctod는 send_req(Device)에서 계산 - 마지막 complete에서 현재 device까지
+                    // ctod is calculated at send_req(Device) - from last complete to current device
                     if let Some(t) = last_complete_qd0_time {
                         result_ufs.ctod = (ufs.time - t) * MILLISECONDS as f64;
                     }
@@ -91,7 +91,7 @@ fn chunk_based_processing(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
                     }
                 }
                 "complete_rsp" => {
-                    // complete_rsp는 continuous 체크하지 않음
+                    // complete_rsp doesn't check continuity
                     result_ufs.continuous = false;
 
                     current_qd = current_qd.saturating_sub(1);
@@ -124,26 +124,26 @@ fn chunk_based_processing(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
             tag_results.insert(idx, result_ufs);
         }
         
-        // 처리 결과 저장
+        // Store processing results
         let mut processed = processed_indices.lock().unwrap();
         for (idx, result) in tag_results {
             processed.insert(idx, result);
         }
     });
     
-    // 세 번째 단계: 처리된 결과를 원본 벡터에 적용
+    // Third step: Apply processed results to the original vector
     let processed = processed_indices.lock().unwrap();
     for (idx, result) in processed.iter() {
         ufs_list[*idx] = result.clone();
     }
     
-    println!("UFS 병렬 처리 완료: {} 이벤트, {:.2}초", 
+    println!("UFS parallel processing complete: {} events, {:.2}s", 
              ufs_count, start_time.elapsed().as_secs_f64());
     
     ufs_list
 }
 
-// 기존 순차 처리 방식
+// Traditional sequential processing method
 fn sequential_processing(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let start_time = Instant::now();
     
@@ -154,27 +154,27 @@ fn sequential_processing(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let mut first_c: bool = false;
     let mut first_complete_time: f64 = 0.0;
 
-    // 이전 send_req의 정보를 저장할 변수들
+    // Variables to store previous send_req information
     let mut prev_send_req: Option<(u64, u32, String)> = None; // (lba, size, opcode)
 
     for ufs in ufs_list.iter_mut() {
         match ufs.action.as_str() {
             "send_req" => {
-                // 연속성 체크: 이전 send_req가 있는 경우
+                // Check continuity: if previous send_req exists
                 if let Some((prev_lba, prev_size, prev_opcode)) = prev_send_req {
                     let prev_end_addr = prev_lba + prev_size as u64;
-                    // 현재 요청의 시작 주소가 이전 요청의 끝 주소와 같고, opcode가 같은 경우
+                    // Current request's start address equals previous request's end address and opcode is the same
                     ufs.continuous = ufs.lba == prev_end_addr && ufs.opcode == prev_opcode;
                 } else {
                     ufs.continuous = false;
                 }
 
-                // 현재 send_req 정보 저장
+                // Store current send_req information
                 prev_send_req = Some((ufs.lba, ufs.size, ufs.opcode.clone()));
                 req_times.insert((ufs.tag, ufs.opcode.clone()), ufs.time);
                 current_qd += 1;
                 
-                // ctod는 send_req(Device)에서 계산 - 마지막 complete에서 현재 device까지
+                // ctod is calculated at send_req(Device) - from last complete to current device
                 if let Some(t) = last_complete_qd0_time {
                     ufs.ctod = (ufs.time - t) * MILLISECONDS as f64;
                 }
@@ -185,7 +185,7 @@ fn sequential_processing(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
                 }
             }
             "complete_rsp" => {
-                // complete_rsp는 continuous 체크하지 않음
+                // complete_rsp doesn't check continuity
                 ufs.continuous = false;
 
                 current_qd = current_qd.saturating_sub(1);
@@ -216,7 +216,7 @@ fn sequential_processing(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
         ufs.qd = current_qd;
     }
     
-    println!("UFS 순차 처리 완료: {:.2}초", start_time.elapsed().as_secs_f64());
+    println!("UFS sequential processing complete: {:.2}s", start_time.elapsed().as_secs_f64());
     
     ufs_list
 }

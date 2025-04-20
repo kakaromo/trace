@@ -8,4 +8,4 @@ pub mod utils;
 pub use models::{Block, UFS};
 pub use parsers::log::parse_log_file;
 pub use processors::{block_bottom_half_latency_process, ufs_bottom_half_latency_process};
-pub use output::{save_to_parquet, print_ufs_statistics, print_block_statistics};
+pub use output::{save_to_parquet, print_ufs_statistics, print_block_statistics, generate_charts};

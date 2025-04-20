@@ -1,64 +1,141 @@
 use std::env;
 use std::io;
+use std::io::{Write, BufRead};
 use std::time::Instant;
 use trace::*;
 
 fn main() -> io::Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 3 {
-        eprintln!("Usage: {} <log_file> <output_prefix>", args[0]);
-        std::process::exit(1);
+    let mut continue_loop = true;
+
+    while continue_loop {
+        // Get command line arguments or prompt for them if not provided
+        let args: Vec<String> = if env::args().len() > 1 {
+            env::args().collect()
+        } else {
+            let mut input_args = vec![String::from("trace")]; // Program name
+            
+            print!("로그 파일 경로를 입력해주세요: ");
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().lock().read_line(&mut input)?;
+            input_args.push(input.trim().to_string());
+            
+            print!("출력 파일 접두사를 입력해주세요: ");
+            io::stdout().flush()?;
+            input = String::new();
+            io::stdin().lock().read_line(&mut input)?;
+            input_args.push(input.trim().to_string());
+            
+            input_args
+        };
+
+        if args.len() != 3 {
+            eprintln!("Usage: {} <log_file> <output_prefix>", args[0]);
+            if ask_continue()? {
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        let total_start_time = Instant::now();
+        println!("===== Starting Large Log File Processing =====");
+
+        // Parse log file
+        println!("\n[1/5] Parsing log file...");
+        let parse_start = Instant::now();
+        let (ufs_traces, block_traces) = match parse_log_file(&args[1]) {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("파일 파싱 오류: {}", e);
+                if ask_continue()? {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+        };
+        println!("Log parsing complete: UFS={}, Block={}, Time taken: {:.2}s", 
+                ufs_traces.len(), block_traces.len(), parse_start.elapsed().as_secs_f64());
+
+        // Post-processing (parallel processing)
+        println!("\n[2/5] Post-processing data...");
+        let process_start = Instant::now();
+        
+        println!("Post-processing UFS data...");
+        let processed_ufs = ufs_bottom_half_latency_process(ufs_traces);
+        
+        println!("Post-processing Block I/O data...");
+        let processed_blocks = block_bottom_half_latency_process(block_traces);
+        
+        println!("Post-processing complete: Time taken: {:.2}s", process_start.elapsed().as_secs_f64());
+
+        // Output analysis results
+        println!("\n[3/5] Calculating analysis results...");
+        let analysis_start = Instant::now();
+        
+        println!("\n=== UFS Analysis Results ===");
+        print_ufs_statistics(&processed_ufs);
+
+        println!("\n=== Block I/O Analysis Results ===");
+        print_block_statistics(&processed_blocks);
+        
+        println!("\nAnalysis complete: Time taken: {:.2}s", analysis_start.elapsed().as_secs_f64());
+
+        // Save to Parquet files
+        println!("\n[4/5] Saving to Parquet files...");
+        let save_start = Instant::now();
+        
+        match save_to_parquet(&processed_ufs, &processed_blocks, &args[2]) {
+            Ok(()) => println!(
+                "Parquet files saved successfully (Time taken: {:.2}s):\n{}_ufs.parquet\n{}_block.parquet", 
+                save_start.elapsed().as_secs_f64(), args[2], args[2]
+            ),
+            Err(e) => eprintln!("Error while saving Parquet files: {}", e),
+        }
+        
+        // Generate Plotly charts
+        println!("\n[5/5] Generating Plotly charts...");
+        let charts_start = Instant::now();
+        
+        match generate_charts(&processed_ufs, &processed_blocks, &args[2]) {
+            Ok(()) => println!(
+                "Plotly charts generated successfully (Time taken: {:.2}s)", 
+                charts_start.elapsed().as_secs_f64()
+            ),
+            Err(e) => eprintln!("Error while generating Plotly charts: {}", e),
+        }
+
+        println!("\n===== All Processing Complete! =====");
+        println!("Total time taken: {:.2}s", total_start_time.elapsed().as_secs_f64());
+        println!("Processed UFS events: {}, Block I/O events: {}", processed_ufs.len(), processed_blocks.len());
+        println!("Generated files:");
+        println!("- Parquet files: {}_ufs.parquet, {}_block.parquet", args[2], args[2]);
+        println!("- UFS Plotly charts: {}_ufs_*.html", args[2]);
+        println!("- Block I/O Plotly charts: {}_block_*.html", args[2]);
+        println!("- UFS graphs: {}_ufs_*.png", args[2]);
+        println!("- Block I/O graphs: {}_block_*.png", args[2]);
+
+        // Ask if user wants to continue with another analysis
+        continue_loop = ask_continue()?;
     }
-
-    let total_start_time = Instant::now();
-    println!("===== 대용량 로그 파일 처리 시작 =====");
-
-    // 로그 파일 파싱
-    println!("\n[1/4] 로그 파일 파싱 중...");
-    let parse_start = Instant::now();
-    let (ufs_traces, block_traces) = parse_log_file(&args[1])?;
-    println!("로그 파싱 완료: UFS={}, Block={}, 소요 시간: {:.2}초", 
-             ufs_traces.len(), block_traces.len(), parse_start.elapsed().as_secs_f64());
-
-    // 후처리 수행 (병렬 처리)
-    println!("\n[2/4] 데이터 후처리 중...");
-    let process_start = Instant::now();
-    
-    println!("UFS 데이터 후처리 중...");
-    let processed_ufs = ufs_bottom_half_latency_process(ufs_traces);
-    
-    println!("Block I/O 데이터 후처리 중...");
-    let processed_blocks = block_bottom_half_latency_process(block_traces);
-    
-    println!("후처리 완료: 소요 시간: {:.2}초", process_start.elapsed().as_secs_f64());
-
-    // 분석 결과 출력
-    println!("\n[3/4] 분석 결과 계산 중...");
-    let analysis_start = Instant::now();
-    
-    println!("\n=== UFS 분석 결과 ===");
-    print_ufs_statistics(&processed_ufs);
-
-    println!("\n=== Block I/O 분석 결과 ===");
-    print_block_statistics(&processed_blocks);
-    
-    println!("\n분석 완료: 소요 시간: {:.2}초", analysis_start.elapsed().as_secs_f64());
-
-    // Parquet 파일로 저장
-    println!("\n[4/4] Parquet 파일 저장 중...");
-    let save_start = Instant::now();
-    
-    match save_to_parquet(&processed_ufs, &processed_blocks, &args[2]) {
-        Ok(()) => println!(
-            "Parquet 파일 저장 완료 (소요 시간: {:.2}초):\n{}_ufs.parquet\n{}_block.parquet", 
-            save_start.elapsed().as_secs_f64(), args[2], args[2]
-        ),
-        Err(e) => eprintln!("Parquet 파일 저장 중 오류 발생: {}", e),
-    }
-
-    println!("\n===== 모든 처리 완료! =====");
-    println!("총 소요 시간: {:.2}초", total_start_time.elapsed().as_secs_f64());
-    println!("처리된 UFS 이벤트: {}, Block I/O 이벤트: {}", processed_ufs.len(), processed_blocks.len());
 
     Ok(())
+}
+
+/// 사용자에게 계속 진행할지 묻는 함수
+fn ask_continue() -> io::Result<bool> {
+    loop {
+        print!("계속 반복하시겠습니까? (Y/N): ");
+        io::stdout().flush()?;
+        
+        let mut input = String::new();
+        io::stdin().lock().read_line(&mut input)?;
+        
+        match input.trim().to_lowercase().as_str() {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => println!("잘못된 입력입니다. Y 또는 N으로 대답해주세요."),
+        }
+    }
 }

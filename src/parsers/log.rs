@@ -68,7 +68,12 @@ fn process_chunk(chunk: &[String], ufs_writer: &mut BufWriter<&File>, block_writ
                 devminor: caps["devminor"].parse().unwrap(),
                 io_type: caps["io_type"].to_string(),
                 extra: caps.name("extra").map_or(0, |m| m.as_str().parse().unwrap()),
-                sector: caps["sector"].parse().unwrap(),
+                // sector가 18446744073709551615(u64 최대값)이상인 경우 0으로 설정
+                sector: match caps["sector"].parse::<u64>() {
+                    Ok(s) if s >= 18446744073709551615 => 0,
+                    Ok(s) => s,
+                    Err(_) => 0,
+                },
                 size: caps["size"].parse().unwrap(),
                 comm: caps["comm"].to_string(),
                 qd: 0,
@@ -126,7 +131,12 @@ fn process_chunk_parallel(chunk: Vec<String>) -> (Vec<UFS>, Vec<Block>) {
                 devminor: caps["devminor"].parse().unwrap(),
                 io_type: caps["io_type"].to_string(),
                 extra: caps.name("extra").map_or(0, |m| m.as_str().parse().unwrap()),
-                sector: caps["sector"].parse().unwrap(),
+                // sector가 18446744073709551615(u64 최대값)인 경우 0으로 설정
+                sector: match caps["sector"].parse::<u64>() {
+                    Ok(s) if s == 18446744073709551615 => 0,
+                    Ok(s) => s,
+                    Err(_) => 0,
+                },
                 size: caps["size"].parse().unwrap(),
                 comm: caps["comm"].to_string(),
                 qd: 0,

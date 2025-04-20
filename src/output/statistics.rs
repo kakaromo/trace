@@ -2,7 +2,7 @@ use crate::models::{UFS, Block};
 use std::collections::HashMap;
 use std::cmp::Ordering;
 
-// 통계 계산을 위한 헬퍼 구조체
+// Helper structure for statistical calculations
 #[derive(Default)]
 struct LatencyStats {
     values: Vec<f64>,
@@ -41,7 +41,7 @@ impl LatencyStats {
             return 0.0;
         }
         
-        // 값을 복사하여 정렬
+        // Copy and sort values
         let mut sorted = self.values.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
         
@@ -71,7 +71,7 @@ impl LatencyStats {
         if self.values.is_empty() {
             return 0.0;
         }
-        // 백분위수 계산을 위해 값을 복사하여 정렬
+        // Copy and sort values for percentile calculation
         let mut sorted = self.values.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
         
@@ -80,7 +80,7 @@ impl LatencyStats {
     }
 
     fn latency_ranges(&self) -> HashMap<String, usize> {
-        // 지연 시간 범위 정의
+        // Define latency ranges
         let latency_ranges = vec![
             (0.0, 0.1, "≤ 0.1ms"),
             (0.1, 0.5, "0.1ms < v ≤ 0.5ms"),
@@ -118,7 +118,7 @@ impl LatencyStats {
     }
 }
 
-// 사이즈 분포 계산을 위한 헬퍼 함수
+// Helper function for size distribution calculations
 fn count_sizes<T>(traces: &[&T], size_fn: impl Fn(&&T) -> u32) -> HashMap<u32, usize> {
     let mut size_counts = HashMap::new();
     for trace in traces {
@@ -129,8 +129,8 @@ fn count_sizes<T>(traces: &[&T], size_fn: impl Fn(&&T) -> u32) -> HashMap<u32, u
 }
 
 pub fn print_ufs_statistics(traces: &[UFS]) {
-    println!("총 요청 수: {}", traces.len());
-    println!("최대 큐 깊이: {}", traces.iter().map(|t| t.qd).max().unwrap_or(0));
+    println!("Total requests: {}", traces.len());
+    println!("Maximum queue depth: {}", traces.iter().map(|t| t.qd).max().unwrap_or(0));
     
     let complete_traces: Vec<_> = traces.iter().filter(|t| t.action == "complete_rsp").collect();
     
@@ -139,24 +139,24 @@ pub fn print_ufs_statistics(traces: &[UFS]) {
         let avg_ctoc = complete_traces.iter().filter(|t| t.ctoc > 0.0).map(|t| t.ctoc).sum::<f64>() 
                       / complete_traces.iter().filter(|t| t.ctoc > 0.0).count() as f64;
         
-        println!("평균 Device to Complete 지연: {:.3} ms", avg_dtoc);
-        println!("평균 Complete to Complete 지연: {:.3} ms", avg_ctoc);
+        println!("Average Device to Complete latency: {:.3} ms", avg_dtoc);
+        println!("Average Complete to Complete latency: {:.3} ms", avg_ctoc);
     }
     
     let send_traces: Vec<_> = traces.iter().filter(|t| t.action == "send_req").collect();
     if !send_traces.is_empty() {
         let avg_ctod = send_traces.iter().filter(|t| t.ctod > 0.0).map(|t| t.ctod).sum::<f64>() 
                       / send_traces.iter().filter(|t| t.ctod > 0.0).count() as f64;
-        println!("평균 Complete to Device 지연: {:.3} ms", avg_ctod);
+        println!("Average Complete to Device latency: {:.3} ms", avg_ctod);
     }
 
     let continuous_reqs = traces.iter().filter(|t| t.continuous).count();
-    println!("연속적 요청 비율: {:.1}%", (continuous_reqs as f64 / traces.len() as f64) * 100.0);
+    println!("Continuous request ratio: {:.1}%", (continuous_reqs as f64 / traces.len() as f64) * 100.0);
 
-    // 지연 시간 통계 추가 (UFS opcode별)
-    println!("\n[UFS 지연 시간 통계]");
+    // Additional latency statistics (by UFS opcode)
+    println!("\n[UFS Latency Statistics]");
     
-    // dtoc, ctoc는 complete_rsp 이벤트에서 측정
+    // dtoc, ctoc are measured in complete_rsp events
     let mut complete_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
     for trace in traces.iter().filter(|t| t.action == "complete_rsp") {
         complete_opcode_groups.entry(trace.opcode.clone())
@@ -164,7 +164,7 @@ pub fn print_ufs_statistics(traces: &[UFS]) {
             .push(trace);
     }
     
-    // ctod는 send_req 이벤트에서 측정
+    // ctod is measured in send_req events
     let mut send_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
     for trace in traces.iter().filter(|t| t.action == "send_req") {
         send_opcode_groups.entry(trace.opcode.clone())
@@ -172,27 +172,27 @@ pub fn print_ufs_statistics(traces: &[UFS]) {
             .push(trace);
     }
 
-    // 각 지연 시간 유형별로 통계 테이블 출력
+    // Print statistics table for each latency type
     print_latency_stats_by_opcode(&complete_opcode_groups, "Device to Complete (dtoc)", |trace| trace.dtoc);
     print_latency_stats_by_opcode(&send_opcode_groups, "Complete to Device (ctod)", |trace| trace.ctod);
     print_latency_stats_by_opcode(&complete_opcode_groups, "Complete to Complete (ctoc)", |trace| trace.ctoc);
     
-    // 지연 시간 범위별 분포 통계
-    println!("\n[UFS Device to Complete (dtoc) 범위별 분포]");
+    // Latency distribution by range
+    println!("\n[UFS Device to Complete (dtoc) Distribution by Range]");
     print_latency_ranges_by_opcode(&complete_opcode_groups, "Device to Complete (dtoc)", |trace| trace.dtoc);
     
-    println!("\n[UFS Complete to Device (ctod) 범위별 분포]");
+    println!("\n[UFS Complete to Device (ctod) Distribution by Range]");
     print_latency_ranges_by_opcode(&send_opcode_groups, "Complete to Device (ctod)", |trace| trace.ctod);
     
-    println!("\n[UFS Complete to Complete (ctoc) 범위별 분포]");
+    println!("\n[UFS Complete to Complete (ctoc) Distribution by Range]");
     print_latency_ranges_by_opcode(&complete_opcode_groups, "Complete to Complete (ctoc)", |trace| trace.ctoc);
     
-    // 사이즈 분포 통계
-    println!("\n[UFS 요청 크기 분포]");
-    // opcode별로 사이즈 집계 (complete_opcode_groups 사용)
+    // Size distribution statistics
+    println!("\n[UFS Request Size Distribution]");
+    // Aggregate sizes by opcode (using complete_opcode_groups)
     for (opcode, traces) in complete_opcode_groups.iter() {
         let size_counts = count_sizes(traces, |trace| trace.size);
-        println!("\nOpcode {} 크기 분포:", opcode);
+        println!("\nOpcode {} Size Distribution:", opcode);
         println!("Size\tCount");
         
         let mut sizes: Vec<_> = size_counts.keys().collect();
@@ -205,8 +205,8 @@ pub fn print_ufs_statistics(traces: &[UFS]) {
 }
 
 pub fn print_block_statistics(traces: &[Block]) {
-    println!("총 요청 수: {}", traces.len());
-    println!("최대 큐 깊이: {}", traces.iter().map(|t| t.qd).max().unwrap_or(0));
+    println!("Total requests: {}", traces.len());
+    println!("Maximum queue depth: {}", traces.iter().map(|t| t.qd).max().unwrap_or(0));
     
     let complete_traces: Vec<_> = traces.iter().filter(|t| t.action == "block_rq_complete").collect();
     
@@ -215,22 +215,22 @@ pub fn print_block_statistics(traces: &[Block]) {
         let avg_ctoc = complete_traces.iter().filter(|t| t.ctoc > 0.0).map(|t| t.ctoc).sum::<f64>() 
                       / complete_traces.iter().filter(|t| t.ctoc > 0.0).count() as f64;
         
-        println!("평균 Device to Complete 지연: {:.3} ms", avg_dtoc);
-        println!("평균 Complete to Complete 지연: {:.3} ms", avg_ctoc);
+        println!("Average Device to Complete latency: {:.3} ms", avg_dtoc);
+        println!("Average Complete to Complete latency: {:.3} ms", avg_ctoc);
     }
 
     let issue_traces: Vec<_> = traces.iter().filter(|t| t.action == "block_rq_issue").collect();
     if !issue_traces.is_empty() {
         let avg_ctod = issue_traces.iter().filter(|t| t.ctod > 0.0).map(|t| t.ctod).sum::<f64>() 
                       / issue_traces.iter().filter(|t| t.ctod > 0.0).count() as f64;
-        println!("평균 Complete to Device 지연: {:.3} ms", avg_ctod);
+        println!("Average Complete to Device latency: {:.3} ms", avg_ctod);
     }
 
     let continuous_reqs = traces.iter().filter(|t| t.continuous).count();
-    println!("연속적 요청 비율: {:.1}%", (continuous_reqs as f64 / traces.len() as f64) * 100.0);
+    println!("Continuous request ratio: {:.1}%", (continuous_reqs as f64 / traces.len() as f64) * 100.0);
     
-    // I/O 타입 첫 글자 기준으로 그룹화하여 통계
-    // 첫 글자별 요청 수 계산
+    // Group by the first character of I/O type
+    // Calculate request count by first character
     let mut io_type_groups: HashMap<String, usize> = HashMap::new();
     for trace in traces {
         if let Some(first_char) = trace.io_type.chars().next() {
@@ -239,15 +239,15 @@ pub fn print_block_statistics(traces: &[Block]) {
         }
     }
 
-    // 각 그룹별 비율 출력
+    // Print ratio for each group
     for (group, count) in io_type_groups.iter() {
-        println!("{} 요청: {} ({:.1}%)", group, count, (*count as f64 / traces.len() as f64) * 100.0);
+        println!("{} requests: {} ({:.1}%)", group, count, (*count as f64 / traces.len() as f64) * 100.0);
     }
 
-    // 지연 시간 통계 추가 (Block I/O 타입 첫 글자 기준 그룹별)
-    println!("\n[Block I/O 지연 시간 통계]");
+    // Additional latency statistics (by Block I/O type first character)
+    println!("\n[Block I/O Latency Statistics]");
     
-    // dtoc, ctoc는 block_rq_complete 이벤트에서 측정 (첫 글자 기준 그룹화)
+    // dtoc, ctoc are measured in block_rq_complete events (grouped by first character)
     let mut complete_iotype_groups: HashMap<String, Vec<&Block>> = HashMap::new();
     for trace in traces.iter().filter(|t| t.action == "block_rq_complete") {
         if let Some(first_char) = trace.io_type.chars().next() {
@@ -258,7 +258,7 @@ pub fn print_block_statistics(traces: &[Block]) {
         }
     }
 
-    // ctod는 block_rq_issue 이벤트에서 측정 (첫 글자 기준 그룹화)
+    // ctod is measured in block_rq_issue events (grouped by first character)
     let mut issue_iotype_groups: HashMap<String, Vec<&Block>> = HashMap::new();
     for trace in traces.iter().filter(|t| t.action == "block_rq_issue") {
         if let Some(first_char) = trace.io_type.chars().next() {
@@ -269,27 +269,27 @@ pub fn print_block_statistics(traces: &[Block]) {
         }
     }
 
-    // 각 지연 시간 유형별로 통계 테이블 출력 (첫 글자 기준 그룹화)
+    // Print statistics table for each latency type (grouped by first character)
     print_latency_stats_by_iotype(&complete_iotype_groups, "Device to Complete (dtoc)", |trace| trace.dtoc);
     print_latency_stats_by_iotype(&issue_iotype_groups, "Complete to Device (ctod)", |trace| trace.ctod);
     print_latency_stats_by_iotype(&complete_iotype_groups, "Complete to Complete (ctoc)", |trace| trace.ctoc);
     
-    // 지연 시간 범위별 분포 통계 (첫 글자 기준 그룹화)
-    println!("\n[Block I/O Device to Complete (dtoc) 범위별 분포]");
+    // Latency distribution by range (grouped by first character)
+    println!("\n[Block I/O Device to Complete (dtoc) Distribution by Range]");
     print_latency_ranges_by_iotype(&complete_iotype_groups, "Device to Complete (dtoc)", |trace| trace.dtoc);
     
-    println!("\n[Block I/O Complete to Device (ctod) 범위별 분포]");
+    println!("\n[Block I/O Complete to Device (ctod) Distribution by Range]");
     print_latency_ranges_by_iotype(&issue_iotype_groups, "Complete to Device (ctod)", |trace| trace.ctod);
     
-    println!("\n[Block I/O Complete to Complete (ctoc) 범위별 분포]");
+    println!("\n[Block I/O Complete to Complete (ctoc) Distribution by Range]");
     print_latency_ranges_by_iotype(&complete_iotype_groups, "Complete to Complete (ctoc)", |trace| trace.ctoc);
     
-    // 사이즈 분포 통계 (첫 글자 기준 그룹화)
-    println!("\n[Block I/O 요청 크기 분포]");
-    // I/O 타입 첫 글자별로 사이즈 집계
+    // Size distribution statistics (grouped by first character)
+    println!("\n[Block I/O Request Size Distribution]");
+    // Aggregate sizes by I/O type first character
     for (io_type, traces) in complete_iotype_groups.iter() {
         let size_counts = count_sizes(traces, |trace| trace.size);
-        println!("\nI/O 타입 {} 크기 분포:", io_type);
+        println!("\nI/O Type {} Size Distribution:", io_type);
         println!("Size\tCount");
         
         let mut sizes: Vec<_> = size_counts.keys().collect();
@@ -301,27 +301,27 @@ pub fn print_block_statistics(traces: &[Block]) {
     }
 }
 
-// UFS opcode별 지연 시간 통계 출력 함수
+// UFS opcode latency statistics print function
 fn print_latency_stats_by_opcode(
     opcode_groups: &HashMap<String, Vec<&UFS>>, 
     stat_name: &str,
     latency_fn: impl Fn(&&UFS) -> f64
 ) {
-    println!("\n{} 통계:", stat_name);
+    println!("\n{} Statistics:", stat_name);
     println!("Type\tAvg\tMin\tMedian\tMax\tStd\t99th\t99.9th\t99.99th\t99.999th\t99.9999th");
     
-    // 정렬된 opcodes
+    // Sorted opcodes
     let mut opcodes: Vec<&String> = opcode_groups.keys().collect();
     opcodes.sort();
     
     for &opcode in &opcodes {
         let traces = &opcode_groups[opcode];
         
-        // 지연 시간 통계 계산
+        // Calculate latency statistics
         let mut stats = LatencyStats::new();
         for &trace in traces {
             let latency = latency_fn(&trace);
-            if latency > 0.0 {  // 유효한 지연 시간만 처리
+            if latency > 0.0 {  // Process only valid latencies
                 stats.add(latency);
             }
         }
@@ -344,26 +344,26 @@ fn print_latency_stats_by_opcode(
     }
 }
 
-// UFS opcode별 지연 시간 범위 분포 출력 함수
+// UFS opcode latency range distribution print function
 fn print_latency_ranges_by_opcode(
     opcode_groups: &HashMap<String, Vec<&UFS>>, 
     stat_name: &str,
     latency_fn: impl Fn(&&UFS) -> f64
 ) {
-    println!("\n{} 범위별 분포:", stat_name);
+    println!("\n{} Distribution by Range:", stat_name);
     
-    // 먼저 모든 opcode 목록 정렬
+    // First sort all opcode list
     let mut opcodes: Vec<&String> = opcode_groups.keys().collect();
     opcodes.sort();
     
-    // 헤더 출력
+    // Print header
     print!("Range\t");
     for &opcode in &opcodes {
         print!("{}\t", opcode);
     }
     println!();
     
-    // 각 opcode별 latency 통계 계산
+    // Calculate latency statistics for each opcode
     let mut all_stats = HashMap::new();
     for &opcode in &opcodes {
         let traces = &opcode_groups[opcode];
@@ -379,7 +379,7 @@ fn print_latency_ranges_by_opcode(
         all_stats.insert(opcode, stats);
     }
     
-    // 각 범위별 카운트 출력
+    // Print counts for each range
     let ranges = vec![
         "≤ 0.1ms", "0.1ms < v ≤ 0.5ms", "0.5ms < v ≤ 1ms", "1ms < v ≤ 5ms",
         "5ms < v ≤ 10ms", "10ms < v ≤ 50ms", "50ms < v ≤ 100ms", "100ms < v ≤ 500ms",
@@ -402,27 +402,27 @@ fn print_latency_ranges_by_opcode(
     }
 }
 
-// Block I/O 타입별 지연 시간 통계 출력 함수
+// Block I/O type latency statistics print function
 fn print_latency_stats_by_iotype(
     iotype_groups: &HashMap<String, Vec<&Block>>, 
     stat_name: &str,
     latency_fn: impl Fn(&&Block) -> f64
 ) {
-    println!("\n{} 통계:", stat_name);
+    println!("\n{} Statistics:", stat_name);
     println!("Type\tAvg\tMin\tMedian\tMax\tStd\t99th\t99.9th\t99.99th\t99.999th\t99.9999th");
     
-    // 정렬된 iotypes
+    // Sorted I/O types
     let mut iotypes: Vec<&String> = iotype_groups.keys().collect();
     iotypes.sort();
     
     for &iotype in &iotypes {
         let traces = &iotype_groups[iotype];
         
-        // 지연 시간 통계 계산
+        // Calculate latency statistics
         let mut stats = LatencyStats::new();
         for &trace in traces {
             let latency = latency_fn(&trace);
-            if latency > 0.0 {  // 유효한 지연 시간만 처리
+            if latency > 0.0 {  // Process only valid latencies
                 stats.add(latency);
             }
         }
@@ -445,26 +445,26 @@ fn print_latency_stats_by_iotype(
     }
 }
 
-// Block I/O 타입별 지연 시간 범위 분포 출력 함수
+// Block I/O type latency range distribution print function
 fn print_latency_ranges_by_iotype(
     iotype_groups: &HashMap<String, Vec<&Block>>, 
     stat_name: &str,
     latency_fn: impl Fn(&&Block) -> f64
 ) {
-    println!("\n{} 범위별 분포:", stat_name);
+    println!("\n{} Distribution by Range:", stat_name);
     
-    // 먼저 모든 I/O 타입 목록 정렬
+    // First sort all I/O type list
     let mut iotypes: Vec<&String> = iotype_groups.keys().collect();
     iotypes.sort();
     
-    // 헤더 출력
+    // Print header
     print!("Range\t");
     for &iotype in &iotypes {
         print!("{}\t", iotype);
     }
     println!();
     
-    // 각 I/O 타입별 latency 통계 계산
+    // Calculate latency statistics for each I/O type
     let mut all_stats = HashMap::new();
     for &iotype in &iotypes {
         let traces = &iotype_groups[iotype];
@@ -480,7 +480,7 @@ fn print_latency_ranges_by_iotype(
         all_stats.insert(iotype, stats);
     }
     
-    // 각 범위별 카운트 출력
+    // Print counts for each range
     let ranges = vec![
         "≤ 0.1ms", "0.1ms < v ≤ 0.5ms", "0.5ms < v ≤ 1ms", "1ms < v ≤ 5ms",
         "5ms < v ≤ 10ms", "10ms < v ≤ 50ms", "50ms < v ≤ 100ms", "100ms < v ≤ 500ms",
