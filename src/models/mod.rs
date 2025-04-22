@@ -1,5 +1,5 @@
-mod ufs;
 mod block;
+mod ufs;
 
-pub use ufs::UFS;
 pub use block::Block;
+pub use ufs::UFS;

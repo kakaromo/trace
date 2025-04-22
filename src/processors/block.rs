@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
 use crate::models::Block;
 use crate::utils::constants::MILLISECONDS;
+use std::collections::{HashMap, HashSet};
 
 // Block latency post-processing function
 pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
@@ -8,15 +8,22 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     if block_list.is_empty() {
         return block_list;
     }
-    
+
     // Record start time
     let start_time = std::time::Instant::now();
-    println!("Starting Block latency processing (events: {})", block_list.len());
-    
+    println!(
+        "Starting Block Latency processing (event count: {})",
+        block_list.len()
+    );
+
     // 1. Sort by timestamp
     println!("  Sorting Block data by timestamp...");
     let mut sorted_blocks = block_list;
-    sorted_blocks.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+    sorted_blocks.sort_by(|a, b| {
+        a.time
+            .partial_cmp(&b.time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // 2. Remove duplicate block_rq_issue (pre-processing)
     println!("  Filtering duplicate events...");
@@ -28,15 +35,18 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     let total_blocks = sorted_blocks.len();
     let report_interval = (total_blocks / 10).max(1); // Report progress at 10% intervals
     let mut last_reported = 0;
-    
+
     for (idx, block) in sorted_blocks.into_iter().enumerate() {
         // Report progress (10% intervals)
         if idx >= last_reported + report_interval {
             let progress = (idx * 100) / total_blocks;
-            println!("  Duplicate removal progress: {}% ({}/{})", progress, idx, total_blocks);
+            println!(
+                "  Duplicate removal progress: {}% ({}/{})",
+                progress, idx, total_blocks
+            );
             last_reported = idx;
         }
-        
+
         if block.action == "block_rq_issue" {
             let io_operation = if block.io_type.starts_with('R') {
                 "read"
@@ -80,17 +90,21 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
         deduplicated_blocks.push(block);
     }
 
-    println!("  Number of events after duplicate removal: {}", deduplicated_blocks.len());
-    
+    println!(
+        "  Number of events after duplicate removal: {}",
+        deduplicated_blocks.len()
+    );
+
     // Adjust capacity for memory optimization
     processed_issues.clear();
     processed_issues.shrink_to_fit();
-    
+
     // 3. Post-process the deduplicated data
     // (Continuity, latency, etc.)
     println!("  Calculating Block latency and continuity...");
     let mut filtered_blocks = Vec::with_capacity(deduplicated_blocks.len());
-    let mut req_times: HashMap<(u64, String), f64> = HashMap::with_capacity(deduplicated_blocks.len() / 5);
+    let mut req_times: HashMap<(u64, String), f64> =
+        HashMap::with_capacity(deduplicated_blocks.len() / 5);
     let mut current_qd: u32 = 0;
     let mut last_complete_time: Option<f64> = None;
     let mut last_complete_qd0_time: Option<f64> = None;
@@ -101,17 +115,20 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
 
     // Progress counter - latency calculation stage
     let total_dedup = deduplicated_blocks.len();
-    let report_interval_2 = (total_dedup / 10).max(1); 
+    let report_interval_2 = (total_dedup / 10).max(1);
     let mut last_reported_2 = 0;
-    
+
     for (idx, mut block) in deduplicated_blocks.into_iter().enumerate() {
         // Report progress (10% intervals)
         if idx >= last_reported_2 + report_interval_2 {
             let progress = (idx * 100) / total_dedup;
-            println!("  Latency calculation progress: {}% ({}/{})", progress, idx, total_dedup);
+            println!(
+                "  Latency calculation progress: {}% ({}/{})",
+                progress, idx, total_dedup
+            );
             last_reported_2 = idx;
         }
-        
+
         // Set continuous to false by default
         block.continuous = false;
 
@@ -191,9 +208,12 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
 
     // Adjust vector size for memory optimization
     filtered_blocks.shrink_to_fit();
-    
+
     let elapsed = start_time.elapsed();
-    println!("Block latency processing completed: {:.2} seconds", elapsed.as_secs_f64());
-    
+    println!(
+        "Block Latency processing completed: {:.2} seconds",
+        elapsed.as_secs_f64()
+    );
+
     filtered_blocks
 }

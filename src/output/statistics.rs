@@ -1,6 +1,6 @@
-use crate::models::{UFS, Block};
-use std::collections::HashMap;
+use crate::models::{Block, UFS};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 // Helper structure for statistical calculations
 #[derive(Default)]
@@ -40,11 +40,11 @@ impl LatencyStats {
         if self.values.is_empty() {
             return 0.0;
         }
-        
+
         // Copy and sort values
         let mut sorted = self.values.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-        
+
         let mid = sorted.len() / 2;
         if sorted.len() % 2 == 0 {
             (sorted[mid - 1] + sorted[mid]) / 2.0
@@ -58,12 +58,15 @@ impl LatencyStats {
             return 0.0;
         }
         let avg = self.avg();
-        let variance = self.values.iter()
+        let variance = self
+            .values
+            .iter()
             .map(|&v| {
                 let diff = avg - v;
                 diff * diff
             })
-            .sum::<f64>() / (self.values.len() - 1) as f64;
+            .sum::<f64>()
+            / (self.values.len() - 1) as f64;
         variance.sqrt()
     }
 
@@ -74,7 +77,7 @@ impl LatencyStats {
         // Copy and sort values for percentile calculation
         let mut sorted = self.values.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-        
+
         let idx = (p / 100.0 * (sorted.len() - 1) as f64).round() as usize;
         sorted[idx]
     }
@@ -130,63 +133,103 @@ fn count_sizes<T>(traces: &[&T], size_fn: impl Fn(&&T) -> u32) -> HashMap<u32, u
 
 pub fn print_ufs_statistics(traces: &[UFS]) {
     println!("Total requests: {}", traces.len());
-    println!("Maximum queue depth: {}", traces.iter().map(|t| t.qd).max().unwrap_or(0));
-    
-    let complete_traces: Vec<_> = traces.iter().filter(|t| t.action == "complete_rsp").collect();
-    
+    println!(
+        "Maximum queue depth: {}",
+        traces.iter().map(|t| t.qd).max().unwrap_or(0)
+    );
+
+    let complete_traces: Vec<_> = traces
+        .iter()
+        .filter(|t| t.action == "complete_rsp")
+        .collect();
+
     if !complete_traces.is_empty() {
-        let avg_dtoc = complete_traces.iter().map(|t| t.dtoc).sum::<f64>() / complete_traces.len() as f64;
-        let avg_ctoc = complete_traces.iter().filter(|t| t.ctoc > 0.0).map(|t| t.ctoc).sum::<f64>() 
-                      / complete_traces.iter().filter(|t| t.ctoc > 0.0).count() as f64;
-        
+        let avg_dtoc =
+            complete_traces.iter().map(|t| t.dtoc).sum::<f64>() / complete_traces.len() as f64;
+        let avg_ctoc = complete_traces
+            .iter()
+            .filter(|t| t.ctoc > 0.0)
+            .map(|t| t.ctoc)
+            .sum::<f64>()
+            / complete_traces.iter().filter(|t| t.ctoc > 0.0).count() as f64;
+
         println!("Average Device to Complete latency: {:.3} ms", avg_dtoc);
         println!("Average Complete to Complete latency: {:.3} ms", avg_ctoc);
     }
-    
+
     let send_traces: Vec<_> = traces.iter().filter(|t| t.action == "send_req").collect();
     if !send_traces.is_empty() {
-        let avg_ctod = send_traces.iter().filter(|t| t.ctod > 0.0).map(|t| t.ctod).sum::<f64>() 
-                      / send_traces.iter().filter(|t| t.ctod > 0.0).count() as f64;
+        let avg_ctod = send_traces
+            .iter()
+            .filter(|t| t.ctod > 0.0)
+            .map(|t| t.ctod)
+            .sum::<f64>()
+            / send_traces.iter().filter(|t| t.ctod > 0.0).count() as f64;
         println!("Average Complete to Device latency: {:.3} ms", avg_ctod);
     }
 
     let continuous_reqs = traces.iter().filter(|t| t.continuous).count();
-    println!("Continuous request ratio: {:.1}%", (continuous_reqs as f64 / traces.len() as f64) * 100.0);
+    println!(
+        "Continuous request ratio: {:.1}%",
+        (continuous_reqs as f64 / traces.len() as f64) * 100.0
+    );
 
     // Additional latency statistics (by UFS opcode)
     println!("\n[UFS Latency Statistics]");
-    
+
     // dtoc, ctoc are measured in complete_rsp events
     let mut complete_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
     for trace in traces.iter().filter(|t| t.action == "complete_rsp") {
-        complete_opcode_groups.entry(trace.opcode.clone())
+        complete_opcode_groups
+            .entry(trace.opcode.clone())
             .or_insert_with(Vec::new)
             .push(trace);
     }
-    
+
     // ctod is measured in send_req events
     let mut send_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
     for trace in traces.iter().filter(|t| t.action == "send_req") {
-        send_opcode_groups.entry(trace.opcode.clone())
+        send_opcode_groups
+            .entry(trace.opcode.clone())
             .or_insert_with(Vec::new)
             .push(trace);
     }
 
     // Print statistics table for each latency type
-    print_latency_stats_by_opcode(&complete_opcode_groups, "Device to Complete (dtoc)", |trace| trace.dtoc);
-    print_latency_stats_by_opcode(&send_opcode_groups, "Complete to Device (ctod)", |trace| trace.ctod);
-    print_latency_stats_by_opcode(&complete_opcode_groups, "Complete to Complete (ctoc)", |trace| trace.ctoc);
-    
+    print_latency_stats_by_opcode(
+        &complete_opcode_groups,
+        "Device to Complete (dtoc)",
+        |trace| trace.dtoc,
+    );
+    print_latency_stats_by_opcode(&send_opcode_groups, "Complete to Device (ctod)", |trace| {
+        trace.ctod
+    });
+    print_latency_stats_by_opcode(
+        &complete_opcode_groups,
+        "Complete to Complete (ctoc)",
+        |trace| trace.ctoc,
+    );
+
     // Latency distribution by range
     println!("\n[UFS Device to Complete (dtoc) Distribution by Range]");
-    print_latency_ranges_by_opcode(&complete_opcode_groups, "Device to Complete (dtoc)", |trace| trace.dtoc);
-    
+    print_latency_ranges_by_opcode(
+        &complete_opcode_groups,
+        "Device to Complete (dtoc)",
+        |trace| trace.dtoc,
+    );
+
     println!("\n[UFS Complete to Device (ctod) Distribution by Range]");
-    print_latency_ranges_by_opcode(&send_opcode_groups, "Complete to Device (ctod)", |trace| trace.ctod);
-    
+    print_latency_ranges_by_opcode(&send_opcode_groups, "Complete to Device (ctod)", |trace| {
+        trace.ctod
+    });
+
     println!("\n[UFS Complete to Complete (ctoc) Distribution by Range]");
-    print_latency_ranges_by_opcode(&complete_opcode_groups, "Complete to Complete (ctoc)", |trace| trace.ctoc);
-    
+    print_latency_ranges_by_opcode(
+        &complete_opcode_groups,
+        "Complete to Complete (ctoc)",
+        |trace| trace.ctoc,
+    );
+
     // Size distribution statistics
     println!("\n[UFS Request Size Distribution]");
     // Aggregate sizes by opcode (using complete_opcode_groups)
@@ -194,10 +237,10 @@ pub fn print_ufs_statistics(traces: &[UFS]) {
         let size_counts = count_sizes(traces, |trace| trace.size);
         println!("\nOpcode {} Size Distribution:", opcode);
         println!("Size\tCount");
-        
+
         let mut sizes: Vec<_> = size_counts.keys().collect();
         sizes.sort();
-        
+
         for &size in sizes {
             println!("{}\t{}", size, size_counts[&size]);
         }
@@ -206,29 +249,50 @@ pub fn print_ufs_statistics(traces: &[UFS]) {
 
 pub fn print_block_statistics(traces: &[Block]) {
     println!("Total requests: {}", traces.len());
-    println!("Maximum queue depth: {}", traces.iter().map(|t| t.qd).max().unwrap_or(0));
-    
-    let complete_traces: Vec<_> = traces.iter().filter(|t| t.action == "block_rq_complete").collect();
-    
+    println!(
+        "Maximum queue depth: {}",
+        traces.iter().map(|t| t.qd).max().unwrap_or(0)
+    );
+
+    let complete_traces: Vec<_> = traces
+        .iter()
+        .filter(|t| t.action == "block_rq_complete")
+        .collect();
+
     if !complete_traces.is_empty() {
-        let avg_dtoc = complete_traces.iter().map(|t| t.dtoc).sum::<f64>() / complete_traces.len() as f64;
-        let avg_ctoc = complete_traces.iter().filter(|t| t.ctoc > 0.0).map(|t| t.ctoc).sum::<f64>() 
-                      / complete_traces.iter().filter(|t| t.ctoc > 0.0).count() as f64;
-        
+        let avg_dtoc =
+            complete_traces.iter().map(|t| t.dtoc).sum::<f64>() / complete_traces.len() as f64;
+        let avg_ctoc = complete_traces
+            .iter()
+            .filter(|t| t.ctoc > 0.0)
+            .map(|t| t.ctoc)
+            .sum::<f64>()
+            / complete_traces.iter().filter(|t| t.ctoc > 0.0).count() as f64;
+
         println!("Average Device to Complete latency: {:.3} ms", avg_dtoc);
         println!("Average Complete to Complete latency: {:.3} ms", avg_ctoc);
     }
 
-    let issue_traces: Vec<_> = traces.iter().filter(|t| t.action == "block_rq_issue").collect();
+    let issue_traces: Vec<_> = traces
+        .iter()
+        .filter(|t| t.action == "block_rq_issue")
+        .collect();
     if !issue_traces.is_empty() {
-        let avg_ctod = issue_traces.iter().filter(|t| t.ctod > 0.0).map(|t| t.ctod).sum::<f64>() 
-                      / issue_traces.iter().filter(|t| t.ctod > 0.0).count() as f64;
+        let avg_ctod = issue_traces
+            .iter()
+            .filter(|t| t.ctod > 0.0)
+            .map(|t| t.ctod)
+            .sum::<f64>()
+            / issue_traces.iter().filter(|t| t.ctod > 0.0).count() as f64;
         println!("Average Complete to Device latency: {:.3} ms", avg_ctod);
     }
 
     let continuous_reqs = traces.iter().filter(|t| t.continuous).count();
-    println!("Continuous request ratio: {:.1}%", (continuous_reqs as f64 / traces.len() as f64) * 100.0);
-    
+    println!(
+        "Continuous request ratio: {:.1}%",
+        (continuous_reqs as f64 / traces.len() as f64) * 100.0
+    );
+
     // Group by the first character of I/O type
     // Calculate request count by first character
     let mut io_type_groups: HashMap<String, usize> = HashMap::new();
@@ -241,18 +305,24 @@ pub fn print_block_statistics(traces: &[Block]) {
 
     // Print ratio for each group
     for (group, count) in io_type_groups.iter() {
-        println!("{} requests: {} ({:.1}%)", group, count, (*count as f64 / traces.len() as f64) * 100.0);
+        println!(
+            "{} requests: {} ({:.1}%)",
+            group,
+            count,
+            (*count as f64 / traces.len() as f64) * 100.0
+        );
     }
 
     // Additional latency statistics (by Block I/O type first character)
     println!("\n[Block I/O Latency Statistics]");
-    
+
     // dtoc, ctoc are measured in block_rq_complete events (grouped by first character)
     let mut complete_iotype_groups: HashMap<String, Vec<&Block>> = HashMap::new();
     for trace in traces.iter().filter(|t| t.action == "block_rq_complete") {
         if let Some(first_char) = trace.io_type.chars().next() {
             let group = first_char.to_string();
-            complete_iotype_groups.entry(group)
+            complete_iotype_groups
+                .entry(group)
                 .or_insert_with(Vec::new)
                 .push(trace);
         }
@@ -263,27 +333,48 @@ pub fn print_block_statistics(traces: &[Block]) {
     for trace in traces.iter().filter(|t| t.action == "block_rq_issue") {
         if let Some(first_char) = trace.io_type.chars().next() {
             let group = first_char.to_string();
-            issue_iotype_groups.entry(group)
+            issue_iotype_groups
+                .entry(group)
                 .or_insert_with(Vec::new)
                 .push(trace);
         }
     }
 
     // Print statistics table for each latency type (grouped by first character)
-    print_latency_stats_by_iotype(&complete_iotype_groups, "Device to Complete (dtoc)", |trace| trace.dtoc);
-    print_latency_stats_by_iotype(&issue_iotype_groups, "Complete to Device (ctod)", |trace| trace.ctod);
-    print_latency_stats_by_iotype(&complete_iotype_groups, "Complete to Complete (ctoc)", |trace| trace.ctoc);
-    
+    print_latency_stats_by_iotype(
+        &complete_iotype_groups,
+        "Device to Complete (dtoc)",
+        |trace| trace.dtoc,
+    );
+    print_latency_stats_by_iotype(&issue_iotype_groups, "Complete to Device (ctod)", |trace| {
+        trace.ctod
+    });
+    print_latency_stats_by_iotype(
+        &complete_iotype_groups,
+        "Complete to Complete (ctoc)",
+        |trace| trace.ctoc,
+    );
+
     // Latency distribution by range (grouped by first character)
     println!("\n[Block I/O Device to Complete (dtoc) Distribution by Range]");
-    print_latency_ranges_by_iotype(&complete_iotype_groups, "Device to Complete (dtoc)", |trace| trace.dtoc);
-    
+    print_latency_ranges_by_iotype(
+        &complete_iotype_groups,
+        "Device to Complete (dtoc)",
+        |trace| trace.dtoc,
+    );
+
     println!("\n[Block I/O Complete to Device (ctod) Distribution by Range]");
-    print_latency_ranges_by_iotype(&issue_iotype_groups, "Complete to Device (ctod)", |trace| trace.ctod);
-    
+    print_latency_ranges_by_iotype(&issue_iotype_groups, "Complete to Device (ctod)", |trace| {
+        trace.ctod
+    });
+
     println!("\n[Block I/O Complete to Complete (ctoc) Distribution by Range]");
-    print_latency_ranges_by_iotype(&complete_iotype_groups, "Complete to Complete (ctoc)", |trace| trace.ctoc);
-    
+    print_latency_ranges_by_iotype(
+        &complete_iotype_groups,
+        "Complete to Complete (ctoc)",
+        |trace| trace.ctoc,
+    );
+
     // Size distribution statistics (grouped by first character)
     println!("\n[Block I/O Request Size Distribution]");
     // Aggregate sizes by I/O type first character
@@ -291,10 +382,10 @@ pub fn print_block_statistics(traces: &[Block]) {
         let size_counts = count_sizes(traces, |trace| trace.size);
         println!("\nI/O Type {} Size Distribution:", io_type);
         println!("Size\tCount");
-        
+
         let mut sizes: Vec<_> = size_counts.keys().collect();
         sizes.sort();
-        
+
         for &size in sizes {
             println!("{}\t{}", size, size_counts[&size]);
         }
@@ -303,31 +394,33 @@ pub fn print_block_statistics(traces: &[Block]) {
 
 // UFS opcode latency statistics print function
 fn print_latency_stats_by_opcode(
-    opcode_groups: &HashMap<String, Vec<&UFS>>, 
+    opcode_groups: &HashMap<String, Vec<&UFS>>,
     stat_name: &str,
-    latency_fn: impl Fn(&&UFS) -> f64
+    latency_fn: impl Fn(&&UFS) -> f64,
 ) {
     println!("\n{} Statistics:", stat_name);
     println!("Type\tAvg\tMin\tMedian\tMax\tStd\t99th\t99.9th\t99.99th\t99.999th\t99.9999th");
-    
+
     // Sorted opcodes
     let mut opcodes: Vec<&String> = opcode_groups.keys().collect();
     opcodes.sort();
-    
+
     for &opcode in &opcodes {
         let traces = &opcode_groups[opcode];
-        
+
         // Calculate latency statistics
         let mut stats = LatencyStats::new();
         for &trace in traces {
             let latency = latency_fn(&trace);
-            if latency > 0.0 {  // Process only valid latencies
+            if latency > 0.0 {
+                // Process only valid latencies
                 stats.add(latency);
             }
         }
-        
+
         if !stats.values.is_empty() {
-            println!("{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
+            println!(
+                "{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
                 opcode,
                 stats.avg(),
                 stats.min,
@@ -346,50 +439,62 @@ fn print_latency_stats_by_opcode(
 
 // UFS opcode latency range distribution print function
 fn print_latency_ranges_by_opcode(
-    opcode_groups: &HashMap<String, Vec<&UFS>>, 
+    opcode_groups: &HashMap<String, Vec<&UFS>>,
     stat_name: &str,
-    latency_fn: impl Fn(&&UFS) -> f64
+    latency_fn: impl Fn(&&UFS) -> f64,
 ) {
     println!("\n{} Distribution by Range:", stat_name);
-    
+
     // First sort all opcode list
     let mut opcodes: Vec<&String> = opcode_groups.keys().collect();
     opcodes.sort();
-    
+
     // Print header
     print!("Range\t");
     for &opcode in &opcodes {
         print!("{}\t", opcode);
     }
     println!();
-    
+
     // Calculate latency statistics for each opcode
     let mut all_stats = HashMap::new();
     for &opcode in &opcodes {
         let traces = &opcode_groups[opcode];
         let mut stats = LatencyStats::new();
-        
+
         for &trace in traces {
             let latency = latency_fn(&trace);
             if latency > 0.0 {
                 stats.add(latency);
             }
         }
-        
+
         all_stats.insert(opcode, stats);
     }
-    
+
     // Print counts for each range
     let ranges = vec![
-        "≤ 0.1ms", "0.1ms < v ≤ 0.5ms", "0.5ms < v ≤ 1ms", "1ms < v ≤ 5ms",
-        "5ms < v ≤ 10ms", "10ms < v ≤ 50ms", "50ms < v ≤ 100ms", "100ms < v ≤ 500ms",
-        "500ms < v ≤ 1s", "1s < v ≤ 5s", "5s < v ≤ 10s", "10s < v ≤ 50s",
-        "50s < v ≤ 100s", "100s < v ≤ 500s", "500s < v ≤ 1000s", "> 1000s"
+        "≤ 0.1ms",
+        "0.1ms < v ≤ 0.5ms",
+        "0.5ms < v ≤ 1ms",
+        "1ms < v ≤ 5ms",
+        "5ms < v ≤ 10ms",
+        "10ms < v ≤ 50ms",
+        "50ms < v ≤ 100ms",
+        "100ms < v ≤ 500ms",
+        "500ms < v ≤ 1s",
+        "1s < v ≤ 5s",
+        "5s < v ≤ 10s",
+        "10s < v ≤ 50s",
+        "50s < v ≤ 100s",
+        "100s < v ≤ 500s",
+        "500s < v ≤ 1000s",
+        "> 1000s",
     ];
-    
+
     for range in ranges {
         print!("{}\t", range);
-        
+
         for &opcode in &opcodes {
             if let Some(stats) = all_stats.get(opcode) {
                 let range_counts = stats.latency_ranges();
@@ -404,31 +509,33 @@ fn print_latency_ranges_by_opcode(
 
 // Block I/O type latency statistics print function
 fn print_latency_stats_by_iotype(
-    iotype_groups: &HashMap<String, Vec<&Block>>, 
+    iotype_groups: &HashMap<String, Vec<&Block>>,
     stat_name: &str,
-    latency_fn: impl Fn(&&Block) -> f64
+    latency_fn: impl Fn(&&Block) -> f64,
 ) {
     println!("\n{} Statistics:", stat_name);
     println!("Type\tAvg\tMin\tMedian\tMax\tStd\t99th\t99.9th\t99.99th\t99.999th\t99.9999th");
-    
+
     // Sorted I/O types
     let mut iotypes: Vec<&String> = iotype_groups.keys().collect();
     iotypes.sort();
-    
+
     for &iotype in &iotypes {
         let traces = &iotype_groups[iotype];
-        
+
         // Calculate latency statistics
         let mut stats = LatencyStats::new();
         for &trace in traces {
             let latency = latency_fn(&trace);
-            if latency > 0.0 {  // Process only valid latencies
+            if latency > 0.0 {
+                // Process only valid latencies
                 stats.add(latency);
             }
         }
-        
+
         if !stats.values.is_empty() {
-            println!("{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
+            println!(
+                "{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
                 iotype,
                 stats.avg(),
                 stats.min,
@@ -447,50 +554,62 @@ fn print_latency_stats_by_iotype(
 
 // Block I/O type latency range distribution print function
 fn print_latency_ranges_by_iotype(
-    iotype_groups: &HashMap<String, Vec<&Block>>, 
+    iotype_groups: &HashMap<String, Vec<&Block>>,
     stat_name: &str,
-    latency_fn: impl Fn(&&Block) -> f64
+    latency_fn: impl Fn(&&Block) -> f64,
 ) {
     println!("\n{} Distribution by Range:", stat_name);
-    
+
     // First sort all I/O type list
     let mut iotypes: Vec<&String> = iotype_groups.keys().collect();
     iotypes.sort();
-    
+
     // Print header
     print!("Range\t");
     for &iotype in &iotypes {
         print!("{}\t", iotype);
     }
     println!();
-    
+
     // Calculate latency statistics for each I/O type
     let mut all_stats = HashMap::new();
     for &iotype in &iotypes {
         let traces = &iotype_groups[iotype];
         let mut stats = LatencyStats::new();
-        
+
         for &trace in traces {
             let latency = latency_fn(&trace);
             if latency > 0.0 {
                 stats.add(latency);
             }
         }
-        
+
         all_stats.insert(iotype, stats);
     }
-    
+
     // Print counts for each range
     let ranges = vec![
-        "≤ 0.1ms", "0.1ms < v ≤ 0.5ms", "0.5ms < v ≤ 1ms", "1ms < v ≤ 5ms",
-        "5ms < v ≤ 10ms", "10ms < v ≤ 50ms", "50ms < v ≤ 100ms", "100ms < v ≤ 500ms",
-        "500ms < v ≤ 1s", "1s < v ≤ 5s", "5s < v ≤ 10s", "10s < v ≤ 50s",
-        "50s < v ≤ 100s", "100s < v ≤ 500s", "500s < v ≤ 1000s", "> 1000s"
+        "≤ 0.1ms",
+        "0.1ms < v ≤ 0.5ms",
+        "0.5ms < v ≤ 1ms",
+        "1ms < v ≤ 5ms",
+        "5ms < v ≤ 10ms",
+        "10ms < v ≤ 50ms",
+        "50ms < v ≤ 100ms",
+        "100ms < v ≤ 500ms",
+        "500ms < v ≤ 1s",
+        "1s < v ≤ 5s",
+        "5s < v ≤ 10s",
+        "10s < v ≤ 50s",
+        "50s < v ≤ 100s",
+        "100s < v ≤ 500s",
+        "500s < v ≤ 1000s",
+        "> 1000s",
     ];
-    
+
     for range in ranges {
         print!("{}\t", range);
-        
+
         for &iotype in &iotypes {
             if let Some(stats) = all_stats.get(iotype) {
                 let range_counts = stats.latency_ranges();

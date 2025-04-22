@@ -1,24 +1,33 @@
-use std::fs::File;
-use std::sync::Arc;
+use crate::models::{Block, UFS};
 use arrow::array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt32Array, UInt64Array};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::file::properties::WriterProperties;
-use crate::models::{UFS, Block};
+use std::fs::File;
+use std::sync::Arc;
 
-pub fn save_to_parquet(ufs_traces: &[UFS], block_traces: &[Block], output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn save_to_parquet(
+    ufs_traces: &[UFS],
+    block_traces: &[Block],
+    output_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     // UFS 데이터 저장
     save_ufs_to_parquet(ufs_traces, &format!("{}_ufs.parquet", output_path))?;
-    
+
     // Block 데이터 저장
     save_block_to_parquet(block_traces, &format!("{}_block.parquet", output_path))?;
-    
+
     Ok(())
 }
 
 fn save_ufs_to_parquet(traces: &[UFS], filepath: &str) -> Result<(), Box<dyn std::error::Error>> {
     let time = Float64Array::from(traces.iter().map(|t| t.time).collect::<Vec<_>>());
-    let process = StringArray::from(traces.iter().map(|t| t.process.as_str()).collect::<Vec<_>>());
+    let process = StringArray::from(
+        traces
+            .iter()
+            .map(|t| t.process.as_str())
+            .collect::<Vec<_>>(),
+    );
     let cpu = UInt32Array::from(traces.iter().map(|t| t.cpu).collect::<Vec<_>>());
     let action = StringArray::from(traces.iter().map(|t| t.action.as_str()).collect::<Vec<_>>());
     let tag = UInt32Array::from(traces.iter().map(|t| t.tag).collect::<Vec<_>>());
@@ -73,22 +82,35 @@ fn save_ufs_to_parquet(traces: &[UFS], filepath: &str) -> Result<(), Box<dyn std
     let file = File::create(filepath)?;
     let props = WriterProperties::builder().build();
     let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
-    
+
     writer.write(&batch)?;
     writer.close()?;
-    
+
     Ok(())
 }
 
-fn save_block_to_parquet(traces: &[Block], filepath: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn save_block_to_parquet(
+    traces: &[Block],
+    filepath: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let time = Float64Array::from(traces.iter().map(|t| t.time).collect::<Vec<_>>());
-    let process = StringArray::from(traces.iter().map(|t| t.process.as_str()).collect::<Vec<_>>());
+    let process = StringArray::from(
+        traces
+            .iter()
+            .map(|t| t.process.as_str())
+            .collect::<Vec<_>>(),
+    );
     let cpu = UInt32Array::from(traces.iter().map(|t| t.cpu).collect::<Vec<_>>());
     let flags = StringArray::from(traces.iter().map(|t| t.flags.as_str()).collect::<Vec<_>>());
     let action = StringArray::from(traces.iter().map(|t| t.action.as_str()).collect::<Vec<_>>());
     let devmajor = UInt32Array::from(traces.iter().map(|t| t.devmajor).collect::<Vec<_>>());
     let devminor = UInt32Array::from(traces.iter().map(|t| t.devminor).collect::<Vec<_>>());
-    let io_type = StringArray::from(traces.iter().map(|t| t.io_type.as_str()).collect::<Vec<_>>());
+    let io_type = StringArray::from(
+        traces
+            .iter()
+            .map(|t| t.io_type.as_str())
+            .collect::<Vec<_>>(),
+    );
     let extra = UInt32Array::from(traces.iter().map(|t| t.extra).collect::<Vec<_>>());
     let sector = UInt64Array::from(traces.iter().map(|t| t.sector).collect::<Vec<_>>());
     let size = UInt32Array::from(traces.iter().map(|t| t.size).collect::<Vec<_>>());
@@ -143,9 +165,9 @@ fn save_block_to_parquet(traces: &[Block], filepath: &str) -> Result<(), Box<dyn
     let file = File::create(filepath)?;
     let props = WriterProperties::builder().build();
     let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
-    
+
     writer.write(&batch)?;
     writer.close()?;
-    
+
     Ok(())
 }
