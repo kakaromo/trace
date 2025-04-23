@@ -44,7 +44,7 @@ fn process_chunk(
                 tag: caps["tag"].parse().unwrap(),
                 opcode: caps["opcode"].to_string(),
                 lba: caps["lba"].parse().unwrap(),
-                size: caps["size"].parse::<i64>().unwrap().abs() as u32,
+                size: caps["size"].parse::<i64>().unwrap().unsigned_abs() as u32,
                 groupid: u32::from_str_radix(&caps["group_id"], 16).unwrap(),
                 hwqid: caps["hwq_id"].parse().unwrap(),
                 qd: 0,
@@ -72,9 +72,9 @@ fn process_chunk(
                 extra: caps
                     .name("extra")
                     .map_or(0, |m| m.as_str().parse().unwrap()),
-                // If sector is >= 18446744073709551615 (u64 max value), set to 0
+                // If sector is == 18446744073709551615 (u64 max value), set to 0
                 sector: match caps["sector"].parse::<u64>() {
-                    Ok(s) if s >= 18446744073709551615 => 0,
+                    Ok(18446744073709551615) => 0,
                     Ok(s) => s,
                     Err(_) => 0,
                 },
@@ -113,7 +113,7 @@ fn process_chunk_parallel(chunk: Vec<String>) -> (Vec<UFS>, Vec<Block>) {
                 tag: caps["tag"].parse().unwrap(),
                 opcode: caps["opcode"].to_string(),
                 lba: caps["lba"].parse().unwrap(),
-                size: caps["size"].parse::<i64>().unwrap().abs() as u32,
+                size: caps["size"].parse::<i64>().unwrap().unsigned_abs() as u32,
                 groupid: u32::from_str_radix(&caps["group_id"], 16).unwrap(),
                 hwqid: caps["hwq_id"].parse().unwrap(),
                 qd: 0,
@@ -138,7 +138,7 @@ fn process_chunk_parallel(chunk: Vec<String>) -> (Vec<UFS>, Vec<Block>) {
                     .map_or(0, |m| m.as_str().parse().unwrap()),
                 // If sector is 18446744073709551615 (u64 max), set to 0
                 sector: match caps["sector"].parse::<u64>() {
-                    Ok(s) if s == 18446744073709551615 => 0,
+                    Ok(18446744073709551615) => 0,
                     Ok(s) => s,
                     Err(_) => 0,
                 },
@@ -328,13 +328,11 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>)
         let file = File::open(&ufs_temp_path)?;
         let reader = BufReader::with_capacity(8 * 1024 * 1024, file);
 
-        for line in reader.lines() {
-            if let Ok(line_str) = line {
-                if let Ok(ufs) = serde_json::from_str::<UFS>(&line_str) {
-                    ufs_traces.push(ufs);
-                } else {
-                    println!("UFS deserialization error: {}", line_str);
-                }
+        for line_str in reader.lines().map_while(Result::ok) {
+            if let Ok(ufs) = serde_json::from_str::<UFS>(&line_str) {
+                ufs_traces.push(ufs);
+            } else {
+                println!("UFS deserialization error: {}", line_str);
             }
         }
     }
@@ -344,13 +342,11 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>)
         let file = File::open(&block_temp_path)?;
         let reader = BufReader::with_capacity(8 * 1024 * 1024, file);
 
-        for line in reader.lines() {
-            if let Ok(line_str) = line {
-                if let Ok(block) = serde_json::from_str::<Block>(&line_str) {
-                    block_traces.push(block);
-                } else {
-                    println!("Block deserialization error: {}", line_str);
-                }
+        for line_str in reader.lines().map_while(Result::ok) {
+            if let Ok(block) = serde_json::from_str::<Block>(&line_str) {
+                block_traces.push(block);
+            } else {
+                println!("Block deserialization error: {}", line_str);
             }
         }
     }

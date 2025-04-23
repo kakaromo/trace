@@ -1,6 +1,6 @@
 use crate::models::{Block, UFS};
 use plotly::color::NamedColor;
-use plotly::common::{ColorScale, Font, Marker, Mode, Title};
+use plotly::common::{Marker, Mode, Title};
 use plotly::layout::{Axis, BarMode, Legend};
 use plotly::{Layout, Pie, Plot, Scatter};
 use std::collections::HashMap;
@@ -491,7 +491,7 @@ fn create_latency_heatmaps(
                 let x: Vec<f64> = points.iter().map(|(time, _)| *time).collect();
                 let y: Vec<f64> = points.iter().map(|(_, latency)| *latency).collect();
 
-                let scatter = Scatter::new(x, y).mode(Mode::Markers).name(&opcode).marker(
+                let scatter = Scatter::new(x, y).mode(Mode::Markers).name(opcode).marker(
                     Marker::new().color(match opcode.as_str() {
                         "0x28" => NamedColor::Blue,  // READ_10
                         "0x2a" => NamedColor::Green, // WRITE_10
@@ -541,7 +541,7 @@ fn create_latency_heatmaps(
 
                 let scatter = Scatter::new(x, y)
                     .mode(Mode::Markers)
-                    .name(&io_type)
+                    .name(io_type)
                     .marker(Marker::new().color(match io_type.as_str() {
                         "READ" => NamedColor::Blue,
                         "WRITE" => NamedColor::Green,
@@ -746,19 +746,19 @@ fn create_request_timeline(
 
                 let start_scatter = Scatter::new(vec![*start], vec![y_pos])
                     .mode(Mode::Markers)
-                    .name(&format!("Tag {} Start", tag))
+                    .name(format!("Tag {} Start", tag))
                     .show_legend(false)
                     .marker(Marker::new().color(NamedColor::Blue).size(10));
 
                 let end_scatter = Scatter::new(vec![*end], vec![y_pos])
                     .mode(Mode::Markers)
-                    .name(&format!("Tag {} End", tag))
+                    .name(format!("Tag {} End", tag))
                     .show_legend(false)
                     .marker(Marker::new().color(NamedColor::Red).size(10));
 
                 let line_scatter = Scatter::new(vec![*start, *end], vec![y_pos, y_pos])
                     .mode(Mode::Lines)
-                    .name(&format!("Tag {} ({})", tag, opcode))
+                    .name(format!("Tag {} ({})", tag, opcode))
                     .line(plotly::common::Line::new().color(match opcode.as_str() {
                         "0x28" => NamedColor::Blue,
                         "0x2a" => NamedColor::Green,
@@ -834,19 +834,19 @@ fn create_request_timeline(
 
                 let start_scatter = Scatter::new(vec![*start], vec![y_pos])
                     .mode(Mode::Markers)
-                    .name(&format!("Sector {} Start", sector))
+                    .name(format!("Sector {} Start", sector))
                     .show_legend(false)
                     .marker(Marker::new().color(NamedColor::Blue).size(10));
 
                 let end_scatter = Scatter::new(vec![*end], vec![y_pos])
                     .mode(Mode::Markers)
-                    .name(&format!("Sector {} End", sector))
+                    .name(format!("Sector {} End", sector))
                     .show_legend(false)
                     .marker(Marker::new().color(NamedColor::Red).size(10));
 
                 let line_scatter = Scatter::new(vec![*start, *end], vec![y_pos, y_pos])
                     .mode(Mode::Lines)
-                    .name(&format!("Sector {} (+{}) - {}", sector, size, io_type))
+                    .name(format!("Sector {} (+{}) - {}", sector, size, io_type))
                     .line(plotly::common::Line::new().color(match io_type.as_str() {
                         "READ" => NamedColor::Blue,
                         "WRITE" => NamedColor::Green,
