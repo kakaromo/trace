@@ -36,6 +36,13 @@ fn process_chunk(
 
     for line in chunk {
         if let Some(caps) = UFS_RE.captures(line) {
+            let raw_lba: u64 = caps["lba"].parse().unwrap();
+            let raw_size: i64 = caps["size"].parse::<i64>().unwrap().unsigned_abs() as i64;
+
+            // Convert bytes to 4KB units
+            let lba_in_4kb = raw_lba / 4096;
+            let size_in_4kb = (raw_size as f64 / 4096.0).ceil() as u32;
+
             let ufs = UFS {
                 time: caps["time"].parse().unwrap(),
                 process: caps["process"].to_string(),
@@ -43,8 +50,8 @@ fn process_chunk(
                 action: caps["command"].to_string(),
                 tag: caps["tag"].parse().unwrap(),
                 opcode: caps["opcode"].to_string(),
-                lba: caps["lba"].parse().unwrap(),
-                size: caps["size"].parse::<i64>().unwrap().unsigned_abs() as u32,
+                lba: lba_in_4kb,
+                size: size_in_4kb,
                 groupid: u32::from_str_radix(&caps["group_id"], 16).unwrap(),
                 hwqid: caps["hwq_id"].parse().unwrap(),
                 qd: 0,
@@ -105,6 +112,13 @@ fn process_chunk_parallel(chunk: Vec<String>) -> (Vec<UFS>, Vec<Block>) {
 
     for line in &chunk {
         if let Some(caps) = UFS_RE.captures(line) {
+            let raw_lba: u64 = caps["lba"].parse().unwrap();
+            let raw_size: i64 = caps["size"].parse::<i64>().unwrap().unsigned_abs() as i64;
+
+            // Convert bytes to 4KB units
+            let lba_in_4kb = raw_lba / 4096;
+            let size_in_4kb = (raw_size as f64 / 4096.0).ceil() as u32;
+
             let ufs = UFS {
                 time: caps["time"].parse().unwrap(),
                 process: caps["process"].to_string(),
@@ -112,8 +126,8 @@ fn process_chunk_parallel(chunk: Vec<String>) -> (Vec<UFS>, Vec<Block>) {
                 action: caps["command"].to_string(),
                 tag: caps["tag"].parse().unwrap(),
                 opcode: caps["opcode"].to_string(),
-                lba: caps["lba"].parse().unwrap(),
-                size: caps["size"].parse::<i64>().unwrap().unsigned_abs() as u32,
+                lba: lba_in_4kb,
+                size: size_in_4kb,
                 groupid: u32::from_str_radix(&caps["group_id"], 16).unwrap(),
                 hwqid: caps["hwq_id"].parse().unwrap(),
                 qd: 0,

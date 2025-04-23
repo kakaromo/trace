@@ -74,7 +74,7 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
     qd_plot.write_html(Path::new(&qd_chart_path));
     println!("UFS Queue Depth chart saved: {}", qd_chart_path);
 
-    // 3. Device to Complete Latency over Time chart
+    // 3. Dispatch to Complete Latency over Time chart
     let mut dtoc_plot = Plot::new();
     let dtoc_scatter = Scatter::new(
         time_sorted_data
@@ -87,21 +87,21 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
             .collect::<Vec<f64>>(),
     )
     .mode(Mode::Markers)
-    .name("Device to Complete Latency over Time");
+    .name("Dispatch to Complete Latency over Time");
 
     dtoc_plot.add_trace(dtoc_scatter);
     dtoc_plot.set_layout(
         Layout::new()
-            .title(Title::from("Device to Complete Latency over Time"))
+            .title(Title::from("Dispatch to Complete Latency over Time"))
             .x_axis(Axis::new().title(Title::from("Time (s)")))
-            .y_axis(Axis::new().title(Title::from("Device to Complete Latency (ms)"))),
+            .y_axis(Axis::new().title(Title::from("Dispatch to Complete Latency (ms)"))),
     );
 
     let dtoc_chart_path = format!("{}_ufs_dtoc_time.html", output_prefix);
     dtoc_plot.write_html(Path::new(&dtoc_chart_path));
-    println!("UFS Device to Complete chart saved: {}", dtoc_chart_path);
+    println!("UFS Dispatch to Complete chart saved: {}", dtoc_chart_path);
 
-    // 4. Complete to Device Latency over Time chart
+    // 4. Complete to Dispatch Latency over Time chart
     let mut ctod_plot = Plot::new();
     let ctod_scatter = Scatter::new(
         time_sorted_data
@@ -114,19 +114,19 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
             .collect::<Vec<f64>>(),
     )
     .mode(Mode::Markers)
-    .name("Complete to Device Latency over Time");
+    .name("Complete to Dispatch Latency over Time");
 
     ctod_plot.add_trace(ctod_scatter);
     ctod_plot.set_layout(
         Layout::new()
-            .title(Title::from("Complete to Device Latency over Time"))
+            .title(Title::from("Complete to Dispatch Latency over Time"))
             .x_axis(Axis::new().title(Title::from("Time (s)")))
-            .y_axis(Axis::new().title(Title::from("Complete to Device Latency (ms)"))),
+            .y_axis(Axis::new().title(Title::from("Complete to Dispatch Latency (ms)"))),
     );
 
     let ctod_chart_path = format!("{}_ufs_ctod_time.html", output_prefix);
     ctod_plot.write_html(Path::new(&ctod_chart_path));
-    println!("UFS Complete to Device chart saved: {}", ctod_chart_path);
+    println!("UFS Complete to Dispatch chart saved: {}", ctod_chart_path);
 
     // 5. Complete to Complete Latency over Time chart
     let mut ctoc_plot = Plot::new();
@@ -250,7 +250,7 @@ pub fn create_block_charts(data: &[Block], output_prefix: &str) -> Result<(), St
     qd_plot.write_html(Path::new(&qd_chart_path));
     println!("Block Queue Depth chart saved: {}", qd_chart_path);
 
-    // 3. Device to Complete Latency over Time chart
+    // 3. Dispatch to Complete Latency over Time chart
     let mut dtoc_plot = Plot::new();
     let dtoc_scatter = Scatter::new(
         time_sorted_data
@@ -263,21 +263,24 @@ pub fn create_block_charts(data: &[Block], output_prefix: &str) -> Result<(), St
             .collect::<Vec<f64>>(),
     )
     .mode(Mode::Markers)
-    .name("Device to Complete Latency over Time");
+    .name("Dispatch to Complete Latency over Time");
 
     dtoc_plot.add_trace(dtoc_scatter);
     dtoc_plot.set_layout(
         Layout::new()
-            .title(Title::from("Device to Complete Latency over Time"))
+            .title(Title::from("Dispatch to Complete Latency over Time"))
             .x_axis(Axis::new().title(Title::from("Time (s)")))
-            .y_axis(Axis::new().title(Title::from("Device to Complete Latency (ms)"))),
+            .y_axis(Axis::new().title(Title::from("Dispatch to Complete Latency (ms)"))),
     );
 
     let dtoc_chart_path = format!("{}_block_dtoc_time.html", output_prefix);
     dtoc_plot.write_html(Path::new(&dtoc_chart_path));
-    println!("Block Device to Complete chart saved: {}", dtoc_chart_path);
+    println!(
+        "Block Dispatch to Complete chart saved: {}",
+        dtoc_chart_path
+    );
 
-    // 4. Complete to Device Latency over Time chart
+    // 4. Complete to Dispatch Latency over Time chart
     let mut ctod_plot = Plot::new();
     let ctod_scatter = Scatter::new(
         time_sorted_data
@@ -290,19 +293,22 @@ pub fn create_block_charts(data: &[Block], output_prefix: &str) -> Result<(), St
             .collect::<Vec<f64>>(),
     )
     .mode(Mode::Markers)
-    .name("Complete to Device Latency over Time");
+    .name("Complete to Dispatch Latency over Time");
 
     ctod_plot.add_trace(ctod_scatter);
     ctod_plot.set_layout(
         Layout::new()
-            .title(Title::from("Complete to Device Latency over Time"))
+            .title(Title::from("Complete to Dispatch Latency over Time"))
             .x_axis(Axis::new().title(Title::from("Time (s)")))
-            .y_axis(Axis::new().title(Title::from("Complete to Device Latency (ms)"))),
+            .y_axis(Axis::new().title(Title::from("Complete to Dispatch Latency (ms)"))),
     );
 
     let ctod_chart_path = format!("{}_block_ctod_time.html", output_prefix);
     ctod_plot.write_html(Path::new(&ctod_chart_path));
-    println!("Block Complete to Device chart saved: {}", ctod_chart_path);
+    println!(
+        "Block Complete to Dispatch chart saved: {}",
+        ctod_chart_path
+    );
 
     // 5. Complete to Complete Latency over Time chart
     let mut ctoc_plot = Plot::new();
@@ -539,14 +545,13 @@ fn create_latency_heatmaps(
                 let x: Vec<f64> = points.iter().map(|(time, _)| *time).collect();
                 let y: Vec<f64> = points.iter().map(|(_, latency)| *latency).collect();
 
-                let scatter = Scatter::new(x, y)
-                    .mode(Mode::Markers)
-                    .name(io_type)
-                    .marker(Marker::new().color(match io_type.as_str() {
+                let scatter = Scatter::new(x, y).mode(Mode::Markers).name(io_type).marker(
+                    Marker::new().color(match io_type.as_str() {
                         "READ" => NamedColor::Blue,
                         "WRITE" => NamedColor::Green,
                         _ => NamedColor::Gray,
-                    }));
+                    }),
+                );
 
                 plot.add_trace(scatter);
             }
