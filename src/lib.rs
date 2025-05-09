@@ -12,6 +12,7 @@ pub use output::{
 };
 pub use parsers::log::parse_log_file;
 pub use processors::{block_bottom_half_latency_process, ufs_bottom_half_latency_process};
+pub use utils::latency::{get_user_latency_ranges, set_user_latency_ranges, parse_latency_ranges};
 
 // 새로운 트레이스 타입을 추가할 때는 다음과 같이 구성하면 됩니다:
 // 1. models/ 디렉토리에 새 트레이스 타입 구조체 추가 (예: nvme.rs)

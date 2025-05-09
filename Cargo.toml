@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 arrow = "55.0.0"
 bincode = { version = "2.0.1", features = ["serde"] }
+charming = { version = "0.4.0", features = ["ssr", "html"] }
 chrono = "0.4.40"
 crossbeam-channel = "0.5.15"
 lazy_static = "1.4.0"

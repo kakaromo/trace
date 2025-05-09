@@ -1,5 +1,6 @@
 use crate::log;
 use crate::models::{Block, TraceItem, UFS};
+use crate::utils::get_user_latency_ranges;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -155,33 +156,63 @@ impl LatencyStats {
     }
 
     fn latency_ranges(&self) -> HashMap<String, usize> {
-        // Define latency ranges
-        let latency_ranges = vec![
-            (0.0, 0.1, "≤ 0.1ms"),
-            (0.1, 0.5, "0.1ms < v ≤ 0.5ms"),
-            (0.5, 1.0, "0.5ms < v ≤ 1ms"),
-            (1.0, 5.0, "1ms < v ≤ 5ms"),
-            (5.0, 10.0, "5ms < v ≤ 10ms"),
-            (10.0, 50.0, "10ms < v ≤ 50ms"),
-            (50.0, 100.0, "50ms < v ≤ 100ms"),
-            (100.0, 500.0, "100ms < v ≤ 500ms"),
-            (500.0, 1000.0, "500ms < v ≤ 1s"),
-            (1000.0, 5000.0, "1s < v ≤ 5s"),
-            (5000.0, 10000.0, "5s < v ≤ 10s"),
-            (10000.0, 50000.0, "10s < v ≤ 50s"),
-            (50000.0, 100000.0, "50s < v ≤ 100s"),
-            (100000.0, 500000.0, "100s < v ≤ 500s"),
-            (500000.0, 1000000.0, "500s < v ≤ 1000s"),
-            (1000000.0, f64::MAX, "> 1000s"),
-        ];
+        // 사용자 정의 레이턴시 범위 또는 기본값 사용
+        let user_ranges = get_user_latency_ranges();
+        
+        let latency_ranges: Vec<(f64, f64, String)> = if let Some(ranges) = user_ranges {
+            // 사용자 정의 범위를 사용
+            let mut result = Vec::with_capacity(ranges.len() + 1);
+            
+            // 첫 번째 범위 (0 ~ 첫번째 값)
+            result.push((0.0, ranges[0], format!("≤ {}ms", ranges[0])));
+            
+            // 중간 범위들
+            for i in 0..(ranges.len()-1) {
+                result.push((
+                    ranges[i], 
+                    ranges[i+1], 
+                    format!("{}ms < v ≤ {}ms", ranges[i], ranges[i+1])
+                ));
+            }
+            
+            // 마지막 범위 (마지막 값 이상)
+            let last = ranges.last().unwrap();
+            result.push((
+                *last, 
+                f64::MAX, 
+                format!("> {}ms", last)
+            ));
+            
+            result
+        } else {
+            // 기본 레이턴시 범위 사용
+            vec![
+                (0.0, 0.1, "≤ 0.1ms".to_string()),
+                (0.1, 0.5, "0.1ms < v ≤ 0.5ms".to_string()),
+                (0.5, 1.0, "0.5ms < v ≤ 1ms".to_string()),
+                (1.0, 5.0, "1ms < v ≤ 5ms".to_string()),
+                (5.0, 10.0, "5ms < v ≤ 10ms".to_string()),
+                (10.0, 50.0, "10ms < v ≤ 50ms".to_string()),
+                (50.0, 100.0, "50ms < v ≤ 100ms".to_string()),
+                (100.0, 500.0, "100ms < v ≤ 500ms".to_string()),
+                (500.0, 1000.0, "500ms < v ≤ 1s".to_string()),
+                (1000.0, 5000.0, "1s < v ≤ 5s".to_string()),
+                (5000.0, 10000.0, "5s < v ≤ 10s".to_string()),
+                (10000.0, 50000.0, "10s < v ≤ 50s".to_string()),
+                (50000.0, 100000.0, "50s < v ≤ 100s".to_string()),
+                (100000.0, 500000.0, "100s < v ≤ 500s".to_string()),
+                (500000.0, 1000000.0, "500s < v ≤ 1000s".to_string()),
+                (1000000.0, f64::MAX, "> 1000s".to_string()),
+            ]
+        };
 
-        let mut counts = HashMap::new();
-        for &(_, _, label) in &latency_ranges {
-            counts.insert(label.to_string(), 0);
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for &(_, _, ref label) in &latency_ranges {
+            counts.insert(label.clone(), 0);
         }
 
         for &value in &self.values {
-            for &(min, max, label) in &latency_ranges {
+            for &(min, max, ref label) in &latency_ranges {
                 if value > min && value <= max {
                     *counts.get_mut(label).unwrap() += 1;
                     break;
@@ -454,33 +485,58 @@ fn print_generic_latency_ranges_by_type<T: TraceItem>(
         all_stats.insert(type_name, stats);
     }
 
-    // 각 범위에 대한 개수 출력
-    let ranges = vec![
-        "≤ 0.1ms",
-        "0.1ms < v ≤ 0.5ms",
-        "0.5ms < v ≤ 1ms",
-        "1ms < v ≤ 5ms",
-        "5ms < v ≤ 10ms",
-        "10ms < v ≤ 50ms",
-        "50ms < v ≤ 100ms",
-        "100ms < v ≤ 500ms",
-        "500ms < v ≤ 1s",
-        "1s < v ≤ 5s",
-        "5s < v ≤ 10s",
-        "10s < v ≤ 50s",
-        "50s < v ≤ 100s",
-        "100ms < v ≤ 500ms",
-        "500ms < v ≤ 1000s",
-        "> 1000s",
-    ];
+    // 지연 시간 범위를 동적으로 가져오기
+    // 첫 번째 통계 객체에서 범위를 가져옴 (비어 있지 않다면)
+    let mut range_labels: Vec<String> = Vec::new();
+    
+    if let Some(&first_type) = types.first() {
+        if let Some(stats) = all_stats.get(first_type) {
+            let range_counts = stats.latency_ranges();
+            range_labels = range_counts.keys().cloned().collect();
+            // 범위 레이블 정렬 (문자열로서는 정렬이 어려우므로, 레이블의 형식을 고려한 정렬 로직)
+            range_labels.sort_by(|a, b| {
+                // "≤ X" 패턴
+                if a.starts_with("≤") && b.starts_with("≤") {
+                    return a.cmp(b);
+                }
+                if a.starts_with("≤") {
+                    return std::cmp::Ordering::Less;
+                }
+                if b.starts_with("≤") {
+                    return std::cmp::Ordering::Greater;
+                }
+                
+                // "> X" 패턴
+                if a.starts_with(">") && !b.starts_with(">") {
+                    return std::cmp::Ordering::Greater;
+                }
+                if !a.starts_with(">") && b.starts_with(">") {
+                    return std::cmp::Ordering::Less;
+                }
+                
+                // "X < v ≤ Y" 패턴 - 첫 번째 숫자로 비교
+                let a_first_num = a.split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let b_first_num = b.split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                
+                a_first_num.partial_cmp(&b_first_num).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
 
-    for range in ranges {
+    // 각 범위에 대한 개수 출력
+    for range in range_labels {
         let mut row = format!("{},", range);
 
         for &type_name in &types {
             if let Some(stats) = all_stats.get(type_name) {
                 let range_counts = stats.latency_ranges();
-                row.push_str(&format!("{},", range_counts.get(range).unwrap_or(&0)));
+                row.push_str(&format!("{},", range_counts.get(&range).unwrap_or(&0)));
             } else {
                 row.push_str("0,");
             }

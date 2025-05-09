@@ -1,16 +1,18 @@
 use std::env;
 use std::io;
 use std::time::Instant;
-use trace::utils::Logger;
+use trace::utils::{Logger, parse_latency_ranges, set_user_latency_ranges};
 use trace::TraceType;
 use trace::*;
 
 fn print_usage(program: &str) {
     eprintln!("Usage:");
-    eprintln!("  {} <log_file> <output_prefix>                      - Parse log file and generate statistics", program);
-    eprintln!("  {} --parquet <type> <parquet_file> <output_prefix> - Read Parquet file and generate statistics", program);
+    eprintln!("  {} [options] <log_file> <output_prefix>                      - Parse log file and generate statistics", program);
+    eprintln!("  {} [options] --parquet <type> <parquet_file> <output_prefix> - Read Parquet file and generate statistics", program);
     eprintln!("    where <type> is one of: 'ufs', 'block'");
-    // 새 트레이스 타입이 추가되면 여기에 업데이트
+    eprintln!("\nOptions:");
+    eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
+    // 새 트레이스 타입이나 옵션이 추가되면 여기에 업데이트
 }
 
 fn main() -> io::Result<()> {
@@ -23,14 +25,68 @@ fn main() -> io::Result<()> {
         print_usage(&args[0]);
         return Ok(());
     }
+    
+    // 옵션 파싱
+    let mut i = 1;
+    let mut log_file_index = 0;
+    let mut output_prefix_index = 0;
+    let mut is_parquet_mode = false;
+    let mut parquet_type_index = 0;
+    let mut parquet_path_index = 0;
+    
+    while i < args.len() {
+        match args[i].as_str() {
+            "-l" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: -l option requires values");
+                    print_usage(&args[0]);
+                    return Ok(());
+                }
+                
+                match parse_latency_ranges(&args[i + 1]) {
+                    Ok(ranges) => {
+                        set_user_latency_ranges(ranges);
+                        log!("Using custom latency ranges: {:?}", args[i + 1]);
+                    },
+                    Err(e) => {
+                        eprintln!("Error in latency ranges: {}", e);
+                        print_usage(&args[0]);
+                        return Ok(());
+                    }
+                }
+                
+                i += 2; // 옵션과 값을 건너뜀
+            },
+            "--parquet" => {
+                is_parquet_mode = true;
+                parquet_type_index = i + 1;
+                parquet_path_index = i + 2;
+                output_prefix_index = i + 3;
+                i += 1;
+            },
+            _ => {
+                // 일반 위치 인수 처리
+                if !is_parquet_mode {
+                    if log_file_index == 0 {
+                        log_file_index = i;
+                    } else if output_prefix_index == 0 {
+                        output_prefix_index = i;
+                    }
+                }
+                i += 1;
+            }
+        }
+    }
 
-    // 명령줄 인수 처리 - 로그 파싱 모드와 Parquet 분석 모드 구분
-    let result = if args.len() == 3 {
-        // 기존 로그 파싱 모드
-        process_log_file(&args[1], &args[2])
-    } else if args.len() == 5 && args[1] == "--parquet" {
-        // Parquet 분석 모드 (단일 파일)
-        let trace_type = match args[2].parse::<TraceType>() {
+    // 명령줄 인수 처리
+    let result = if !is_parquet_mode && log_file_index > 0 && output_prefix_index > 0 {
+        // 일반 로그 파싱 모드
+        process_log_file(&args[log_file_index], &args[output_prefix_index])
+    } else if is_parquet_mode && parquet_type_index > 0 && parquet_type_index < args.len() &&
+              parquet_path_index > 0 && parquet_path_index < args.len() &&
+              output_prefix_index > 0 && output_prefix_index < args.len() {
+        // Parquet 분석 모드
+        let trace_type = match args[parquet_type_index].parse::<TraceType>() {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("Error: {}", e);
@@ -39,7 +95,7 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
         };
-        process_single_parquet_file(trace_type, &args[3], &args[4])
+        process_single_parquet_file(trace_type, &args[parquet_path_index], &args[output_prefix_index])
     } else {
         // 인자 설정이 잘못된 경우
         eprintln!("Error: Invalid arguments");
@@ -60,6 +116,11 @@ fn main() -> io::Result<()> {
 fn process_log_file(log_file_path: &str, output_prefix: &str) -> io::Result<()> {
     // Logger 초기화 - 로그 파일은 trace가 저장되는 경로와 동일하게 설정
     Logger::init(output_prefix);
+    
+    // 사용자 정의 레이턴시 범위가 있다면 로그에 기록
+    if let Some(ranges) = trace::utils::get_user_latency_ranges() {
+        log!("Using custom latency ranges: {:?} ms", ranges);
+    }
 
     let total_start_time = Instant::now();
     log!("===== Starting Log File Processing =====");
@@ -233,6 +294,11 @@ fn process_single_parquet_file(
 ) -> io::Result<()> {
     // Logger 초기화
     Logger::init(output_prefix);
+    
+    // 사용자 정의 레이턴시 범위가 있다면 로그에 기록
+    if let Some(ranges) = trace::utils::get_user_latency_ranges() {
+        log!("Using custom latency ranges: {:?} ms", ranges);
+    }
 
     let total_start_time = Instant::now();
     let data_label = trace_type.display_name();
