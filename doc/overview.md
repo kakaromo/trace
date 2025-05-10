@@ -6,7 +6,12 @@
 
 1. 로그 파일 파싱: UFS와 Block I/O 이벤트 추출
 2. 데이터 처리: latency 계산 및 continuity 분석
-3. 결과 시각화: Plotly를 사용한 차트 생성
+3. 결과 시각화: Plotly 및 Charming을 사용한 차트 생성
+   - 지연 시간 분포 히스토그램
+   - 시간별 지연 시간 추이
+   - Queue Depth 변화 차트
+   - 지연 시간 범위별 분포 차트
+   - LBA/섹터와 지연 시간 관계 산점도
 4. 데이터 저장: Parquet 형식으로 분석 데이터 저장
 
 ## 코드 구조 및 설명
@@ -94,6 +99,19 @@ pub struct Block {
   - Plotly를 사용한 HTML 차트
   - Matplotlib을 사용한 PNG 이미지
 - `print_ufs_statistics()`, `print_block_statistics()`: 분석 통계 콘솔 출력
+- `statistics.rs`: 통계 계산 및 출력 기능
+  - 기본 통계 (평균, 최소/최대, 표준편차)
+  - Percentile 계산 (99%, 99.9%, 99.99%)
+  - 지연 시간 범위별 분포 계산
+  - 요청 타입별 분포 통계
+- `charts.rs`: 차트 시각화 기능
+  - Plotly 및 Charming 라이브러리 통합
+  - 다양한 차트 유형 지원
+  - 사용자 정의 디자인 및 레이아웃
+- `parquet.rs`: Parquet 파일 저장 및 로드 기능
+  - Arrow 포맷 변환
+  - Parquet 스키마 정의 및 최적화
+- `reader.rs`: Parquet 파일 읽기 기능
 
 ## 프로젝트 구조
 
@@ -116,6 +134,32 @@ cargo run -- <로그_파일_경로> <출력_파일_접두사>
 ./target/release/trace <로그_파일_경로> <출력_파일_접두사>
 ```
 
+### 기본 사용법
+
+```bash
+./trace <로그_파일_경로> <출력_파일_접두사>
+```
+
+### 옵션
+
+- **-l, --latency-ranges <범위>**: 사용자 정의 latency 범위 설정 (쉼표로 구분된 밀리초 값)
+  예: `-l 0.1,1,5,10,50,100,500,1000`
+- **--parquet <타입>**: 기존 Parquet 파일 분석 모드
+  <타입> 옵션: 'ufs', 'block'
+
+### 예제
+
+```bash
+# 기본 로그 분석
+./trace /logs/sample.log output_prefix
+
+# 사용자 정의 latency 범위 사용
+./trace -l 0.1,0.5,1,5,10,30,100 /logs/sample.log output_prefix
+
+# Parquet 파일 분석
+./trace --parquet ufs output_prefix_ufs.parquet new_output_prefix
+```
+
 로그 파일이 분석된 후 다음과 같은 결과물이 생성됩니다:
 - `<출력_파일_접두사>_ufs.parquet`: UFS 분석 데이터
 - `<출력_파일_접두사>_block.parquet`: Block I/O 분석 데이터
@@ -129,6 +173,7 @@ cargo run -- <로그_파일_경로> <출력_파일_접두사>
 - 병렬 처리: Rayon 라이브러리를 활용한 병렬 데이터 처리
 - 메모리 효율성: 스트리밍 처리를 통한 대용량 로그 파일 처리
 - 진행 상황 표시: 대용량 파일 처리 과정에서 진행률 표시
+- 배치 처리: 메모리 효율적인 청크 단위 데이터 처리
 
 ## 확장 및 개선 방향
 
@@ -136,3 +181,4 @@ cargo run -- <로그_파일_경로> <출력_파일_접두사>
 2. 더 많은 통계 지표 및 시각화 옵션
 3. 실시간 로그 분석 기능
 4. 분산 처리 지원
+5. 사용자 정의 필터링 및 분석 규칙
