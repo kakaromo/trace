@@ -493,12 +493,10 @@ fn print_generic_latency_ranges_by_type<T: TraceItem>(
         if let Some(stats) = all_stats.get(first_type) {
             let range_counts = stats.latency_ranges();
             range_labels = range_counts.keys().cloned().collect();
-            // 범위 레이블 정렬 (문자열로서는 정렬이 어려우므로, 레이블의 형식을 고려한 정렬 로직)
+            
+            // 범위 레이블을 순서대로 정렬하는 완전히 새로운 방식
             range_labels.sort_by(|a, b| {
-                // "≤ X" 패턴
-                if a.starts_with("≤") && b.starts_with("≤") {
-                    return a.cmp(b);
-                }
+                // 특별 케이스: "≤" 패턴은 항상 가장 먼저
                 if a.starts_with("≤") {
                     return std::cmp::Ordering::Less;
                 }
@@ -506,25 +504,33 @@ fn print_generic_latency_ranges_by_type<T: TraceItem>(
                     return std::cmp::Ordering::Greater;
                 }
                 
-                // "> X" 패턴
-                if a.starts_with(">") && !b.starts_with(">") {
+                // 특별 케이스: ">" 패턴은 항상 가장 마지막
+                if a.starts_with(">") {
                     return std::cmp::Ordering::Greater;
                 }
-                if !a.starts_with(">") && b.starts_with(">") {
+                if b.starts_with(">") {
                     return std::cmp::Ordering::Less;
                 }
                 
-                // "X < v ≤ Y" 패턴 - 첫 번째 숫자로 비교
-                let a_first_num = a.split_whitespace()
-                    .next()
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .unwrap_or(0.0);
-                let b_first_num = b.split_whitespace()
-                    .next()
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .unwrap_or(0.0);
+                // 나머지 "X < v ≤ Y" 패턴: 하한값 X를 추출하여 비교
+                // "숫자ms" 또는 "숫자s" 패턴의 숫자 부분을 추출
+                fn extract_lower_bound(s: &str) -> f64 {
+                    let parts: Vec<&str> = s.split_whitespace().collect();
+                    if parts.len() >= 1 {
+                        // 첫 번째 부분에서 숫자만 추출
+                        if let Ok(val) = parts[0].replace("ms", "")
+                                                 .replace("s", "")
+                                                 .parse::<f64>() {
+                            return val;
+                        }
+                    }
+                    0.0 // 기본값
+                }
                 
-                a_first_num.partial_cmp(&b_first_num).unwrap_or(std::cmp::Ordering::Equal)
+                let a_val = extract_lower_bound(a);
+                let b_val = extract_lower_bound(b);
+                
+                a_val.partial_cmp(&b_val).unwrap_or(std::cmp::Ordering::Equal)
             });
         }
     }
