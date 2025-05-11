@@ -5,7 +5,8 @@ use charming::Chart;
 use charming::component::{Title as CharmingTitle, Legend as CharmingLegend, Grid, Axis as CharmingAxis};
 use charming::element::{AxisType, ItemStyle, NameLocation, Orient, Tooltip, Trigger};
 use charming::series::{Line, Bar, Pie as CharmingPie, EffectScatter, Scatter as CharmingScatter};
-use charming::renderer::{HtmlRenderer, ImageRenderer};
+use charming::renderer::{HtmlRenderer, ImageRenderer, ImageFormat};
+use charming::theme::Theme;
 
 /// Generate charming-based interactive charts for trace data
 pub fn generate_charming_charts(
@@ -185,6 +186,18 @@ fn create_ufs_latency_trend_chart(data: &[UFS], output_prefix: &str) -> Result<(
     renderer.save(&chart, &svg_output_path).map_err(|e| e.to_string())?;
     println!("UFS latency trend SVG chart saved to: {}", svg_output_path);
     
+    // Save as PNG
+    let png_output_path = format!("{}_ufs_latency_trend_charming.png", output_prefix);
+    let mut png_renderer = ImageRenderer::new(1000, 800);
+    png_renderer.save(&chart, &png_output_path).map_err(|e| e.to_string())?;
+    println!("UFS latency trend PNG chart saved to: {}", png_output_path);
+    
+    // Save as JPEG
+    let jpg_output_path = format!("{}_ufs_latency_trend_charming.jpg", output_prefix);
+    let mut jpg_renderer = ImageRenderer::new(1000, 800);
+    jpg_renderer.save(&chart, &jpg_output_path).map_err(|e| e.to_string())?;
+    println!("UFS latency trend JPEG chart saved to: {}", jpg_output_path);
+    
     Ok(())
 }
 
@@ -265,6 +278,18 @@ fn create_block_operation_chart(data: &[Block], output_prefix: &str) -> Result<(
     renderer.save(&chart, &svg_output_path).map_err(|e| e.to_string())?;
     println!("Block I/O operation SVG chart saved to: {}", svg_output_path);
     
+    // Save as PNG
+    let png_output_path = format!("{}_block_io_analysis_charming.png", output_prefix);
+    let mut png_renderer = ImageRenderer::new(1000, 800);
+    png_renderer.save(&chart, &png_output_path).map_err(|e| e.to_string())?;
+    println!("Block I/O operation PNG chart saved to: {}", png_output_path);
+    
+    // Save as JPEG
+    let jpg_output_path = format!("{}_block_io_analysis_charming.jpg", output_prefix);
+    let mut jpg_renderer = ImageRenderer::new(1000, 800);
+    jpg_renderer.save(&chart, &jpg_output_path).map_err(|e| e.to_string())?;
+    println!("Block I/O operation JPEG chart saved to: {}", jpg_output_path);
+    
     Ok(())
 }
 
@@ -343,6 +368,18 @@ fn create_performance_comparison_chart(ufs_data: &[UFS], block_data: &[Block], o
     renderer.save(&chart, &svg_output_path).map_err(|e| e.to_string())?;
     println!("Performance comparison SVG chart saved to: {}", svg_output_path);
     
+    // Save as PNG
+    let png_output_path = format!("{}_performance_comparison_charming.png", output_prefix);
+    let mut png_renderer = ImageRenderer::new(1000, 800);
+    png_renderer.save(&chart, &png_output_path).map_err(|e| e.to_string())?;
+    println!("Performance comparison PNG chart saved to: {}", png_output_path);
+    
+    // Save as JPEG
+    let jpg_output_path = format!("{}_performance_comparison_charming.jpg", output_prefix);
+    let mut jpg_renderer = ImageRenderer::new(1000, 800);
+    jpg_renderer.save(&chart, &jpg_output_path).map_err(|e| e.to_string())?;
+    println!("Performance comparison JPEG chart saved to: {}", jpg_output_path);
+    
     Ok(())
 }
 
@@ -390,6 +427,18 @@ fn create_operation_distribution_chart(data: &[UFS], output_prefix: &str) -> Res
     let mut renderer = ImageRenderer::new(1000, 800);
     renderer.save(&chart, &svg_output_path).map_err(|e| e.to_string())?;
     println!("UFS operation distribution SVG chart saved to: {}", svg_output_path);
+    
+    // Save as PNG
+    let png_output_path = format!("{}_ufs_operation_distribution_charming.png", output_prefix);
+    let mut png_renderer = ImageRenderer::new(1000, 800);
+    png_renderer.save(&chart, &png_output_path).map_err(|e| e.to_string())?;
+    println!("UFS operation distribution PNG chart saved to: {}", png_output_path);
+    
+    // Save as JPEG
+    let jpg_output_path = format!("{}_ufs_operation_distribution_charming.jpg", output_prefix);
+    let mut jpg_renderer = ImageRenderer::new(1000, 800);
+    jpg_renderer.save(&chart, &jpg_output_path).map_err(|e| e.to_string())?;
+    println!("UFS operation distribution JPEG chart saved to: {}", jpg_output_path);
     
     Ok(())
 }
@@ -453,7 +502,8 @@ fn create_lba_latency_scatter(data: &[Block], output_prefix: &str) -> Result<(),
     
     // Save as HTML
     let html_output_path = format!("{}_lba_latency_scatter_charming.html", output_prefix);
-    std::fs::write(&html_output_path, chart.to_string()).map_err(|e| e.to_string())?;
+    let mut htmlrenderer = HtmlRenderer::new("LBA vs Latency Scatter", 1000, 800);
+    htmlrenderer.save(&chart, &html_output_path).map_err(|e| e.to_string())?;
     println!("LBA vs Latency scatter HTML plot saved to: {}", html_output_path);
     
     // Save as SVG
@@ -461,6 +511,18 @@ fn create_lba_latency_scatter(data: &[Block], output_prefix: &str) -> Result<(),
     let mut renderer = ImageRenderer::new(1000, 800);
     renderer.save(&chart, &svg_output_path).map_err(|e| e.to_string())?;
     println!("LBA vs Latency scatter SVG plot saved to: {}", svg_output_path);
+    
+    // Save as PNG
+    let png_output_path = format!("{}_lba_latency_scatter_charming.png", output_prefix);
+    let mut png_renderer = ImageRenderer::new(1000, 800);
+    png_renderer.save(&chart, &png_output_path).map_err(|e| e.to_string())?;
+    println!("LBA vs Latency scatter PNG plot saved to: {}", png_output_path);
+    
+    // Save as JPEG
+    let jpg_output_path = format!("{}_lba_latency_scatter_charming.jpg", output_prefix);
+    let mut jpg_renderer = ImageRenderer::new(1000, 800);
+    jpg_renderer.save(&chart, &jpg_output_path).map_err(|e| e.to_string())?;
+    println!("LBA vs Latency scatter JPEG plot saved to: {}", jpg_output_path);
     
     Ok(())
 }
@@ -542,11 +604,11 @@ pub fn create_ufscustom_charts(data: &[UFSCUSTOM], output_prefix: &str) -> Resul
 
     // 1. LBA over Time chart with command-based legend
     let mut lba_chart = Chart::new()
-        .title(CharmingTitle::new().text("UFSCUSTOM LBA over Time by Command"))
+        .title(CharmingTitle::new().text("UFSCUSTOM LBA over Time by Opcode"))
         .tooltip(Tooltip::new().trigger(Trigger::Axis))
         .x_axis(
             CharmingAxis::new()
-                .type_(AxisType::Value)
+                .type_(AxisType::Category)
                 .name("Time (s)")
                 .name_location(NameLocation::Middle)
                 .name_gap(30)
@@ -561,9 +623,9 @@ pub fn create_ufscustom_charts(data: &[UFSCUSTOM], output_prefix: &str) -> Resul
         .grid(Grid::new().right("5%").bottom("10%").left("5%").top("15%"));
 
     // 범례 데이터 준비
-    let mut legend_data: Vec<String> = command_groups.keys().cloned().collect();
+    let mut legend_data: Vec<String> = command_groups.keys().cloned().collect();    
     legend_data.sort();
-    lba_chart = lba_chart.legend(CharmingLegend::new().data(legend_data.clone()));
+    lba_chart = lba_chart.legend(CharmingLegend::new().orient(Orient::Vertical).bottom("bottom").data(legend_data.clone()));    
 
     // command별 시리즈 추가
     let mut color_idx = 0;
@@ -580,7 +642,7 @@ pub fn create_ufscustom_charts(data: &[UFSCUSTOM], output_prefix: &str) -> Resul
                 CharmingScatter::new()
                     .name(command)
                     .data(lba_data)
-                    .symbol_size(8)
+                    .symbol_size(2)
                     .item_style(ItemStyle::new().color(color))
             );
         }
@@ -591,13 +653,19 @@ pub fn create_ufscustom_charts(data: &[UFSCUSTOM], output_prefix: &str) -> Resul
     html_renderer.save(&lba_chart, &lba_chart_path).map_err(|e| e.to_string())?;
     println!("UFSCUSTOM LBA chart saved: {}", lba_chart_path);
 
+    // Save as PNG
+    let png_output_path = format!("{}_ufscustom_lba_time.png", output_prefix);
+    let mut png_renderer = ImageRenderer::new(1000, 800);
+    png_renderer.save_format(ImageFormat::Png, &lba_chart, &png_output_path).map_err(|e| e.to_string())?;
+    println!("UFSCUSTOM LBA chart PNG chart saved to: {}", png_output_path);
+
     // 2. Latency (dtoc) over Time chart with command-based legend
     let mut dtoc_chart = Chart::new()
         .title(CharmingTitle::new().text("UFSCUSTOM Latency over Time by Command"))
         .tooltip(Tooltip::new().trigger(Trigger::Axis))
         .x_axis(
             CharmingAxis::new()
-                .type_(AxisType::Value)
+                .type_(AxisType::Category)
                 .name("Time (s)")
                 .name_location(NameLocation::Middle)
                 .name_gap(30)
@@ -611,7 +679,7 @@ pub fn create_ufscustom_charts(data: &[UFSCUSTOM], output_prefix: &str) -> Resul
         )
         .grid(Grid::new().right("5%").bottom("10%").left("5%").top("15%"));
 
-    dtoc_chart = dtoc_chart.legend(CharmingLegend::new().data(legend_data.clone()));
+    dtoc_chart = dtoc_chart.legend(CharmingLegend::new().orient(Orient::Vertical).right("right").data(legend_data.clone()));
 
     // command별 시리즈 추가
     color_idx = 0;
@@ -629,7 +697,7 @@ pub fn create_ufscustom_charts(data: &[UFSCUSTOM], output_prefix: &str) -> Resul
                 CharmingScatter::new()
                     .name(command)
                     .data(dtoc_data)
-                    .symbol_size(8)
+                    .symbol_size(2)
                     .item_style(ItemStyle::new().color(color))
             );
         }
@@ -639,6 +707,12 @@ pub fn create_ufscustom_charts(data: &[UFSCUSTOM], output_prefix: &str) -> Resul
     let mut html_renderer = HtmlRenderer::new("UFSCUSTOM Latency over Time by Command", 1000, 800);
     html_renderer.save(&dtoc_chart, &dtoc_chart_path).map_err(|e| e.to_string())?;
     println!("UFSCUSTOM Latency chart saved: {}", dtoc_chart_path);
+
+    // Save as PNG
+    let png_output_path = format!("{}_ufscustom_dtoc_time.png", output_prefix);
+    let mut png_renderer = ImageRenderer::new(1000, 800);
+    png_renderer.save_format(ImageFormat::Png, &dtoc_chart, &png_output_path).map_err(|e| e.to_string())?;
+    println!("UFSCUSTOM latency PNG chart saved to: {}", png_output_path);
 
     Ok(())
 }
@@ -731,7 +805,7 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
                 CharmingScatter::new()
                     .name(opcode_name)
                     .data(lba_data)
-                    .symbol_size(8)
+                    .symbol_size(2)
                     .item_style(ItemStyle::new().color(color))
             );
         }
