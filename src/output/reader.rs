@@ -1,4 +1,4 @@
-use crate::models::{Block, UFS};
+use crate::models::{Block, UFS, UFSCUSTOM};
 use arrow::array::AsArray;
 use arrow::datatypes::{Float64Type, Schema, UInt32Type, UInt64Type};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -44,6 +44,29 @@ pub fn read_block_from_parquet(filepath: &str) -> Result<Vec<Block>, Box<dyn std
     for batch_result in reader {
         let batch = batch_result?;
         let records = convert_batch_to_block(&batch, &schema)?;
+        results.extend(records);
+    }
+
+    Ok(results)
+}
+
+/// UFSCUSTOM Parquet 파일에서 데이터를 읽어 UFSCUSTOM 구조체 벡터로 반환
+pub fn read_ufscustom_from_parquet(filepath: &str) -> Result<Vec<UFSCUSTOM>, Box<dyn std::error::Error>> {
+    // 파일 열기
+    let file = File::open(filepath)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+
+    // 스키마 복제
+    let schema = builder.schema().clone();
+
+    // 레코드 배치 읽기
+    let reader = builder.build()?;
+
+    // UFSCUSTOM 구조체로 변환
+    let mut results = Vec::new();
+    for batch_result in reader {
+        let batch = batch_result?;
+        let records = convert_batch_to_ufscustom(&batch, &schema)?;
         results.extend(records);
     }
 
@@ -193,6 +216,47 @@ fn convert_batch_to_block(
             continuous: continuous_array.value(i),
         };
         result.push(block);
+    }
+
+    Ok(result)
+}
+
+/// RecordBatch를 UFSCUSTOM 구조체 벡터로 변환
+fn convert_batch_to_ufscustom(
+    batch: &arrow::record_batch::RecordBatch,
+    schema: &Schema,
+) -> Result<Vec<UFSCUSTOM>, Box<dyn std::error::Error>> {
+    let num_rows = batch.num_rows();
+    let mut result = Vec::with_capacity(num_rows);
+
+    // 각 컬럼에서 데이터 추출
+    let lba_array = batch
+        .column(schema.index_of("lba")?)
+        .as_primitive::<UInt64Type>();
+    let size_array = batch
+        .column(schema.index_of("size")?)
+        .as_primitive::<UInt32Type>();
+    let start_time_array = batch
+        .column(schema.index_of("start_time")?)
+        .as_primitive::<Float64Type>();
+    let end_time_array = batch
+        .column(schema.index_of("end_time")?)
+        .as_primitive::<Float64Type>();
+    let dtoc_array = batch
+        .column(schema.index_of("dtoc")?)
+        .as_primitive::<Float64Type>();
+
+    // 각 행을 UFSCUSTOM 구조체로 변환
+    for i in 0..num_rows {
+        let ufscustom = UFSCUSTOM {
+            opcode: "custom_opcode".to_string(), // 예시로 고정된 값 사용
+            lba: lba_array.value(i),
+            size: size_array.value(i),
+            start_time: start_time_array.value(i),
+            end_time: end_time_array.value(i),
+            dtoc: dtoc_array.value(i),
+        };
+        result.push(ufscustom);
     }
 
     Ok(result)

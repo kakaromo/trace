@@ -5,12 +5,13 @@ pub mod processors;
 pub mod utils;
 
 // 주요 기능 재내보내기(re-exporting)
-pub use models::{Block, TraceType, UFS};
+pub use models::{Block, TraceType, UFS, UFSCUSTOM};
 pub use output::{
-    generate_charts, print_block_statistics, print_ufs_statistics, read_block_from_parquet,
-    read_ufs_from_parquet, save_to_parquet,
+    generate_charts, print_block_statistics, print_ufs_statistics, print_ufscustom_statistics,
+    read_block_from_parquet, read_ufs_from_parquet, read_ufscustom_from_parquet,
+    save_to_parquet, generate_ufscustom_charts,
 };
-pub use parsers::log::parse_log_file;
+pub use parsers::log::{parse_log_file, parse_ufscustom_file};
 pub use processors::{block_bottom_half_latency_process, ufs_bottom_half_latency_process};
 pub use utils::latency::{get_user_latency_ranges, set_user_latency_ranges, parse_latency_ranges};
 

@@ -9,7 +9,8 @@ fn print_usage(program: &str) {
     eprintln!("Usage:");
     eprintln!("  {} [options] <log_file> <output_prefix>                      - Parse log file and generate statistics", program);
     eprintln!("  {} [options] --parquet <type> <parquet_file> <output_prefix> - Read Parquet file and generate statistics", program);
-    eprintln!("    where <type> is one of: 'ufs', 'block'");
+    eprintln!("    where <type> is one of: 'ufs', 'block', 'ufscustom'");
+    eprintln!("  {} [options] --ufscustom <custom_file> <output_prefix>       - Parse UFSCustom CSV file and generate statistics", program);
     eprintln!("\nOptions:");
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
     // 새 트레이스 타입이나 옵션이 추가되면 여기에 업데이트
@@ -33,6 +34,8 @@ fn main() -> io::Result<()> {
     let mut is_parquet_mode = false;
     let mut parquet_type_index = 0;
     let mut parquet_path_index = 0;
+    let mut is_ufscustom_mode = false;
+    let mut ufscustom_file_index = 0;
     
     while i < args.len() {
         match args[i].as_str() {
@@ -64,9 +67,15 @@ fn main() -> io::Result<()> {
                 output_prefix_index = i + 3;
                 i += 1;
             },
+            "--ufscustom" => {
+                is_ufscustom_mode = true;
+                ufscustom_file_index = i + 1;
+                output_prefix_index = i + 2;
+                i += 1;
+            },
             _ => {
                 // 일반 위치 인수 처리
-                if !is_parquet_mode {
+                if !is_parquet_mode && !is_ufscustom_mode {
                     if log_file_index == 0 {
                         log_file_index = i;
                     } else if output_prefix_index == 0 {
@@ -79,7 +88,7 @@ fn main() -> io::Result<()> {
     }
 
     // 명령줄 인수 처리
-    let result = if !is_parquet_mode && log_file_index > 0 && output_prefix_index > 0 {
+    let result = if !is_parquet_mode && !is_ufscustom_mode && log_file_index > 0 && output_prefix_index > 0 {
         // 일반 로그 파싱 모드
         process_log_file(&args[log_file_index], &args[output_prefix_index])
     } else if is_parquet_mode && parquet_type_index > 0 && parquet_type_index < args.len() &&
@@ -90,12 +99,16 @@ fn main() -> io::Result<()> {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("Error: {}", e);
-                eprintln!("Supported types: 'ufs', 'block'"); // 새 타입 추가 시 업데이트
+                eprintln!("Supported types: 'ufs', 'block', 'ufscustom'"); // 새 타입 추가 시 업데이트
                 print_usage(&args[0]);
                 return Ok(());
             }
         };
         process_single_parquet_file(trace_type, &args[parquet_path_index], &args[output_prefix_index])
+    } else if is_ufscustom_mode && ufscustom_file_index > 0 && ufscustom_file_index < args.len() &&
+              output_prefix_index > 0 && output_prefix_index < args.len() {
+        // UFSCustom 파일 처리 모드
+        process_ufscustom_file(&args[ufscustom_file_index], &args[output_prefix_index])
     } else {
         // 인자 설정이 잘못된 경우
         eprintln!("Error: Invalid arguments");
@@ -129,12 +142,12 @@ fn process_log_file(log_file_path: &str, output_prefix: &str) -> io::Result<()> 
     log!("\n[1/6] Parsing log file...");
     let parse_start = Instant::now();
 
-    // 로그 파일 파싱 - 향후 더 많은 트레이스 타입 지원
+    // 로그 파일 파싱 - UFS, Block IO, UFSCUSTOM 타입 지원
     let parse_result = match parse_log_file(log_file_path) {
         Ok(result) => result,
         Err(e) => {
             log_error!("File parsing error: {}", e);
-            (Vec::new(), Vec::new()) // Return empty vectors on error
+            (Vec::new(), Vec::new(), Vec::new()) // Return empty vectors on error
         }
     };
 
@@ -148,6 +161,7 @@ fn process_log_file(log_file_path: &str, output_prefix: &str) -> io::Result<()> 
     let mut trace_counts = Vec::new();
     let has_ufs = !parse_result.0.is_empty();
     let has_block = !parse_result.1.is_empty();
+    let has_ufscustom = !parse_result.2.is_empty();
 
     if has_ufs {
         trace_counts.push(format!("UFS={}", parse_result.0.len()));
@@ -155,7 +169,9 @@ fn process_log_file(log_file_path: &str, output_prefix: &str) -> io::Result<()> 
     if has_block {
         trace_counts.push(format!("Block={}", parse_result.1.len()));
     }
-    // 새 트레이스 타입이 추가되면 여기에 조건 추가
+    if has_ufscustom {
+        trace_counts.push(format!("UFSCUSTOM={}", parse_result.2.len()));
+    }
 
     log!("Parsed traces: {}", trace_counts.join(", "));
 
@@ -184,7 +200,14 @@ fn process_log_file(log_file_path: &str, output_prefix: &str) -> io::Result<()> 
     } else {
         Vec::new()
     };
-    // 새 트레이스 타입이 추가되면 여기에 조건 추가
+
+    let processed_ufscustom = if has_ufscustom {
+        log!("Post-processing UFSCUSTOM data...");
+        processed_traces.push(("UFSCUSTOM", parse_result.2.len()));
+        parse_result.2
+    } else {
+        Vec::new()
+    };
 
     log!(
         "Post-processing complete: Time taken: {:.2}s",
@@ -205,7 +228,11 @@ fn process_log_file(log_file_path: &str, output_prefix: &str) -> io::Result<()> 
         log!("\n=== Block I/O Analysis Results ===");
         print_block_statistics(&processed_blocks);
     }
-    // 새 트레이스 타입이 추가되면 여기에 조건 추가
+
+    if has_ufscustom {
+        log!("\n=== UFSCUSTOM Analysis Results ===");
+        print_ufscustom_statistics(&processed_ufscustom);
+    }
 
     log!(
         "\nAnalysis complete: Time taken: {:.2}s",
@@ -216,7 +243,7 @@ fn process_log_file(log_file_path: &str, output_prefix: &str) -> io::Result<()> 
     log!("\n[4/6] Saving to Parquet files...");
     let save_start = Instant::now();
 
-    match save_to_parquet(&processed_ufs, &processed_blocks, output_prefix) {
+    match save_to_parquet(&processed_ufs, &processed_blocks, &processed_ufscustom, output_prefix) {
         Ok(()) => {
             let mut saved_files = Vec::new();
             if has_ufs {
@@ -224,6 +251,9 @@ fn process_log_file(log_file_path: &str, output_prefix: &str) -> io::Result<()> 
             }
             if has_block {
                 saved_files.push(format!("{}_block.parquet", output_prefix));
+            }
+            if has_ufscustom {
+                saved_files.push(format!("{}_ufscustom.parquet", output_prefix));
             }
             log!(
                 "Parquet files saved successfully (Time taken: {:.2}s):\n{}",
@@ -238,7 +268,7 @@ fn process_log_file(log_file_path: &str, output_prefix: &str) -> io::Result<()> 
     log!("\n[5/6] Generating Plotly charts...");
     let charts_start = Instant::now();
 
-    match generate_charts(&processed_ufs, &processed_blocks, output_prefix) {
+    match generate_charts(&processed_ufs, &processed_blocks, &processed_ufscustom, output_prefix) {
         Ok(()) => log!(
             "Plotly charts generated successfully (Time taken: {:.2}s)",
             charts_start.elapsed().as_secs_f64()
@@ -276,7 +306,11 @@ fn process_log_file(log_file_path: &str, output_prefix: &str) -> io::Result<()> 
         );
     }
 
-    // 새 트레이스 타입이 추가되면 여기에 조건 추가
+    if has_ufscustom {
+        log!("- UFSCUSTOM Parquet file: {}_ufscustom.parquet", output_prefix);
+        log!("- UFSCUSTOM Plotly charts: {}_ufscustom_*.html", output_prefix);
+        log!("- UFSCUSTOM Matplotlib charts: {}_ufscustom_*.png", output_prefix);
+    }
 
     log!("- Log file: {}_result.log", output_prefix);
 
@@ -371,11 +405,87 @@ fn process_single_parquet_file(
     Ok(())
 }
 
+// UFSCustom 파일 처리 로직
+fn process_ufscustom_file(custom_file_path: &str, output_prefix: &str) -> io::Result<()> {
+    // Logger 초기화
+    Logger::init(output_prefix);
+
+    // 사용자 정의 레이턴시 범위가 있다면 로그에 기록
+    if let Some(ranges) = trace::utils::get_user_latency_ranges() {
+        log!("Using custom latency ranges: {:?} ms", ranges);
+    }
+
+    let total_start_time = Instant::now();
+    log!("===== Starting UFSCustom File Processing =====");
+
+    // 1. 파일 로딩
+    log!("\n[1/3] Loading UFSCustom file...");
+    let load_start = Instant::now();
+
+    let traces = match parse_ufscustom_file(custom_file_path) {
+        Ok(data) => {
+            log!(
+                "UFSCustom file loaded successfully: {} events (Time taken: {:.2}s)",
+                data.len(),
+                load_start.elapsed().as_secs_f64()
+            );
+            data
+        }
+        Err(e) => {
+            log_error!("Error loading UFSCustom file: {}", e);
+            return Ok(());
+        }
+    };
+
+    // 2. 통계 계산 및 출력
+    log!("\n[2/3] Calculating UFSCustom statistics...");
+    let stats_start = Instant::now();
+    log!("\n=== UFSCustom Analysis Results ===");
+
+    print_ufscustom_statistics(&traces);
+
+    log!(
+        "\nStatistics calculation complete (Time taken: {:.2}s)",
+        stats_start.elapsed().as_secs_f64()
+    );
+
+    // 3. 차트 생성
+    log!("\n[3/3] Generating UFSCustom Plotly charts...");
+    let charts_start = Instant::now();
+
+    match generate_ufscustom_charts(&traces, output_prefix) {
+        Ok(()) => log!(
+            "UFSCustom Plotly charts generated successfully (Time taken: {:.2}s)",
+            charts_start.elapsed().as_secs_f64()
+        ),
+        Err(e) => log_error!("Error while generating UFSCustom Plotly charts: {}", e),
+    }
+
+    // 4. 요약 정보 출력
+    log!("\n===== UFSCustom File Processing Complete! =====");
+    log!(
+        "Total time taken: {:.2}s",
+        total_start_time.elapsed().as_secs_f64()
+    );
+
+    log!("Total UFSCustom events analyzed: {}", traces.len());
+    log!("Generated files:");
+    log!("- UFSCustom Plotly charts: {}_ufscustom_*.html", output_prefix);
+    log!("- UFSCustom Matplotlib charts: {}_ufscustom_*.png", output_prefix);
+    log!("- Log file: {}_result.log", output_prefix);
+
+    // 로그 파일 버퍼 비우기
+    let _ = Logger::flush();
+
+    Ok(())
+}
+
 // TraceData 열거형 정의 - 각 트레이스 타입에 대한 데이터를 담습니다
 #[allow(clippy::upper_case_acronyms)]
 enum TraceData {
     UFS(Vec<UFS>),
     Block(Vec<Block>),
+    UFSCUSTOM(Vec<UFSCUSTOM>),
     // 새 트레이스 타입 추가 시 여기에 추가
 }
 
@@ -385,6 +495,7 @@ impl TraceData {
         match self {
             TraceData::UFS(traces) => traces.len(),
             TraceData::Block(traces) => traces.len(),
+            TraceData::UFSCUSTOM(traces) => traces.len(),
             // 새 트레이스 타입 추가 시 여기에 추가
         }
     }
@@ -394,6 +505,7 @@ impl TraceData {
         match self {
             TraceData::UFS(traces) => print_ufs_statistics(traces),
             TraceData::Block(traces) => print_block_statistics(traces),
+            TraceData::UFSCUSTOM(traces) => print_ufscustom_statistics(traces),
             // 새 트레이스 타입 추가 시 여기에 추가
         }
     }
@@ -401,8 +513,9 @@ impl TraceData {
     // 차트 생성
     fn generate_charts(&self, output_prefix: &str) -> Result<(), String> {
         match self {
-            TraceData::UFS(traces) => generate_charts(traces, &[], output_prefix),
-            TraceData::Block(traces) => generate_charts(&[], traces, output_prefix),
+            TraceData::UFS(traces) => generate_charts(traces, &[], &[], output_prefix),
+            TraceData::Block(traces) => generate_charts(&[], traces, &[], output_prefix),
+            TraceData::UFSCUSTOM(traces) => generate_ufscustom_charts(traces, output_prefix),
             // 새 트레이스 타입 추가 시 여기에 추가
         }
     }
@@ -425,6 +538,12 @@ impl TraceData {
                     output_prefix
                 );
             }
+            TraceData::UFSCUSTOM(traces) => {
+                log!("Total UFSCustom events analyzed: {}", traces.len());
+                log!("Generated files:");
+                log!("- UFSCustom Plotly charts: {}_ufscustom_*.html", output_prefix);
+                log!("- UFSCustom Matplotlib charts: {}_ufscustom_*.png", output_prefix);
+            }
             // 새 트레이스 타입 추가 시 여기에 추가
         }
     }
@@ -443,6 +562,10 @@ fn load_trace_data(
         TraceType::Block => {
             let traces = read_block_from_parquet(parquet_path)?;
             Ok(TraceData::Block(traces))
+        }
+        TraceType::UFSCUSTOM => {
+            let traces = read_ufscustom_from_parquet(parquet_path)?;
+            Ok(TraceData::UFSCUSTOM(traces))
         }
         // 새 트레이스 타입 추가 시 여기에 추가
     }

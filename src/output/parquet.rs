@@ -1,4 +1,4 @@
-use crate::models::{Block, UFS};
+use crate::models::{Block, UFS, UFSCUSTOM};
 use arrow::array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt32Array, UInt64Array};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::arrow_writer::ArrowWriter;
@@ -9,6 +9,7 @@ use std::sync::Arc;
 pub fn save_to_parquet(
     ufs_traces: &[UFS],
     block_traces: &[Block],
+    ufscustom_traces: &[UFSCUSTOM],
     output_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // UFS 데이터 저장
@@ -16,6 +17,9 @@ pub fn save_to_parquet(
 
     // Block 데이터 저장
     save_block_to_parquet(block_traces, &format!("{}_block.parquet", output_path))?;
+
+    // UFSCUSTOM 데이터 저장
+    save_ufscustom_to_parquet(ufscustom_traces, &format!("{}_ufscustom.parquet", output_path))?;
 
     Ok(())
 }
@@ -159,6 +163,43 @@ fn save_block_to_parquet(
         Arc::new(ctoc),
         Arc::new(ctod),
         Arc::new(continuous),
+    ];
+
+    let batch = RecordBatch::try_new(Arc::new(schema), columns)?;
+    let file = File::create(filepath)?;
+    let props = WriterProperties::builder().build();
+    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
+
+    writer.write(&batch)?;
+    writer.close()?;
+
+    Ok(())
+}
+
+fn save_ufscustom_to_parquet(
+    traces: &[UFSCUSTOM],
+    filepath: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let lba = UInt64Array::from(traces.iter().map(|t| t.lba).collect::<Vec<_>>());
+    let size = UInt32Array::from(traces.iter().map(|t| t.size).collect::<Vec<_>>());
+    let start_time = Float64Array::from(traces.iter().map(|t| t.start_time).collect::<Vec<_>>());
+    let end_time = Float64Array::from(traces.iter().map(|t| t.end_time).collect::<Vec<_>>());
+    let dtoc = Float64Array::from(traces.iter().map(|t| t.dtoc).collect::<Vec<_>>());
+
+    let schema = arrow::datatypes::Schema::new(vec![
+        arrow::datatypes::Field::new("lba", arrow::datatypes::DataType::UInt64, false),
+        arrow::datatypes::Field::new("size", arrow::datatypes::DataType::UInt32, false),
+        arrow::datatypes::Field::new("start_time", arrow::datatypes::DataType::Float64, false),
+        arrow::datatypes::Field::new("end_time", arrow::datatypes::DataType::Float64, false),
+        arrow::datatypes::Field::new("dtoc", arrow::datatypes::DataType::Float64, false),
+    ]);
+
+    let columns: Vec<ArrayRef> = vec![
+        Arc::new(lba),
+        Arc::new(size),
+        Arc::new(start_time),
+        Arc::new(end_time),
+        Arc::new(dtoc),
     ];
 
     let batch = RecordBatch::try_new(Arc::new(schema), columns)?;

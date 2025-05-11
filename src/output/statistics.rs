@@ -1,5 +1,5 @@
 use crate::log;
-use crate::models::{Block, TraceItem, UFS};
+use crate::models::{Block, TraceItem, UFS, UFSCUSTOM};
 use crate::utils::get_user_latency_ranges;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -72,6 +72,41 @@ impl TraceItem for Block {
 
     fn get_qd(&self) -> u32 {
         self.qd
+    }
+}
+
+// UFSCUSTOM 타입에 대한 TraceItem 구현
+impl TraceItem for UFSCUSTOM {
+    fn get_type(&self) -> String {
+        self.opcode.clone() // UFSCUSTOM도 UFS와 같이 opcode를 타입으로 사용
+    }
+
+    fn get_dtoc(&self) -> f64 {
+        self.dtoc
+    }
+
+    fn get_ctoc(&self) -> f64 {
+        0.0 // UFSCUSTOM 모델에는 ctoc 필드가 없음
+    }
+
+    fn get_ctod(&self) -> f64 {
+        0.0 // UFSCUSTOM 모델에는 ctod 필드가 없음
+    }
+
+    fn get_size(&self) -> u32 {
+        self.size
+    }
+
+    fn get_action(&self) -> &str {
+        "complete" // UFSCUSTOM은 완료된 IO만 기록하므로 항상 "complete"
+    }
+
+    fn is_continuous(&self) -> bool {
+        false // UFSCUSTOM 모델에는 continuous 필드가 없음
+    }
+
+    fn get_qd(&self) -> u32 {
+        0 // UFSCUSTOM 모델에는 qd 필드가 없음
     }
 }
 
@@ -234,8 +269,8 @@ fn count_sizes<T>(traces: &[&T], size_fn: impl Fn(&&T) -> u32) -> HashMap<u32, u
     size_counts
 }
 
+
 // 모든 트레이스 타입에 공통으로 사용할 통계 처리 함수들
-// 이 함수들은 T 타입 파라미터를 사용하여 어떤 TraceItem 구현 타입이든 처리 가능
 
 // 제네릭 통계 출력 함수
 pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str) {
@@ -248,6 +283,8 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
     // Complete 액션 타입 결정
     let complete_action = if trace_type_name == "UFS" {
         "complete_rsp"
+    } else if trace_type_name == "UFSCustom" {
+        "complete" // UFSCustom는 항상 complete
     } else {
         "block_rq_complete"
     };
@@ -344,18 +381,19 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
         "Dispatch to Complete (dtoc)",
         |trace| trace.get_dtoc(),
     );
+    if trace_type_name != "UFSCustom" {
+        print_generic_latency_stats_by_type(
+            &request_type_groups,
+            "Complete to Dispatch (ctod)",
+            |trace| trace.get_ctod(),
+        );
 
-    print_generic_latency_stats_by_type(
-        &request_type_groups,
-        "Complete to Dispatch (ctod)",
-        |trace| trace.get_ctod(),
-    );
-
-    print_generic_latency_stats_by_type(
-        &complete_type_groups,
-        "Complete to Complete (ctoc)",
-        |trace| trace.get_ctoc(),
-    );
+        print_generic_latency_stats_by_type(
+            &complete_type_groups,
+            "Complete to Complete (ctoc)",
+            |trace| trace.get_ctoc(),
+        );
+    }
 
     // 범위별 지연 시간 분포
     log!(
@@ -367,26 +405,28 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
         "Dispatch to Complete (dtoc)",
         |trace| trace.get_dtoc(),
     );
-
-    log!(
-        "\n[{} Complete to Dispatch (ctod) Distribution by Range]",
-        trace_type_name
-    );
-    print_generic_latency_ranges_by_type(
-        &request_type_groups,
-        "Complete to Dispatch (ctod)",
-        |trace| trace.get_ctod(),
-    );
-
-    log!(
-        "\n[{} Complete to Complete (ctoc) Distribution by Range]",
-        trace_type_name
-    );
-    print_generic_latency_ranges_by_type(
-        &complete_type_groups,
-        "Complete to Complete (ctoc)",
-        |trace| trace.get_ctoc(),
-    );
+    if trace_type_name != "UFSCustom" {
+        log!(
+            "\n[{} Complete to Dispatch (ctod) Distribution by Range]",
+            trace_type_name
+        );
+        print_generic_latency_ranges_by_type(
+            &request_type_groups,
+            "Complete to Dispatch (ctod)",
+            |trace| trace.get_ctod(),
+        );
+    
+        log!(
+            "\n[{} Complete to Complete (ctoc) Distribution by Range]",
+            trace_type_name
+        );
+        print_generic_latency_ranges_by_type(
+            &complete_type_groups,
+            "Complete to Complete (ctoc)",
+            |trace| trace.get_ctoc(),
+        );
+    }
+    
 
     // 크기 분포 통계
     log!("\n[{} Request Size Distribution]", trace_type_name);
@@ -558,4 +598,15 @@ pub fn print_ufs_statistics(ufs_traces: &[UFS]) {
 
 pub fn print_block_statistics(block_traces: &[Block]) {
     print_trace_statistics(block_traces, "Block");
+}
+
+pub fn print_ufscustom_statistics(ufscustom_traces: &[UFSCUSTOM]) {
+    // UFSCustom 데이터는 단순한 구조이므로 비어 있으면 바로 리턴
+    if ufscustom_traces.is_empty() {
+        log!("UFSCustom 트레이스가 비어 있습니다.");
+        return;
+    }
+    
+    // 모든 통계 처리는 이제 print_trace_statistics 함수에서 수행
+    print_trace_statistics(ufscustom_traces, "UFSCustom");
 }
