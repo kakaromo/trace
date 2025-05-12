@@ -8,6 +8,10 @@ use charming::series::{Line, Bar, Pie as CharmingPie, EffectScatter, Scatter as 
 use charming::renderer::{HtmlRenderer, ImageRenderer, ImageFormat};
 use charming::theme::Theme;
 
+// plotters 의존성 추가
+use plotters::prelude::*;
+use std::error::Error;
+
 /// Generate charming-based interactive charts for trace data
 pub fn generate_charming_charts(
     processed_ufs: &[UFS], 
@@ -579,6 +583,12 @@ pub fn generate_charts(
             Ok(_) => println!("Charming interactive charts have been generated."),
             Err(e) => eprintln!("Error generating Charming charts: {}", e),
         }
+    }
+
+    println!("\nGenerating Plotters-based charts...");
+    match generate_plotters_charts(processed_ufs, processed_blocks, processed_ufscustom, output_prefix) {
+        Ok(_) => println!("Plotters-based charts have been generated."),
+        Err(e) => eprintln!("Error generating Plotters-based charts: {}", e),
     }
 
     Ok(())
@@ -1382,5 +1392,524 @@ pub fn create_block_charts(data: &[Block], output_prefix: &str) -> Result<(), St
     html_renderer.save(&io_type_chart, &io_type_chart_path).map_err(|e| e.to_string())?;
     println!("Block I/O Type pie chart saved: {}", io_type_chart_path);
 
+    Ok(())
+}
+
+/// Generate charts using plotters library and save as PNG
+pub fn generate_plotters_charts(
+    processed_ufs: &[UFS],
+    processed_blocks: &[Block],
+    processed_ufscustom: &[UFSCUSTOM],
+    output_prefix: &str,
+) -> Result<(), String> {
+    // UFS 차트 생성
+    if !processed_ufs.is_empty() {
+        match create_ufs_latency_trend_plotters(processed_ufs, output_prefix) {
+            Ok(_) => {
+                println!("UFS latency trend PNG chart generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFS latency trend PNG chart with Plotters: {}", e);
+            }
+        }
+    }
+
+    // Block I/O 차트 생성
+    if !processed_blocks.is_empty() {
+        match create_block_io_plotters(processed_blocks, output_prefix) {
+            Ok(_) => {
+                println!("Block I/O PNG charts generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!("Error generating Block I/O PNG charts with Plotters: {}", e);
+            }
+        }
+    }
+
+    // UFSCUSTOM 차트 생성
+    if !processed_ufscustom.is_empty() {
+        match create_ufscustom_plotters(processed_ufscustom, output_prefix) {
+            Ok(_) => {
+                println!("UFSCUSTOM PNG charts generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFSCUSTOM PNG charts with Plotters: {}", e);
+            }
+        }
+    }
+
+    println!("Plotters charts generated successfully.");
+
+    Ok(())
+}
+
+/// Create UFS latency trend chart using Plotters library and save as PNG
+fn create_ufs_latency_trend_plotters(data: &[UFS], output_prefix: &str) -> Result<(), String> {
+    // Sort data by time
+    let mut time_sorted_data = data.to_vec();
+    time_sorted_data.sort_by(|a, b| {
+        a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    
+    // Group data by opcode
+    let opcodes: Vec<String> = time_sorted_data
+        .iter()
+        .map(|d| d.opcode.clone())
+        .collect::<std::collections::HashSet<String>>()
+        .into_iter()
+        .collect();
+    
+    // Aggregate data for smoother line
+    let window_size = 20;
+    let mut chart_data: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
+    
+    for opcode in &opcodes {
+        let mut window_times = Vec::new();
+        let mut window_latencies = Vec::new();
+        
+        for item in &time_sorted_data {
+            if &item.opcode == opcode && item.dtoc > 0.0 {
+                window_times.push(item.time);
+                window_latencies.push(item.dtoc);
+                
+                if window_times.len() >= window_size {
+                    let avg_time = window_times.iter().sum::<f64>() / window_times.len() as f64;
+                    let avg_latency = window_latencies.iter().sum::<f64>() / window_latencies.len() as f64;
+                    
+                    chart_data
+                        .entry(opcode.clone())
+                        .or_insert_with(Vec::new)
+                        .push((avg_time, avg_latency));
+                    
+                    window_times.clear();
+                    window_latencies.clear();
+                }
+            }
+        }
+        
+        // Process any remaining data points
+        if !window_times.is_empty() {
+            let avg_time = window_times.iter().sum::<f64>() / window_times.len() as f64;
+            let avg_latency = window_latencies.iter().sum::<f64>() / window_latencies.len() as f64;
+            
+            chart_data
+                .entry(opcode.clone())
+                .or_insert_with(Vec::new)
+                .push((avg_time, avg_latency));
+        }
+    }
+    
+    if chart_data.is_empty() {
+        return Err("No valid data for UFS latency trend chart".to_string());
+    }
+    
+    // Define colors for different opcodes
+    let colors = [
+        RGBColor(84, 112, 198),   // blue - #5470c6
+        RGBColor(145, 204, 117),  // green - #91cc75
+        RGBColor(250, 200, 88),   // yellow - #fac858
+        RGBColor(238, 102, 102),  // red - #ee6666
+        RGBColor(115, 192, 222),  // light blue - #73c0de
+        RGBColor(59, 162, 114),   // dark green - #3ba272
+        RGBColor(252, 132, 82),   // orange - #fc8452
+        RGBColor(154, 96, 180),   // purple - #9a60b4
+    ];
+    
+    // Find min and max values for axes
+    let mut min_time = f64::MAX;
+    let mut max_time = f64::MIN;
+    let mut min_latency = f64::MAX;
+    let mut max_latency = f64::MIN;
+    
+    for (_opcode, points) in &chart_data {
+        for &(time, latency) in points {
+            min_time = min_time.min(time);
+            max_time = max_time.max(time);
+            min_latency = min_latency.min(latency);
+            max_latency = max_latency.max(latency);
+        }
+    }
+    
+    // Add some padding to the axes
+    let x_range = max_time - min_time;
+    let y_range = max_latency - min_latency;
+    let time_padding = x_range * 0.05;
+    let latency_padding = y_range * 0.05;
+    
+    min_time -= time_padding;
+    max_time += time_padding;
+    min_latency = min_latency.max(0.0) - latency_padding.max(0.0);  // Don't go below 0
+    max_latency += latency_padding;
+    
+    // PNG 파일 경로 생성
+    let png_path = format!("{}_ufs_latency_trend_plotters.png", output_prefix);
+    
+    // Create the drawing area
+    let root = BitMapBackend::new(&png_path, (1000, 800))
+        .into_drawing_area();
+    root.fill(&WHITE).map_err(|e| e.to_string())?;
+    
+    // Create the chart
+    let mut chart = ChartBuilder::on(&root)
+        .caption("UFS Latency Trend by Operation Code", ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(50)
+        .y_label_area_size(60)
+        .build_cartesian_2d(min_time..max_time, min_latency..max_latency)
+        .map_err(|e| e.to_string())?;
+    
+    // Configure the chart
+    chart.configure_mesh()
+        .x_desc("Time (s)")
+        .y_desc("Latency (ms)")
+        .axis_desc_style(("sans-serif", 20))
+        .label_style(("sans-serif", 15))
+        .draw()
+        .map_err(|e| e.to_string())?;
+    
+    // Add each opcode as a series
+    let mut color_idx = 0;
+    for (opcode, points) in &chart_data {
+        // Map opcode to a readable name
+        let opcode_name = match opcode.as_str() {
+            "0x28" => "READ_10",
+            "0x2a" => "WRITE_10",
+            "0x35" => "SYNCHRONIZE_CACHE_10",
+            _ => opcode.as_str(),
+        };
+        
+        let color = colors[color_idx % colors.len()];
+        color_idx += 1;
+        
+        if points.len() > 1 {
+            chart.draw_series(LineSeries::new(
+                points.iter().map(|&(x, y)| (x, y)),
+                color.stroke_width(2),
+            ))
+            .map_err(|e| e.to_string())?
+            .label(opcode_name)
+            .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], color.stroke_width(2)));
+        } else if points.len() == 1 {
+            // For single points, use a scatter plot
+            chart.draw_series(
+                points.iter().map(|&(x, y)| Circle::new((x, y), 3, color.filled())),
+            )
+            .map_err(|e| e.to_string())?
+            .label(opcode_name)
+            .legend(move |(x, y)| Circle::new((x + 10, y), 3, color.filled()));
+        }
+    }
+    
+    // Draw the legend
+    chart.configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .legend_area_size(22)
+        .draw()
+        .map_err(|e| e.to_string())?;
+    
+    root.present().map_err(|e| e.to_string())?;
+    println!("UFS latency trend PNG chart saved to: {}", png_path);
+    
+    Ok(())
+}
+
+/// Create Block I/O charts using Plotters library
+fn create_block_io_plotters(data: &[Block], output_prefix: &str) -> Result<(), String> {
+    // 가장 기본적인 I/O 타입별 레이턴시 비교 차트 생성
+    let mut io_types: HashMap<String, Vec<&Block>> = HashMap::new();
+    for block in data {
+        io_types.entry(block.io_type.clone()).or_default().push(block);
+    }
+    
+    let io_type_labels: Vec<String> = io_types.keys().cloned().collect();
+    let mut avg_latency_data: HashMap<String, f64> = HashMap::new();
+    
+    for io_type in &io_type_labels {
+        let blocks = io_types.get(io_type).unwrap();
+        let avg_latency = blocks.iter()
+            .filter(|b| b.dtoc > 0.0)
+            .map(|b| b.dtoc)
+            .sum::<f64>() / blocks.iter().filter(|b| b.dtoc > 0.0).count().max(1) as f64;
+        avg_latency_data.insert(io_type.clone(), avg_latency);
+    }
+    
+    // PNG 파일 경로 생성
+    let png_path = format!("{}_block_io_analysis_plotters.png", output_prefix);
+    
+    // Create the drawing area
+    let root = BitMapBackend::new(&png_path, (1000, 800))
+        .into_drawing_area();
+    root.fill(&WHITE).map_err(|e| e.to_string())?;
+    
+    // 막대 차트 범위 계산 - 타입을 명시적으로 지정
+    let max_latency = avg_latency_data.values().fold(0.0f64, |acc: f64, &v| if acc > v { acc } else { v }) * 1.1;
+    
+    // Create the chart
+    let mut chart = ChartBuilder::on(&root)
+        .caption("Block I/O Operation Latency Analysis", ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(50)
+        .y_label_area_size(60)
+        .build_cartesian_2d(
+            0i32..(io_type_labels.len() as i32),  // i32로 타입 변환
+            0.0..max_latency
+        )
+        .map_err(|e| e.to_string())?;
+    
+    // Configure the chart
+    chart.configure_mesh()
+        .y_desc("Avg Latency (ms)")
+        .axis_desc_style(("sans-serif", 20))
+        .label_style(("sans-serif", 15))
+        .x_labels(io_type_labels.len())
+        .x_label_formatter(&|idx| {
+            let idx_usize = *idx as usize;  // i32를 usize로 변환
+            if idx_usize < io_type_labels.len() {
+                io_type_labels[idx_usize].clone()
+            } else {
+                String::new()
+            }
+        })
+        .draw()
+        .map_err(|e| e.to_string())?;
+    
+    // 막대 차트 그리기
+    let bars: Vec<(i32, f64, RGBColor)> = io_type_labels.iter().enumerate()  // i32로 변환
+        .map(|(idx, io_type)| {
+            let latency = *avg_latency_data.get(io_type).unwrap_or(&0.0);
+            let color = match io_type.as_str() {
+                "READ" => RGBColor(84, 112, 198),   // blue
+                "WRITE" => RGBColor(145, 204, 117), // green
+                _ => RGBColor(250, 200, 88),        // yellow
+            };
+            
+            (idx as i32, latency, color)  // usize를 i32로 변환
+        })
+        .collect();
+    
+    chart.draw_series(
+        bars.iter().map(|(idx, latency, color)| {
+            let bar_width = 0.7; // 막대 너비 (0.0 - 1.0)
+            let start_x = *idx as f32 - bar_width / 2.0;
+            let end_x = *idx as f32 + bar_width / 2.0;
+            
+            Rectangle::new(
+                [(start_x as i32, 0.0), (end_x as i32, *latency)],
+                color.filled(),
+            )
+        })
+    )
+    .map_err(|e| e.to_string())?;
+    
+    // 범례 그리기
+    let mut legends = Vec::new();
+    for (idx, io_type) in io_type_labels.iter().enumerate() {
+        let color = match io_type.as_str() {
+            "READ" => RGBColor(84, 112, 198),
+            "WRITE" => RGBColor(145, 204, 117),
+            _ => RGBColor(250, 200, 88),
+        };
+        
+        legends.push((io_type.clone(), color));
+    }
+    
+    // Legend area 생성
+    let legend_area = root.titled("Legend", ("sans-serif", 15))
+        .map_err(|e| e.to_string())?;
+    
+    for (idx, (label, color)) in legends.iter().enumerate() {
+        let x: i32 = 100;
+        let y: i32 = idx as i32 * 25 + 30;
+        
+        legend_area.draw(&Rectangle::new(
+            [(x - 10, y - 10), (x + 10, y + 10)],
+            color.filled(),
+        ))
+        .map_err(|e| e.to_string())?;
+        
+        legend_area.draw(&Text::new(
+            label.clone(),
+            (x + 20, y),
+            ("sans-serif", 15),
+        ))
+        .map_err(|e| e.to_string())?;
+    }
+    
+    root.present().map_err(|e| e.to_string())?;
+    println!("Block I/O analysis PNG chart saved to: {}", png_path);
+    
+    Ok(())
+}
+
+/// Create UFSCUSTOM charts using Plotters library
+fn create_ufscustom_plotters(data: &[UFSCUSTOM], output_prefix: &str) -> Result<(), String> {
+    if data.is_empty() {
+        return Err("UFSCUSTOM data is empty.".to_string());
+    }
+    
+    // 명령어별로 데이터 그룹화
+    let mut command_groups: HashMap<String, Vec<&UFSCUSTOM>> = HashMap::new();
+    for event in data {
+        command_groups.entry(event.opcode.clone()).or_default().push(event);
+    }
+    
+    // LBA vs Time 스캐터 플롯 생성
+    // PNG 파일 경로 생성
+    let png_path = format!("{}_ufscustom_lba_time_plotters.png", output_prefix);
+    
+    // Create the drawing area
+    let root = BitMapBackend::new(&png_path, (1000, 800))
+        .into_drawing_area();
+    root.fill(&WHITE).map_err(|e| e.to_string())?;
+    
+    // Find min and max values for axes
+    let min_time = data.iter().map(|e| e.start_time).fold(f64::MAX, |a, b| a.min(b));
+    let max_time = data.iter().map(|e| e.start_time).fold(f64::MIN, |a, b| a.max(b));
+    
+    let min_lba = data.iter().map(|e| e.lba as f64).fold(f64::MAX, |a, b| a.min(b));
+    let max_lba = data.iter().map(|e| e.lba as f64).fold(f64::MIN, |a, b| a.max(b));
+    
+    // Add padding
+    let x_range = max_time - min_time;
+    let y_range = max_lba - min_lba;
+    let time_padding = x_range * 0.05;
+    let lba_padding = y_range * 0.05;
+    
+    let min_time = min_time - time_padding;
+    let max_time = max_time + time_padding;
+    let min_lba = min_lba - lba_padding;
+    let max_lba = max_lba + lba_padding;
+    
+    // Create the chart
+    let mut chart = ChartBuilder::on(&root)
+        .caption("UFSCUSTOM LBA over Time by Command", ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(50)
+        .y_label_area_size(60)
+        .build_cartesian_2d(min_time..max_time, min_lba..max_lba)
+        .map_err(|e| e.to_string())?;
+    
+    // Configure the chart
+    chart.configure_mesh()
+        .x_desc("Time (s)")
+        .y_desc("LBA")
+        .axis_desc_style(("sans-serif", 20))
+        .label_style(("sans-serif", 15))
+        .draw()
+        .map_err(|e| e.to_string())?;
+    
+    // Define colors
+    let colors = [
+        RGBColor(84, 112, 198),   // blue
+        RGBColor(145, 204, 117),  // green
+        RGBColor(250, 200, 88),   // yellow
+        RGBColor(238, 102, 102),  // red
+        RGBColor(115, 192, 222),  // light blue
+        RGBColor(59, 162, 114),   // dark green
+        RGBColor(252, 132, 82),   // orange
+        RGBColor(154, 96, 180),   // purple
+    ];
+    
+    // Add each command as a series
+    let mut color_idx = 0;
+    for (command, events) in &command_groups {
+        let color = colors[color_idx % colors.len()];
+        color_idx += 1;
+        
+        chart.draw_series(events.iter().map(|event| {
+            Circle::new((event.start_time, event.lba as f64), 2, color.filled())
+        }))
+        .map_err(|e| e.to_string())?
+        .label(command)
+        .legend(move |(x, y)| Circle::new((x + 10, y), 3, color.filled()));
+    }
+    
+    // Draw the legend
+    chart.configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .legend_area_size(22)
+        .draw()
+        .map_err(|e| e.to_string())?;
+    
+    root.present().map_err(|e| e.to_string())?;
+    println!("UFSCUSTOM LBA over Time PNG chart saved to: {}", png_path);
+    
+    // DTOC vs Time 스캐터 플롯 생성
+    let png_path = format!("{}_ufscustom_dtoc_time_plotters.png", output_prefix);
+    
+    // Create the drawing area
+    let root = BitMapBackend::new(&png_path, (1000, 800))
+        .into_drawing_area();
+    root.fill(&WHITE).map_err(|e| e.to_string())?;
+    
+    // Find min and max values for latency axis
+    let min_dtoc = data.iter()
+        .filter(|e| e.dtoc > 0.0)
+        .map(|e| e.dtoc)
+        .fold(f64::MAX, |a, b| a.min(b));
+    
+    let max_dtoc = data.iter()
+        .map(|e| e.dtoc)
+        .fold(f64::MIN, |a, b| a.max(b));
+    
+    // Add padding for latency axis
+    let y_range = max_dtoc - min_dtoc;
+    let dtoc_padding = y_range * 0.05;
+    
+    let min_dtoc = min_dtoc - dtoc_padding.max(0.0);
+    let max_dtoc = max_dtoc + dtoc_padding;
+    
+    // Create the chart
+    let mut chart = ChartBuilder::on(&root)
+        .caption("UFSCUSTOM Latency over Time by Command", ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(50)
+        .y_label_area_size(60)
+        .build_cartesian_2d(min_time..max_time, min_dtoc..max_dtoc)
+        .map_err(|e| e.to_string())?;
+    
+    // Configure the chart
+    chart.configure_mesh()
+        .x_desc("Time (s)")
+        .y_desc("Latency (ms)")
+        .axis_desc_style(("sans-serif", 20))
+        .label_style(("sans-serif", 15))
+        .draw()
+        .map_err(|e| e.to_string())?;
+    
+    // Add each command as a series
+    let mut color_idx = 0;
+    for (command, events) in &command_groups {
+        let color = colors[color_idx % colors.len()];
+        color_idx += 1;
+        
+        let filtered_events: Vec<&UFSCUSTOM> = events.iter()
+            .filter(|e| e.dtoc > 0.0)
+            .cloned()
+            .collect();
+        
+        if !filtered_events.is_empty() {
+            chart.draw_series(filtered_events.iter().map(|event| {
+                Circle::new((event.start_time, event.dtoc), 2, color.filled())
+            }))
+            .map_err(|e| e.to_string())?
+            .label(command)
+            .legend(move |(x, y)| Circle::new((x + 10, y), 3, color.filled()));
+        }
+    }
+    
+    // Draw the legend
+    chart.configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .legend_area_size(22)
+        .draw()
+        .map_err(|e| e.to_string())?;
+    
+    root.present().map_err(|e| e.to_string())?;
+    println!("UFSCUSTOM Latency over Time PNG chart saved to: {}", png_path);
+    
     Ok(())
 }

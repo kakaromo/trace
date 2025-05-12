@@ -180,6 +180,7 @@ fn save_ufscustom_to_parquet(
     traces: &[UFSCUSTOM],
     filepath: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let opcode = StringArray::from(traces.iter().map(|t| t.opcode.as_str()).collect::<Vec<_>>());
     let lba = UInt64Array::from(traces.iter().map(|t| t.lba).collect::<Vec<_>>());
     let size = UInt32Array::from(traces.iter().map(|t| t.size).collect::<Vec<_>>());
     let start_time = Float64Array::from(traces.iter().map(|t| t.start_time).collect::<Vec<_>>());
@@ -187,6 +188,7 @@ fn save_ufscustom_to_parquet(
     let dtoc = Float64Array::from(traces.iter().map(|t| t.dtoc).collect::<Vec<_>>());
 
     let schema = arrow::datatypes::Schema::new(vec![
+        arrow::datatypes::Field::new("opcode", arrow::datatypes::DataType::Utf8, false),
         arrow::datatypes::Field::new("lba", arrow::datatypes::DataType::UInt64, false),
         arrow::datatypes::Field::new("size", arrow::datatypes::DataType::UInt32, false),
         arrow::datatypes::Field::new("start_time", arrow::datatypes::DataType::Float64, false),
@@ -195,6 +197,7 @@ fn save_ufscustom_to_parquet(
     ]);
 
     let columns: Vec<ArrayRef> = vec![
+        Arc::new(opcode),
         Arc::new(lba),
         Arc::new(size),
         Arc::new(start_time),

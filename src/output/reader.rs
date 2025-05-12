@@ -230,6 +230,7 @@ fn convert_batch_to_ufscustom(
     let mut result = Vec::with_capacity(num_rows);
 
     // 각 컬럼에서 데이터 추출
+    let opcode_array = batch.column(schema.index_of("opcode")?).as_string::<i32>();
     let lba_array = batch
         .column(schema.index_of("lba")?)
         .as_primitive::<UInt64Type>();
@@ -249,7 +250,7 @@ fn convert_batch_to_ufscustom(
     // 각 행을 UFSCUSTOM 구조체로 변환
     for i in 0..num_rows {
         let ufscustom = UFSCUSTOM {
-            opcode: "custom_opcode".to_string(), // 예시로 고정된 값 사용
+            opcode: opcode_array.value(i).to_string(),
             lba: lba_array.value(i),
             size: size_array.value(i),
             start_time: start_time_array.value(i),
