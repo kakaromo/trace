@@ -552,7 +552,7 @@ pub fn generate_charts(
 
     // Block I/O 차트 생성
     if !processed_blocks.is_empty() {
-        match create_block_charts(processed_blocks, output_prefix) {
+        match create_block_io_plotters(processed_blocks, output_prefix) {
             Ok(_) => {
                 println!("Block I/O charts have been generated.");
             }
@@ -849,7 +849,7 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
     qd_chart = qd_chart.legend(CharmingLegend::new().data(legend_data.clone()));
 
     // opcode별 시리즈 추가
-    color_idx = 0;
+    let mut color_idx = 0;
     for (opcode, events) in &opcode_groups {
         let qd_data = events.iter()
             .map(|e| vec![e.time, e.qd as f64])
@@ -898,7 +898,7 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
     dtoc_chart = dtoc_chart.legend(CharmingLegend::new().data(legend_data.clone()));
 
     // opcode별 시리즈 추가
-    color_idx = 0;
+    let mut color_idx = 0;
     for (opcode, events) in &opcode_groups {
         let dtoc_data = events.iter()
             .filter(|e| e.dtoc > 0.0)
@@ -948,7 +948,7 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
     ctod_chart = ctod_chart.legend(CharmingLegend::new().data(legend_data.clone()));
 
     // opcode별 시리즈 추가
-    color_idx = 0;
+    let mut color_idx = 0;
     for (opcode, events) in &opcode_groups {
         let ctod_data = events.iter()
             .filter(|e| e.ctod > 0.0)
@@ -998,7 +998,7 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
     ctoc_chart = ctoc_chart.legend(CharmingLegend::new().data(legend_data.clone()));
 
     // opcode별 시리즈 추가
-    color_idx = 0;
+    let mut color_idx = 0;
     for (opcode, events) in &opcode_groups {
         let ctoc_data = events.iter()
             .filter(|e| e.ctoc > 0.0)
@@ -1054,344 +1054,226 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
     Ok(())
 }
 
-/// Creates Block I/O charts using Charming library with I/O type-based legends
-pub fn create_block_charts(data: &[Block], output_prefix: &str) -> Result<(), String> {
+/// Creates Block I/O charts using Plotters library
+fn create_block_io_plotters(data: &[Block], output_prefix: &str) -> Result<(), String> {
     if data.is_empty() {
         return Err("Block I/O data is empty.".to_string());
     }
-
-    // I/O 유형별로 데이터 그룹화
+    
+    // I/O 타입별로 데이터 그룹화
     let mut io_type_groups: HashMap<String, Vec<&Block>> = HashMap::new();
-    for event in data {
-        io_type_groups.entry(event.io_type.clone()).or_default().push(event);
+    for block in data {
+        io_type_groups.entry(block.io_type.clone()).or_default().push(block);
     }
-
-    // 색상 맵
-    let color_map = [
-        "#5470c6", "#91cc75", "#fac858", "#ee6666", 
-        "#73c0de", "#3ba272", "#fc8452", "#9a60b4"
-    ];
-
-    // 1. Sector/LBA over Time chart with I/O type-based legend
-    let mut sector_chart = Chart::new()
-        .title(CharmingTitle::new().text("Block Sector/LBA over Time by I/O Type"))
-        .tooltip(Tooltip::new().trigger(Trigger::Axis))
-        .x_axis(
-            CharmingAxis::new()
-                .type_(AxisType::Value)
-                .name("Time (s)")
-                .name_location(NameLocation::Middle)
-                .name_gap(30)
-        )
-        .y_axis(
-            CharmingAxis::new()
-                .type_(AxisType::Value)
-                .name("Sector/LBA")
-                .name_location(NameLocation::Middle)
-                .name_gap(45)
-        )
-        .grid(Grid::new().right("5%").bottom("10%").left("5%").top("15%"));
-
-    // 범례 데이터 준비
-    let mut legend_data: Vec<String> = io_type_groups.keys().cloned().collect();
-    legend_data.sort();
-    sector_chart = sector_chart.legend(CharmingLegend::new().data(legend_data.clone()));
-
-    // I/O 타입별 시리즈 추가
-    let mut color_idx = 0;
-    for (io_type, events) in &io_type_groups {
-        let sector_data = events.iter()
-            .map(|e| vec![e.time, e.sector as f64])
-            .collect::<Vec<Vec<f64>>>();
-
-        let color = match io_type.as_str() {
-            "READ" => "#5470c6",
-            "WRITE" => "#91cc75",
-            _ => color_map[color_idx % color_map.len()],
-        };
-        color_idx += 1;
-
-        if !sector_data.is_empty() {
-            sector_chart = sector_chart.series(
-                CharmingScatter::new()
-                    .name(io_type)
-                    .data(sector_data)
-                    .symbol_size(8)
-                    .item_style(ItemStyle::new().color(color))
-            );
+    
+    // PNG 파일 경로 생성
+    let png_path = format!("{}_block_io_analysis_plotters.png", output_prefix);
+    
+    // Create the drawing area
+    let root = BitMapBackend::new(&png_path, (1000, 800))
+        .into_drawing_area();
+    root.fill(&WHITE).map_err(|e| e.to_string())?;
+    
+    // 차트 영역과 레전드 영역을 분리
+    let (chart_area, legend_area) = root.split_horizontally(800);
+    
+    // Find min and max values for axes
+    let min_time = data.iter().map(|e| e.time).fold(f64::MAX, |a, b| a.min(b));
+    let max_time = data.iter().map(|e| e.time).fold(f64::MIN, |a, b| a.max(b));
+    
+    let min_latency = data.iter()
+        .filter(|b| b.dtoc > 0.0)
+        .map(|b| b.dtoc)
+        .fold(f64::MAX, |a, b| a.min(b));
+    
+    let max_latency = data.iter()
+        .map(|b| b.dtoc)
+        .fold(0.0, |a, b| if a > b { a } else { b });
+    
+    // Add padding
+    let x_range = max_time - min_time;
+    let y_range = max_latency - min_latency;
+    let time_padding = x_range * 0.05;
+    let latency_padding = y_range * 0.05;
+    
+    let min_time = min_time - time_padding;
+    let max_time = max_time + time_padding;
+    let min_latency = min_latency.max(0.0) - latency_padding.max(0.0);  // Don't go below 0
+    let max_latency = max_latency + latency_padding;
+    
+    // Create the chart
+    let mut chart = ChartBuilder::on(&chart_area)
+        .caption("Block I/O Latency over Time by I/O Type", ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(50)
+        .y_label_area_size(60)
+        .build_cartesian_2d(min_time..max_time, min_latency..max_latency)
+        .map_err(|e| e.to_string())?;
+    
+    // Configure the chart
+    chart.configure_mesh()
+        .x_desc("Time (s)")
+        .y_desc("Latency (ms)")
+        .axis_desc_style(("sans-serif", 20))
+        .label_style(("sans-serif", 15))
+        .draw()
+        .map_err(|e| e.to_string())?;
+    
+    // I/O 타입에 따른 색상 매핑
+    let get_color_for_io_type = |io_type: &str| -> RGBColor {
+        if let Some(first_char) = io_type.chars().next() {
+            match first_char {
+                'R' => RGBColor(65, 105, 225),   // Read operations (R, RA, RAM, RS...) - 파란색 계열
+                'W' => RGBColor(220, 20, 60),    // Write operations (W, WM, WS...) - 빨간색 계열
+                'F' => RGBColor(255, 215, 0),    // Sync/Flush operations - 노란색 계열
+                'D' => RGBColor(138, 43, 226),   // Discard operations - 보라색 계열
+                _ => RGBColor(50, 50, 50),       // 기타 - 검은색 계열
+            }
+        } else {
+            RGBColor(50, 50, 50)  // Empty string fallback
         }
-    }
-
-    let sector_chart_path = format!("{}_block_sector_time.html", output_prefix);
-    let mut html_renderer = HtmlRenderer::new("Block Sector/LBA over Time by I/O Type", 1000, 800);
-    html_renderer.save(&sector_chart, &sector_chart_path).map_err(|e| e.to_string())?;
-    println!("Block Sector/LBA chart saved: {}", sector_chart_path);
-
-    // 2. Queue Depth over Time chart with I/O type-based legend
-    let mut qd_chart = Chart::new()
-        .title(CharmingTitle::new().text("Block Queue Depth over Time by I/O Type"))
-        .tooltip(Tooltip::new().trigger(Trigger::Axis))
-        .x_axis(
-            CharmingAxis::new()
-                .type_(AxisType::Value)
-                .name("Time (s)")
-                .name_location(NameLocation::Middle)
-                .name_gap(30)
-        )
-        .y_axis(
-            CharmingAxis::new()
-                .type_(AxisType::Value)
-                .name("Queue Depth")
-                .name_location(NameLocation::Middle)
-                .name_gap(45)
-        )
-        .grid(Grid::new().right("5%").bottom("10%").left("5%").top("15%"));
-
-    qd_chart = qd_chart.legend(CharmingLegend::new().data(legend_data.clone()));
-
-    // I/O 타입별 시리즈 추가
-    color_idx = 0;
+    };
+    
+    // I/O 타입별 스캐터 플롯 추가
+    let mut legends = Vec::new();
+    
     for (io_type, events) in &io_type_groups {
-        let qd_data = events.iter()
-            .map(|e| vec![e.time, e.qd as f64])
-            .collect::<Vec<Vec<f64>>>();
-
-        let color = match io_type.as_str() {
-            "READ" => "#5470c6",
-            "WRITE" => "#91cc75",
-            _ => color_map[color_idx % color_map.len()],
-        };
-        color_idx += 1;
-
-        if !qd_data.is_empty() {
-            qd_chart = qd_chart.series(
-                CharmingScatter::new()
-                    .name(io_type)
-                    .data(qd_data)
-                    .symbol_size(8)
-                    .item_style(ItemStyle::new().color(color))
-            );
-        }
-    }
-
-    let qd_chart_path = format!("{}_block_qd_time.html", output_prefix);
-    let mut html_renderer = HtmlRenderer::new("Block Queue Depth over Time by I/O Type", 1000, 800);
-    html_renderer.save(&qd_chart, &qd_chart_path).map_err(|e| e.to_string())?;
-    println!("Block Queue Depth chart saved: {}", qd_chart_path);
-
-    // 3. Dispatch to Complete Latency over Time chart with I/O type-based legend
-    let mut dtoc_chart = Chart::new()
-        .title(CharmingTitle::new().text("Block Dispatch to Complete Latency over Time by I/O Type"))
-        .tooltip(Tooltip::new().trigger(Trigger::Axis))
-        .x_axis(
-            CharmingAxis::new()
-                .type_(AxisType::Value)
-                .name("Time (s)")
-                .name_location(NameLocation::Middle)
-                .name_gap(30)
-        )
-        .y_axis(
-            CharmingAxis::new()
-                .type_(AxisType::Value)
-                .name("Dispatch to Complete Latency (ms)")
-                .name_location(NameLocation::Middle)
-                .name_gap(45)
-        )
-        .grid(Grid::new().right("5%").bottom("10%").left("5%").top("15%"));
-
-    dtoc_chart = dtoc_chart.legend(CharmingLegend::new().data(legend_data.clone()));
-
-    // I/O 타입별 시리즈 추가
-    color_idx = 0;
-    for (io_type, events) in &io_type_groups {
-        let dtoc_data = events.iter()
+        let color = get_color_for_io_type(io_type);
+        let filtered_events: Vec<&Block> = events.iter()
             .filter(|e| e.dtoc > 0.0)
-            .map(|e| vec![e.time, e.dtoc])
-            .collect::<Vec<Vec<f64>>>();
-
-        let color = match io_type.as_str() {
-            "READ" => "#5470c6",
-            "WRITE" => "#91cc75",
-            _ => color_map[color_idx % color_map.len()],
-        };
-        color_idx += 1;
-
-        if !dtoc_data.is_empty() {
-            dtoc_chart = dtoc_chart.series(
-                CharmingScatter::new()
-                    .name(io_type)
-                    .data(dtoc_data)
-                    .symbol_size(8)
-                    .item_style(ItemStyle::new().color(color))
-            );
+            .cloned()
+            .collect();
+        
+        if !filtered_events.is_empty() {
+            legends.push((io_type.clone(), color));
+            
+            // 스캐터 플롯 그리기 - 포인트 크기를 2로 작게 설정
+            chart.draw_series(
+                filtered_events.iter().map(|event| 
+                    Circle::new((event.time, event.dtoc), 2, color.filled())
+                )
+            )
+            .map_err(|e| e.to_string())?;
         }
     }
-
-    let dtoc_chart_path = format!("{}_block_dtoc_time.html", output_prefix);
-    let mut html_renderer = HtmlRenderer::new("Block Dispatch to Complete Latency by I/O Type", 1000, 800);
-    html_renderer.save(&dtoc_chart, &dtoc_chart_path).map_err(|e| e.to_string())?;
-    println!("Block Dispatch to Complete chart saved: {}", dtoc_chart_path);
-
-    // 4. Complete to Dispatch Latency over Time chart with I/O type-based legend
-    let mut ctod_chart = Chart::new()
-        .title(CharmingTitle::new().text("Block Complete to Dispatch Latency over Time by I/O Type"))
-        .tooltip(Tooltip::new().trigger(Trigger::Axis))
-        .x_axis(
-            CharmingAxis::new()
-                .type_(AxisType::Value)
-                .name("Time (s)")
-                .name_location(NameLocation::Middle)
-                .name_gap(30)
-        )
-        .y_axis(
-            CharmingAxis::new()
-                .type_(AxisType::Value)
-                .name("Complete to Dispatch Latency (ms)")
-                .name_location(NameLocation::Middle)
-                .name_gap(45)
-        )
-        .grid(Grid::new().right("5%").bottom("10%").left("5%").top("15%"));
-
-    ctod_chart = ctod_chart.legend(CharmingLegend::new().data(legend_data.clone()));
-
-    // I/O 타입별 시리즈 추가
-    color_idx = 0;
+    
+    // 레전드 영역을 오른쪽에 그리기
+    legend_area.fill(&WHITE.mix(0.95)).map_err(|e| e.to_string())?;
+    
+    for (i, (name, color)) in legends.iter().enumerate() {
+        // 정수 좌표를 명시적으로 i32로 변환
+        let y_i32 = (50 + i * 30) as i32;
+        
+        // 원 대신 직선으로 표시
+        legend_area
+            .draw(&PathElement::new(
+                vec![(20_i32, y_i32), (50_i32, y_i32)],
+                color.stroke_width(2)
+            ))
+            .map_err(|e| e.to_string())?;
+            
+        legend_area
+            .draw(&Text::new(
+                name.clone(),
+                (60_i32, y_i32),
+                ("sans-serif", 15)
+            ))
+            .map_err(|e| e.to_string())?;
+    }
+    
+    root.present().map_err(|e| e.to_string())?;
+    println!("Block I/O analysis PNG chart saved to: {}", png_path);
+    
+    // LBA vs Latency 스캐터 플롯 추가
+    let png_path = format!("{}_block_lba_latency_plotters.png", output_prefix);
+    
+    // Create the drawing area
+    let root = BitMapBackend::new(&png_path, (1000, 800))
+        .into_drawing_area();
+    root.fill(&WHITE).map_err(|e| e.to_string())?;
+    
+    // 차트 영역과 레전드 영역을 분리
+    let (chart_area, legend_area) = root.split_horizontally(800);
+    
+    // Find min and max values for LBA axis
+    let min_sector = data.iter().map(|e| e.sector as f64).fold(f64::MAX, |a, b| a.min(b));
+    let max_sector = data.iter().map(|e| e.sector as f64).fold(f64::MIN, |a, b| a.max(b));
+    
+    // Add padding for LBA axis
+    let sector_range = max_sector - min_sector;
+    let sector_padding = sector_range * 0.05;
+    
+    let min_sector = min_sector - sector_padding;
+    let max_sector = max_sector + sector_padding;
+    
+    // Create the chart
+    let mut chart = ChartBuilder::on(&chart_area)
+        .caption("Block I/O Sector/LBA vs Latency by I/O Type", ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(50)
+        .y_label_area_size(60)
+        .build_cartesian_2d(min_sector..max_sector, min_latency..max_latency)
+        .map_err(|e| e.to_string())?;
+    
+    // Configure the chart
+    chart.configure_mesh()
+        .x_desc("Sector/LBA")
+        .y_desc("Latency (ms)")
+        .axis_desc_style(("sans-serif", 20))
+        .label_style(("sans-serif", 15))
+        .draw()
+        .map_err(|e| e.to_string())?;
+    
+    // I/O 타입별 스캐터 플롯 추가
+    let mut legends = Vec::new();
+    
     for (io_type, events) in &io_type_groups {
-        let ctod_data = events.iter()
-            .filter(|e| e.ctod > 0.0)
-            .map(|e| vec![e.time, e.ctod])
-            .collect::<Vec<Vec<f64>>>();
-
-        let color = match io_type.as_str() {
-            "READ" => "#5470c6",
-            "WRITE" => "#91cc75",
-            _ => color_map[color_idx % color_map.len()],
-        };
-        color_idx += 1;
-
-        if !ctod_data.is_empty() {
-            ctod_chart = ctod_chart.series(
-                CharmingScatter::new()
-                    .name(io_type)
-                    .data(ctod_data)
-                    .symbol_size(8)
-                    .item_style(ItemStyle::new().color(color))
-            );
+        let color = get_color_for_io_type(io_type);
+        let filtered_events: Vec<&Block> = events.iter()
+            .filter(|e| e.dtoc > 0.0)
+            .cloned()
+            .collect();
+        
+        if !filtered_events.is_empty() {
+            legends.push((io_type.clone(), color));
+            
+            // 스캐터 플롯 그리기
+            chart.draw_series(
+                filtered_events.iter().map(|event| 
+                    Circle::new((event.sector as f64, event.dtoc), 2, color.filled())
+                )
+            )
+            .map_err(|e| e.to_string())?;
         }
     }
-
-    let ctod_chart_path = format!("{}_block_ctod_time.html", output_prefix);
-    let mut html_renderer = HtmlRenderer::new("Block Complete to Dispatch Latency by I/O Type", 1000, 800);
-    html_renderer.save(&ctod_chart, &ctod_chart_path).map_err(|e| e.to_string())?;
-    println!("Block Complete to Dispatch chart saved: {}", ctod_chart_path);
-
-    // 5. Complete to Complete Latency over Time chart with I/O type-based legend
-    let mut ctoc_chart = Chart::new()
-        .title(CharmingTitle::new().text("Block Complete to Complete Latency over Time by I/O Type"))
-        .tooltip(Tooltip::new().trigger(Trigger::Axis))
-        .x_axis(
-            CharmingAxis::new()
-                .type_(AxisType::Value)
-                .name("Time (s)")
-                .name_location(NameLocation::Middle)
-                .name_gap(30)
-        )
-        .y_axis(
-            CharmingAxis::new()
-                .type_(AxisType::Value)
-                .name("Complete to Complete Latency (ms)")
-                .name_location(NameLocation::Middle)
-                .name_gap(45)
-        )
-        .grid(Grid::new().right("5%").bottom("10%").left("5%").top("15%"));
-
-    ctoc_chart = ctoc_chart.legend(CharmingLegend::new().data(legend_data.clone()));
-
-    // I/O 타입별 시리즈 추가
-    color_idx = 0;
-    for (io_type, events) in &io_type_groups {
-        let ctoc_data = events.iter()
-            .filter(|e| e.ctoc > 0.0)
-            .map(|e| vec![e.time, e.ctoc])
-            .collect::<Vec<Vec<f64>>>();
-
-        let color = match io_type.as_str() {
-            "READ" => "#5470c6",
-            "WRITE" => "#91cc75",
-            _ => color_map[color_idx % color_map.len()],
-        };
-        color_idx += 1;
-
-        if !ctoc_data.is_empty() {
-            ctoc_chart = ctoc_chart.series(
-                CharmingScatter::new()
-                    .name(io_type)
-                    .data(ctoc_data)
-                    .symbol_size(8)
-                    .item_style(ItemStyle::new().color(color))
-            );
-        }
+    
+    // 레전드 영역을 오른쪽에 그리기
+    legend_area.fill(&WHITE.mix(0.95)).map_err(|e| e.to_string())?;
+    
+    for (i, (name, color)) in legends.iter().enumerate() {
+        // 정수 좌표를 명시적으로 i32로 변환
+        let y_i32 = (50 + i * 30) as i32;
+        
+        // 원 대신 직선으로 표시
+        legend_area
+            .draw(&PathElement::new(
+                vec![(20_i32, y_i32), (50_i32, y_i32)],
+                color.stroke_width(2)
+            ))
+            .map_err(|e| e.to_string())?;
+            
+        legend_area
+            .draw(&Text::new(
+                name.clone(),
+                (60_i32, y_i32),
+                ("sans-serif", 15)
+            ))
+            .map_err(|e| e.to_string())?;
     }
-
-    let ctoc_chart_path = format!("{}_block_ctoc_time.html", output_prefix);
-    let mut html_renderer = HtmlRenderer::new("Block Complete to Complete Latency by I/O Type", 1000, 800);
-    html_renderer.save(&ctoc_chart, &ctoc_chart_path).map_err(|e| e.to_string())?;
-    println!("Block Complete to Complete chart saved: {}", ctoc_chart_path);
-
-    // 6. Continuity pie chart
-    let continuous_count = data.iter().filter(|d| d.continuous).count();
-    let non_continuous_count = data.len() - continuous_count;
-
-    let mut pie_chart = Chart::new()
-        .title(CharmingTitle::new().text("Block I/O Continuity Distribution"))
-        .tooltip(Tooltip::new().trigger(Trigger::Item))
-        .legend(CharmingLegend::new().orient(Orient::Vertical).left("left"));
-
-    let series_data = vec![
-        vec!["Continuous".to_string(), continuous_count.to_string()],
-        vec!["Non-continuous".to_string(), non_continuous_count.to_string()],
-    ];
-
-    pie_chart = pie_chart.series(
-        CharmingPie::new()
-            .name("Continuity Distribution")
-            .radius(vec!["50%", "70%"])
-            .data(series_data)
-    );
-
-    let continuous_chart_path = format!("{}_block_continuous.html", output_prefix);
-    let mut html_renderer = HtmlRenderer::new("Block I/O Continuity Distribution", 800, 600);
-    html_renderer.save(&pie_chart, &continuous_chart_path).map_err(|e| e.to_string())?;
-    println!("Block Continuity pie chart saved: {}", continuous_chart_path);
-
-    // 7. I/O Type Distribution chart
-    let mut io_type_counts: HashMap<String, usize> = HashMap::new();
-    for event in data {
-        *io_type_counts.entry(event.io_type.clone()).or_insert(0) += 1;
-    }
-
-    let mut io_type_chart = Chart::new()
-        .title(CharmingTitle::new().text("Block I/O Type Distribution"))
-        .tooltip(Tooltip::new().trigger(Trigger::Item))
-        .legend(CharmingLegend::new().orient(Orient::Vertical).left("left"));
-
-    let mut io_series_data = Vec::new();
-    for (io_type, count) in &io_type_counts {
-        io_series_data.push(vec![io_type.clone(), count.to_string()]);
-    }
-
-    io_type_chart = io_type_chart.series(
-        CharmingPie::new()
-            .name("I/O Type")
-            .radius(vec!["50%", "70%"])
-            .data(io_series_data)
-    );
-
-    let io_type_chart_path = format!("{}_block_io_type.html", output_prefix);
-    let mut html_renderer = HtmlRenderer::new("Block I/O Type Distribution", 800, 600);
-    html_renderer.save(&io_type_chart, &io_type_chart_path).map_err(|e| e.to_string())?;
-    println!("Block I/O Type pie chart saved: {}", io_type_chart_path);
-
+    
+    root.present().map_err(|e| e.to_string())?;
+    println!("Block I/O LBA vs Latency PNG chart saved to: {}", png_path);
+    
     Ok(())
 }
 
@@ -1459,43 +1341,15 @@ fn create_ufs_latency_trend_plotters(data: &[UFS], output_prefix: &str) -> Resul
         .into_iter()
         .collect();
     
-    // Aggregate data for smoother line
-    let window_size = 20;
+    // 윈도우 기반 집계 대신 모든 포인트를 표시
     let mut chart_data: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
     
-    for opcode in &opcodes {
-        let mut window_times = Vec::new();
-        let mut window_latencies = Vec::new();
-        
-        for item in &time_sorted_data {
-            if &item.opcode == opcode && item.dtoc > 0.0 {
-                window_times.push(item.time);
-                window_latencies.push(item.dtoc);
-                
-                if window_times.len() >= window_size {
-                    let avg_time = window_times.iter().sum::<f64>() / window_times.len() as f64;
-                    let avg_latency = window_latencies.iter().sum::<f64>() / window_latencies.len() as f64;
-                    
-                    chart_data
-                        .entry(opcode.clone())
-                        .or_insert_with(Vec::new)
-                        .push((avg_time, avg_latency));
-                    
-                    window_times.clear();
-                    window_latencies.clear();
-                }
-            }
-        }
-        
-        // Process any remaining data points
-        if !window_times.is_empty() {
-            let avg_time = window_times.iter().sum::<f64>() / window_times.len() as f64;
-            let avg_latency = window_latencies.iter().sum::<f64>() / window_latencies.len() as f64;
-            
+    for item in &time_sorted_data {
+        if item.dtoc > 0.0 {
             chart_data
-                .entry(opcode.clone())
+                .entry(item.opcode.clone())
                 .or_insert_with(Vec::new)
-                .push((avg_time, avg_latency));
+                .push((item.time, item.dtoc));
         }
     }
     
@@ -1503,17 +1357,16 @@ fn create_ufs_latency_trend_plotters(data: &[UFS], output_prefix: &str) -> Resul
         return Err("No valid data for UFS latency trend chart".to_string());
     }
     
-    // Define colors for different opcodes
-    let colors = [
-        RGBColor(84, 112, 198),   // blue - #5470c6
-        RGBColor(145, 204, 117),  // green - #91cc75
-        RGBColor(250, 200, 88),   // yellow - #fac858
-        RGBColor(238, 102, 102),  // red - #ee6666
-        RGBColor(115, 192, 222),  // light blue - #73c0de
-        RGBColor(59, 162, 114),   // dark green - #3ba272
-        RGBColor(252, 132, 82),   // orange - #fc8452
-        RGBColor(154, 96, 180),   // purple - #9a60b4
-    ];
+    // 색상 매핑 함수 - 명령어 타입에 따라 색상 지정
+    let get_color_for_opcode = |opcode: &str| -> RGBColor {
+        match opcode {
+            "0x28" => RGBColor(65, 105, 225),   // READ - 파란색 계열
+            "0x2a" => RGBColor(220, 20, 60),    // WRITE - 빨간색 계열
+            "0x35" => RGBColor(255, 215, 0),    // SYNC - 노란색 계열
+            "0x2c" | "0x42" => RGBColor(138, 43, 226), // UNMAP/DISCARD - 보라색 계열
+            _ => RGBColor(50, 50, 50),          // 기타 - 검은색 계열
+        }
+    };
     
     // Find min and max values for axes
     let mut min_time = f64::MAX;
@@ -1549,8 +1402,11 @@ fn create_ufs_latency_trend_plotters(data: &[UFS], output_prefix: &str) -> Resul
         .into_drawing_area();
     root.fill(&WHITE).map_err(|e| e.to_string())?;
     
+    // 차트 영역과 레전드 영역을 분리
+    let (chart_area, legend_area) = root.split_horizontally(800);
+    
     // Create the chart
-    let mut chart = ChartBuilder::on(&root)
+    let mut chart = ChartBuilder::on(&chart_area)
         .caption("UFS Latency Trend by Operation Code", ("sans-serif", 30).into_font())
         .margin(10)
         .x_label_area_size(50)
@@ -1567,177 +1423,56 @@ fn create_ufs_latency_trend_plotters(data: &[UFS], output_prefix: &str) -> Resul
         .draw()
         .map_err(|e| e.to_string())?;
     
-    // Add each opcode as a series
-    let mut color_idx = 0;
+    // 명령어별 스캐터 플롯 추가
+    let mut legends = Vec::new();
+    
     for (opcode, points) in &chart_data {
         // Map opcode to a readable name
         let opcode_name = match opcode.as_str() {
             "0x28" => "READ_10",
             "0x2a" => "WRITE_10",
             "0x35" => "SYNCHRONIZE_CACHE_10",
+            "0x2c" => "UNMAP",
+            "0x42" => "DISCARD",
             _ => opcode.as_str(),
         };
         
-        let color = colors[color_idx % colors.len()];
-        color_idx += 1;
+        let color = get_color_for_opcode(opcode);
+        legends.push((opcode_name.to_string(), color));
         
-        if points.len() > 1 {
-            chart.draw_series(LineSeries::new(
-                points.iter().map(|&(x, y)| (x, y)),
-                color.stroke_width(2),
-            ))
-            .map_err(|e| e.to_string())?
-            .label(opcode_name)
-            .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], color.stroke_width(2)));
-        } else if points.len() == 1 {
-            // For single points, use a scatter plot
-            chart.draw_series(
-                points.iter().map(|&(x, y)| Circle::new((x, y), 3, color.filled())),
-            )
-            .map_err(|e| e.to_string())?
-            .label(opcode_name)
-            .legend(move |(x, y)| Circle::new((x + 10, y), 3, color.filled()));
-        }
+        // 스캐터 플롯 그리기 - 포인트 크기를 2로 작게 설정
+        chart.draw_series(
+            points.iter().map(|&(x, y)| Circle::new((x, y), 2, color.filled())),
+        )
+        .map_err(|e| e.to_string())?;
     }
     
-    // Draw the legend
-    chart.configure_series_labels()
-        .background_style(&WHITE.mix(0.8))
-        .border_style(&BLACK)
-        .legend_area_size(22)
-        .draw()
-        .map_err(|e| e.to_string())?;
+    // Draw the legend in the separate area
+    legend_area.fill(&WHITE.mix(0.95)).map_err(|e| e.to_string())?;
+    
+    for (i, (name, color)) in legends.iter().enumerate() {
+        // 정수 좌표를 명시적으로 i32로 변환
+        let y_i32 = (50 + i * 30) as i32;
+        
+        // 원형 대신 직선으로 표시
+        legend_area
+            .draw(&PathElement::new(
+                vec![(20_i32, y_i32), (50_i32, y_i32)],
+                color.stroke_width(2)
+            ))
+            .map_err(|e| e.to_string())?;
+            
+        legend_area
+            .draw(&Text::new(
+                name.clone(),
+                (60_i32, y_i32),
+                ("sans-serif", 15)
+            ))
+            .map_err(|e| e.to_string())?;
+    }
     
     root.present().map_err(|e| e.to_string())?;
     println!("UFS latency trend PNG chart saved to: {}", png_path);
-    
-    Ok(())
-}
-
-/// Create Block I/O charts using Plotters library
-fn create_block_io_plotters(data: &[Block], output_prefix: &str) -> Result<(), String> {
-    // 가장 기본적인 I/O 타입별 레이턴시 비교 차트 생성
-    let mut io_types: HashMap<String, Vec<&Block>> = HashMap::new();
-    for block in data {
-        io_types.entry(block.io_type.clone()).or_default().push(block);
-    }
-    
-    let io_type_labels: Vec<String> = io_types.keys().cloned().collect();
-    let mut avg_latency_data: HashMap<String, f64> = HashMap::new();
-    
-    for io_type in &io_type_labels {
-        let blocks = io_types.get(io_type).unwrap();
-        let avg_latency = blocks.iter()
-            .filter(|b| b.dtoc > 0.0)
-            .map(|b| b.dtoc)
-            .sum::<f64>() / blocks.iter().filter(|b| b.dtoc > 0.0).count().max(1) as f64;
-        avg_latency_data.insert(io_type.clone(), avg_latency);
-    }
-    
-    // PNG 파일 경로 생성
-    let png_path = format!("{}_block_io_analysis_plotters.png", output_prefix);
-    
-    // Create the drawing area
-    let root = BitMapBackend::new(&png_path, (1000, 800))
-        .into_drawing_area();
-    root.fill(&WHITE).map_err(|e| e.to_string())?;
-    
-    // 막대 차트 범위 계산 - 타입을 명시적으로 지정
-    let max_latency = avg_latency_data.values().fold(0.0f64, |acc: f64, &v| if acc > v { acc } else { v }) * 1.1;
-    
-    // Create the chart
-    let mut chart = ChartBuilder::on(&root)
-        .caption("Block I/O Operation Latency Analysis", ("sans-serif", 30).into_font())
-        .margin(10)
-        .x_label_area_size(50)
-        .y_label_area_size(60)
-        .build_cartesian_2d(
-            0i32..(io_type_labels.len() as i32),  // i32로 타입 변환
-            0.0..max_latency
-        )
-        .map_err(|e| e.to_string())?;
-    
-    // Configure the chart
-    chart.configure_mesh()
-        .y_desc("Avg Latency (ms)")
-        .axis_desc_style(("sans-serif", 20))
-        .label_style(("sans-serif", 15))
-        .x_labels(io_type_labels.len())
-        .x_label_formatter(&|idx| {
-            let idx_usize = *idx as usize;  // i32를 usize로 변환
-            if idx_usize < io_type_labels.len() {
-                io_type_labels[idx_usize].clone()
-            } else {
-                String::new()
-            }
-        })
-        .draw()
-        .map_err(|e| e.to_string())?;
-    
-    // 막대 차트 그리기
-    let bars: Vec<(i32, f64, RGBColor)> = io_type_labels.iter().enumerate()  // i32로 변환
-        .map(|(idx, io_type)| {
-            let latency = *avg_latency_data.get(io_type).unwrap_or(&0.0);
-            let color = match io_type.as_str() {
-                "READ" => RGBColor(84, 112, 198),   // blue
-                "WRITE" => RGBColor(145, 204, 117), // green
-                _ => RGBColor(250, 200, 88),        // yellow
-            };
-            
-            (idx as i32, latency, color)  // usize를 i32로 변환
-        })
-        .collect();
-    
-    chart.draw_series(
-        bars.iter().map(|(idx, latency, color)| {
-            let bar_width = 0.7; // 막대 너비 (0.0 - 1.0)
-            let start_x = *idx as f32 - bar_width / 2.0;
-            let end_x = *idx as f32 + bar_width / 2.0;
-            
-            Rectangle::new(
-                [(start_x as i32, 0.0), (end_x as i32, *latency)],
-                color.filled(),
-            )
-        })
-    )
-    .map_err(|e| e.to_string())?;
-    
-    // 범례 그리기
-    let mut legends = Vec::new();
-    for (idx, io_type) in io_type_labels.iter().enumerate() {
-        let color = match io_type.as_str() {
-            "READ" => RGBColor(84, 112, 198),
-            "WRITE" => RGBColor(145, 204, 117),
-            _ => RGBColor(250, 200, 88),
-        };
-        
-        legends.push((io_type.clone(), color));
-    }
-    
-    // Legend area 생성
-    let legend_area = root.titled("Legend", ("sans-serif", 15))
-        .map_err(|e| e.to_string())?;
-    
-    for (idx, (label, color)) in legends.iter().enumerate() {
-        let x: i32 = 100;
-        let y: i32 = idx as i32 * 25 + 30;
-        
-        legend_area.draw(&Rectangle::new(
-            [(x - 10, y - 10), (x + 10, y + 10)],
-            color.filled(),
-        ))
-        .map_err(|e| e.to_string())?;
-        
-        legend_area.draw(&Text::new(
-            label.clone(),
-            (x + 20, y),
-            ("sans-serif", 15),
-        ))
-        .map_err(|e| e.to_string())?;
-    }
-    
-    root.present().map_err(|e| e.to_string())?;
-    println!("Block I/O analysis PNG chart saved to: {}", png_path);
     
     Ok(())
 }
@@ -1754,12 +1489,23 @@ fn create_ufscustom_plotters(data: &[UFSCUSTOM], output_prefix: &str) -> Result<
         command_groups.entry(event.opcode.clone()).or_default().push(event);
     }
     
+    // 명령어 타입에 따른 색상 매핑 함수 정의
+    let get_color_for_opcode = |opcode: &str| -> RGBColor {
+        match opcode {
+            opcode if opcode.contains("0x28") => RGBColor(65, 105, 225),    // READ 명령: 파란색 계열
+            opcode if opcode.contains("0x2a") => RGBColor(220, 20, 60),    // WRITE 명령: 빨간색 계열
+            opcode if opcode.contains("0x35") => RGBColor(255, 215, 0),   // SYNC 명령: 노란색
+            opcode if opcode.contains("0x42") => RGBColor(138, 43, 226),  // UNMAP/DISCARD 명령: 보라색
+            _ => RGBColor(50, 50, 50),   // 기타: 검은색 계열
+        }
+    };
+    
     // LBA vs Time 스캐터 플롯 생성
     // PNG 파일 경로 생성
     let png_path = format!("{}_ufscustom_lba_time_plotters.png", output_prefix);
     
     // Create the drawing area
-    let root = BitMapBackend::new(&png_path, (1000, 800))
+    let root = BitMapBackend::new(&png_path, (1400, 800))
         .into_drawing_area();
     root.fill(&WHITE).map_err(|e| e.to_string())?;
     
@@ -1781,9 +1527,12 @@ fn create_ufscustom_plotters(data: &[UFSCUSTOM], output_prefix: &str) -> Result<
     let min_lba = min_lba - lba_padding;
     let max_lba = max_lba + lba_padding;
     
+    // 차트 영역과 레전드 영역을 분리
+    let (chart_area, legend_area) = root.split_horizontally(800);
+    
     // Create the chart
-    let mut chart = ChartBuilder::on(&root)
-        .caption("UFSCUSTOM LBA over Time by Command", ("sans-serif", 30).into_font())
+    let mut chart = ChartBuilder::on(&chart_area)
+        .caption("UFSCUSTOM LBA over Time by Opcode", ("sans-serif", 30).into_font())
         .margin(10)
         .x_label_area_size(50)
         .y_label_area_size(60)
@@ -1799,39 +1548,45 @@ fn create_ufscustom_plotters(data: &[UFSCUSTOM], output_prefix: &str) -> Result<
         .draw()
         .map_err(|e| e.to_string())?;
     
-    // Define colors
-    let colors = [
-        RGBColor(84, 112, 198),   // blue
-        RGBColor(145, 204, 117),  // green
-        RGBColor(250, 200, 88),   // yellow
-        RGBColor(238, 102, 102),  // red
-        RGBColor(115, 192, 222),  // light blue
-        RGBColor(59, 162, 114),   // dark green
-        RGBColor(252, 132, 82),   // orange
-        RGBColor(154, 96, 180),   // purple
-    ];
-    
     // Add each command as a series
-    let mut color_idx = 0;
+    let mut legends = Vec::new();
+    
     for (command, events) in &command_groups {
-        let color = colors[color_idx % colors.len()];
-        color_idx += 1;
+        // 명령어 타입에 따라 색상 지정
+        let color = get_color_for_opcode(command);
         
+        legends.push((command.clone(), color));
+        
+        // 산점도 포인트 크기를 2로 작게 설정
         chart.draw_series(events.iter().map(|event| {
             Circle::new((event.start_time, event.lba as f64), 2, color.filled())
         }))
-        .map_err(|e| e.to_string())?
-        .label(command)
-        .legend(move |(x, y)| Circle::new((x + 10, y), 3, color.filled()));
+        .map_err(|e| e.to_string())?;
     }
     
-    // Draw the legend
-    chart.configure_series_labels()
-        .background_style(&WHITE.mix(0.8))
-        .border_style(&BLACK)
-        .legend_area_size(22)
-        .draw()
-        .map_err(|e| e.to_string())?;
+    // 레전드 영역을 오른쪽에 그리기
+    legend_area.fill(&WHITE.mix(0.95)).map_err(|e| e.to_string())?;
+    
+    for (i, (name, color)) in legends.iter().enumerate() {
+        // 정수 좌표를 명시적으로 i32로 변환
+        let y_i32 = (50 + i * 30) as i32;
+        
+        // 원 대신 직선으로 표시
+        legend_area
+            .draw(&PathElement::new(
+                vec![(20_i32, y_i32), (50_i32, y_i32)],
+                color.stroke_width(2)
+            ))
+            .map_err(|e| e.to_string())?;
+            
+        legend_area
+            .draw(&Text::new(
+                name.clone(),
+                (60_i32, y_i32),
+                ("sans-serif", 15)
+            ))
+            .map_err(|e| e.to_string())?;
+    }
     
     root.present().map_err(|e| e.to_string())?;
     println!("UFSCUSTOM LBA over Time PNG chart saved to: {}", png_path);
@@ -1840,7 +1595,7 @@ fn create_ufscustom_plotters(data: &[UFSCUSTOM], output_prefix: &str) -> Result<
     let png_path = format!("{}_ufscustom_dtoc_time_plotters.png", output_prefix);
     
     // Create the drawing area
-    let root = BitMapBackend::new(&png_path, (1000, 800))
+    let root = BitMapBackend::new(&png_path, (1400, 800))
         .into_drawing_area();
     root.fill(&WHITE).map_err(|e| e.to_string())?;
     
@@ -1861,8 +1616,11 @@ fn create_ufscustom_plotters(data: &[UFSCUSTOM], output_prefix: &str) -> Result<
     let min_dtoc = min_dtoc - dtoc_padding.max(0.0);
     let max_dtoc = max_dtoc + dtoc_padding;
     
+    // 차트 영역과 레전드 영역을 분리
+    let (chart_area, legend_area) = root.split_horizontally(800);
+    
     // Create the chart
-    let mut chart = ChartBuilder::on(&root)
+    let mut chart = ChartBuilder::on(&chart_area)
         .caption("UFSCUSTOM Latency over Time by Command", ("sans-serif", 30).into_font())
         .margin(10)
         .x_label_area_size(50)
@@ -1880,10 +1638,11 @@ fn create_ufscustom_plotters(data: &[UFSCUSTOM], output_prefix: &str) -> Result<
         .map_err(|e| e.to_string())?;
     
     // Add each command as a series
-    let mut color_idx = 0;
+    let mut legends = Vec::new();
+    
     for (command, events) in &command_groups {
-        let color = colors[color_idx % colors.len()];
-        color_idx += 1;
+        // 명령어 타입에 따라 색상 지정
+        let color = get_color_for_opcode(command);
         
         let filtered_events: Vec<&UFSCUSTOM> = events.iter()
             .filter(|e| e.dtoc > 0.0)
@@ -1891,22 +1650,39 @@ fn create_ufscustom_plotters(data: &[UFSCUSTOM], output_prefix: &str) -> Result<
             .collect();
         
         if !filtered_events.is_empty() {
+            legends.push((command.clone(), color));
+            
+            // 산점도 포인트 크기를 2로 작게 설정
             chart.draw_series(filtered_events.iter().map(|event| {
                 Circle::new((event.start_time, event.dtoc), 2, color.filled())
             }))
-            .map_err(|e| e.to_string())?
-            .label(command)
-            .legend(move |(x, y)| Circle::new((x + 10, y), 3, color.filled()));
+            .map_err(|e| e.to_string())?;
         }
     }
     
-    // Draw the legend
-    chart.configure_series_labels()
-        .background_style(&WHITE.mix(0.8))
-        .border_style(&BLACK)
-        .legend_area_size(22)
-        .draw()
-        .map_err(|e| e.to_string())?;
+    // 레전드 영역을 오른쪽에 그리기
+    legend_area.fill(&WHITE.mix(0.95)).map_err(|e| e.to_string())?;
+    
+    for (i, (name, color)) in legends.iter().enumerate() {
+        // 정수 좌표를 명시적으로 i32로 변환
+        let y_i32 = (50 + i * 30) as i32;
+        
+        // 원 대신 직선으로 표시
+        legend_area
+            .draw(&PathElement::new(
+                vec![(20_i32, y_i32), (50_i32, y_i32)],
+                color.stroke_width(2)
+            ))
+            .map_err(|e| e.to_string())?;
+            
+        legend_area
+            .draw(&Text::new(
+                name.clone(),
+                (60_i32, y_i32),
+                ("sans-serif", 15)
+            ))
+            .map_err(|e| e.to_string())?;
+    }
     
     root.present().map_err(|e| e.to_string())?;
     println!("UFSCUSTOM Latency over Time PNG chart saved to: {}", png_path);
