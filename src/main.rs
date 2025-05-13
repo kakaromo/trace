@@ -470,7 +470,7 @@ fn process_ufscustom_file(custom_file_path: &str, output_prefix: &str) -> io::Re
     log!("\n[3/3] Generating UFSCustom Plotly charts...");
     let charts_start = Instant::now();
 
-    match generate_ufscustom_charts(&traces, output_prefix) {
+    match output::charts::generate_ufscustom_charts(&traces, output_prefix) {
         Ok(()) => log!(
             "UFSCustom Plotly charts generated successfully (Time taken: {:.2}s)",
             charts_start.elapsed().as_secs_f64()
@@ -536,7 +536,7 @@ impl TraceData {
         match self {
             TraceData::UFS(traces) => generate_charts(traces, &[], &[], output_prefix),
             TraceData::Block(traces) => generate_charts(&[], traces, &[], output_prefix),
-            TraceData::UFSCUSTOM(traces) => generate_ufscustom_charts(traces, output_prefix),
+            TraceData::UFSCUSTOM(traces) => output::charts::generate_ufscustom_charts(traces, output_prefix),
             // 새 트레이스 타입 추가 시 여기에 추가
         }
     }
