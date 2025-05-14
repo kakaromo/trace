@@ -32,12 +32,16 @@ impl Default for PlottersConfig {
 
 /// UFS 명령어 타입에 따른 색상 매핑
 pub fn get_color_for_ufs_opcode(opcode: &str) -> RGBColor {
-    match opcode {
-        "0x28" => RGBColor(65, 105, 225),    // READ - 파란색 계열
-        "0x2a" => RGBColor(220, 20, 60),     // WRITE - 빨간색 계열
-        "0x35" => RGBColor(255, 215, 0),     // SYNC - 노란색 계열
-        "0x42" => RGBColor(138, 43, 226),    // UNMAP/DISCARD - 보라색 계열
-        _ => RGBColor(50, 50, 50),           // 기타 - 검은색 계열
+    if opcode == "0x28" {
+        RGBColor(65, 105, 225)      // READ - 파란색 계열
+    } else if opcode == "0x2a" {
+        RGBColor(220, 20, 60)       // WRITE - 빨간색 계열
+    } else if opcode == "0x35" {
+        RGBColor(255, 215, 0)       // SYNC - 노란색 계열
+    } else if opcode == "0x42" {
+        RGBColor(138, 43, 226)      // UNMAP/DISCARD - 보라색 계열
+    } else {
+        RGBColor(50, 50, 50)        // 기타 - 검은색 계열
     }
 }
 
@@ -102,6 +106,131 @@ pub fn draw_legend(
     Ok(())
 }
 
+/// UFS 색상 매핑 헬퍼 함수
+fn ufs_opcode_color_mapper(opcode: &str) -> RGBColor {
+    if opcode == "READ_10" {
+        RGBColor(65, 105, 225)      // READ - 파란색 계열
+    } else if opcode == "WRITE_10" {
+        RGBColor(220, 20, 60)       // WRITE - 빨간색 계열
+    } else if opcode == "SYNCHRONIZE_CACHE_10" {
+        RGBColor(255, 215, 0)       // SYNC - 노란색 계열
+    } else if opcode == "UNMAP" {
+        RGBColor(138, 43, 226)      // UNMAP/DISCARD - 보라색 계열
+    } else {
+        RGBColor(50, 50, 50)        // 기타 - 검은색 계열
+    }
+}
+
+/// 일반적인 X대비 Y 그래프 생성을 위한 함수
+/// T: 데이터 타입, F: X축 추출 함수, G: Y축 데이터 추출 함수, H: 필터 조건 함수
+pub fn create_xy_scatter_chart<T, F, G, H>(
+    data_groups: &HashMap<String, Vec<&T>>,
+    output_path: &str,
+    config: &PlottersConfig,
+    title: &str,
+    x_axis_label: &str,
+    y_axis_label: &str,
+    x_extractor: F,
+    y_extractor: G,
+    color_mapper: fn(&str) -> RGBColor,
+    filter_condition: Option<H>
+) -> Result<(), String>
+where
+    F: Fn(&T) -> f64,
+    G: Fn(&T) -> f64,
+    H: Fn(&&T) -> bool,
+{
+    // Create the drawing area
+    let root = BitMapBackend::new(output_path, (config.width, config.height))
+        .into_drawing_area();
+    root.fill(&WHITE).map_err(|e| e.to_string())?;
+    
+    // 차트 영역과 레전드 영역을 분리
+    let (chart_area, legend_area) = root.split_horizontally(800);
+    
+    // Find min and max values for axes
+    let mut min_x = f64::MAX;
+    let mut max_x = f64::MIN;
+    let mut min_y = f64::MAX;
+    let mut max_y = f64::MIN;
+    
+    for (_, events) in data_groups {
+        for event in events {
+            // 필터 조건이 있다면 적용
+            if let Some(ref cond) = filter_condition {
+                if !cond(event) {
+                    continue;
+                }
+            }
+            
+            let x_value = x_extractor(event);
+            let y_value = y_extractor(event);
+            
+            min_x = min_x.min(x_value);
+            max_x = max_x.max(x_value);
+            min_y = min_y.min(y_value);
+            max_y = max_y.max(y_value);
+        }
+    }
+    
+    // Add padding
+    let (min_x, max_x) = add_padding_to_range(min_x, max_x, 0.05);
+    let min_y = (min_y.max(0.0) - (max_y - min_y) * 0.05).max(0.0); // 0 아래로 내려가지 않게
+    let max_y = max_y + (max_y - min_y) * 0.05;
+    
+    // Create the chart
+    let mut chart = ChartBuilder::on(&chart_area)
+        .caption(title, (config.font_family, config.title_font_size).into_font())
+        .margin(10)
+        .x_label_area_size(50)
+        .y_label_area_size(60)
+        .build_cartesian_2d(min_x..max_x, min_y..max_y)
+        .map_err(|e| e.to_string())?;
+    
+    // Configure the chart
+    chart.configure_mesh()
+        .x_desc(x_axis_label)
+        .y_desc(y_axis_label)
+        .axis_desc_style((config.font_family, config.axis_label_font_size))
+        .label_style((config.font_family, config.tick_label_font_size))
+        .draw()
+        .map_err(|e| e.to_string())?;
+    
+    // Add each group as a series
+    let mut legends = Vec::new();
+    
+    for (group_name, events) in data_groups {
+        // 그룹에 따라 색상 지정
+        let color = color_mapper(group_name);
+        
+        let filtered_events: Vec<&T> = if let Some(ref cond) = filter_condition {
+            events.iter().filter(|e| cond(e)).cloned().collect()
+        } else {
+            events.clone()
+        };
+        
+        if !filtered_events.is_empty() {
+            legends.push((group_name.clone(), color));
+            
+            // 산점도 포인트 그리기
+            chart.draw_series(
+                filtered_events.iter().map(|event| {
+                    Circle::new((x_extractor(event), y_extractor(event)), config.point_size, color.filled())
+                })
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    
+    // 레전드 영역 그리기
+    draw_legend(&legend_area, &legends, config).map_err(|e| e.to_string())?;
+    
+    root.present().map_err(|e| e.to_string())?;
+    println!("Chart saved to: {}", output_path);
+    
+    Ok(())
+}
+
 /// Generate charts using plotters library and save as PNG
 pub fn generate_plotters_charts(
     processed_ufs: &[UFS],
@@ -114,12 +243,43 @@ pub fn generate_plotters_charts(
     
     // UFS 차트 생성
     if !processed_ufs.is_empty() {
+        // UFS DTOC (Dispatch to Complete) 차트
         match create_ufs_latency_trend_plotters(processed_ufs, output_prefix, &config) {
             Ok(_) => {
                 println!("UFS latency trend PNG chart generated with Plotters.");
             }
             Err(e) => {
                 eprintln!("Error generating UFS latency trend PNG chart with Plotters: {}", e);
+            }
+        }
+        
+        // UFS CTOC (Complete to Complete) 차트
+        match create_ufs_ctoc_chart(processed_ufs, output_prefix, &config) {
+            Ok(_) => {
+                println!("UFS complete-to-complete trend PNG chart generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFS complete-to-complete trend PNG chart: {}", e);
+            }
+        }
+        
+        // UFS CTOD (Complete to Dispatch) 차트
+        match create_ufs_ctod_chart(processed_ufs, output_prefix, &config) {
+            Ok(_) => {
+                println!("UFS complete-to-dispatch trend PNG chart generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFS complete-to-dispatch trend PNG chart: {}", e);
+            }
+        }
+        
+        // UFS Queue Depth 차트
+        match create_ufs_qd_chart(processed_ufs, output_prefix, &config) {
+            Ok(_) => {
+                println!("UFS queue depth trend PNG chart generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFS queue depth trend PNG chart: {}", e);
             }
         }
     }
@@ -159,99 +319,41 @@ pub fn create_ufs_latency_trend_plotters(data: &[UFS], output_prefix: &str, conf
         return Err("No UFS data available for generating charts".to_string());
     }
     
-    // Sort data by time
-    let mut time_sorted_data = data.to_vec();
-    time_sorted_data.sort_by(|a, b| {
-        a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    
     // 명령어별로 데이터 그룹화
-    let mut chart_data: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
-    
-    for item in &time_sorted_data {
+    let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
+    for item in data {
         if item.dtoc > 0.0 {
-            chart_data
-                .entry(item.opcode.clone())
-                .or_insert_with(Vec::new)
-                .push((item.time, item.dtoc));
+            opcode_groups.entry(item.opcode.clone()).or_default().push(item);
         }
     }
     
-    if chart_data.is_empty() {
+    if opcode_groups.is_empty() {
         return Err("No valid data for UFS latency trend chart".to_string());
     }
     
-    // X축과 Y축의 범위를 계산
-    let mut min_time = f64::MAX;
-    let mut max_time = f64::MIN;
-    let mut min_latency = f64::MAX;
-    let mut max_latency = f64::MIN;
-    
-    for (_opcode, points) in &chart_data {
-        for &(time, latency) in points {
-            min_time = min_time.min(time);
-            max_time = max_time.max(time);
-            min_latency = min_latency.min(latency);
-            max_latency = max_latency.max(latency);
-        }
+    // 명령어 이름 변환 및 색상 매핑을 위한 새로운 그룹 생성
+    let mut named_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
+    for (opcode, events) in opcode_groups {
+        let opcode_name = get_ufs_opcode_name(&opcode);
+        named_opcode_groups.insert(opcode_name, events);
     }
-    
-    // 축에 패딩 추가
-    let (min_time, max_time) = add_padding_to_range(min_time, max_time, 0.05);
-    let min_latency = (min_latency.max(0.0) - (max_latency - min_latency) * 0.05).max(0.0); // 0 아래로 내려가지 않게
-    let max_latency = max_latency + (max_latency - min_latency) * 0.05;
     
     // PNG 파일 경로 생성
     let png_path = format!("{}_ufs_latency_trend_plotters.png", output_prefix);
     
-    // Create the drawing area
-    let root = BitMapBackend::new(&png_path, (config.width, config.height))
-        .into_drawing_area();
-    root.fill(&WHITE).map_err(|e| e.to_string())?;
+    create_xy_scatter_chart(
+        &named_opcode_groups,
+        &png_path,
+        config,
+        "UFS Latency Trend by Operation Code",
+        "Time (s)",
+        "Latency (ms)",
+        |ufs| ufs.time,
+        |ufs| ufs.dtoc,
+        ufs_opcode_color_mapper,
+        Some(|ufs: &&UFS| ufs.dtoc > 0.0)
+    )?;
     
-    // 차트 영역과 레전드 영역을 분리
-    let (chart_area, legend_area) = root.split_horizontally(800);
-    
-    // Create the chart
-    let mut chart = ChartBuilder::on(&chart_area)
-        .caption("UFS Latency Trend by Operation Code", (config.font_family, config.title_font_size).into_font())
-        .margin(10)
-        .x_label_area_size(50)
-        .y_label_area_size(60)
-        .build_cartesian_2d(min_time..max_time, min_latency..max_latency)
-        .map_err(|e| e.to_string())?;
-    
-    // Configure the chart
-    chart.configure_mesh()
-        .x_desc("Time (s)")
-        .y_desc("Latency (ms)")
-        .axis_desc_style((config.font_family, config.axis_label_font_size))
-        .label_style((config.font_family, config.tick_label_font_size))
-        .draw()
-        .map_err(|e| e.to_string())?;
-    
-    // 명령어별 스캐터 플롯 추가
-    let mut legends = Vec::new();
-    
-    for (opcode, points) in &chart_data {
-        // 명령어 이름과 색상 매핑
-        let opcode_name = get_ufs_opcode_name(opcode);
-        let color = get_color_for_ufs_opcode(opcode);
-        
-        legends.push((opcode_name, color));
-        
-        // 스캐터 플롯 그리기
-        chart.draw_series(
-            points.iter().map(|&(x, y)| Circle::new((x, y), config.point_size, color.filled())),
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    
-    // 레전드 그리기
-    draw_legend(&legend_area, &legends, config).map_err(|e| e.to_string())?;
-    
-    // 차트 표시
-    root.present().map_err(|e| e.to_string())?;
     println!("UFS latency trend PNG chart saved to: {}", png_path);
     
     Ok(())
@@ -271,161 +373,179 @@ pub fn create_block_io_plotters(data: &[Block], output_prefix: &str, config: &Pl
     
     // Block I/O Latency over Time 차트
     {
-        // PNG 파일 경로 생성
         let png_path = format!("{}_block_io_analysis_plotters.png", output_prefix);
         
-        // Create the drawing area
-        let root = BitMapBackend::new(&png_path, (config.width, config.height))
-            .into_drawing_area();
-        root.fill(&WHITE).map_err(|e| e.to_string())?;
+        create_xy_scatter_chart(
+            &io_type_groups,
+            &png_path,
+            config,
+            "Block I/O Latency over Time by I/O Type",
+            "Time (s)",
+            "Latency (ms)",
+            |block| block.time,
+            |block| block.dtoc,
+            get_color_for_io_type,
+            Some(|block: &&Block| block.dtoc > 0.0)
+        )?;
         
-        // 차트 영역과 레전드 영역을 분리
-        let (chart_area, legend_area) = root.split_horizontally(800);
-        
-        // Find min and max values for axes
-        let min_time = data.iter().map(|e| e.time).fold(f64::MAX, |a, b| a.min(b));
-        let max_time = data.iter().map(|e| e.time).fold(f64::MIN, |a, b| a.max(b));
-        
-        let min_latency = data.iter()
-            .filter(|b| b.dtoc > 0.0)
-            .map(|b| b.dtoc)
-            .fold(f64::MAX, |a, b| a.min(b));
-        
-        let max_latency = data.iter()
-            .map(|b| b.dtoc)
-            .fold(0.0_f64, |a: f64, b| a.max(b));
-        
-        // Add padding
-        let (min_time, max_time) = add_padding_to_range(min_time, max_time, 0.05);
-        let min_latency = min_latency.max(0.0) - (max_latency - min_latency) * 0.05;
-        let max_latency = max_latency + (max_latency - min_latency) * 0.05;
-        
-        // Create the chart
-        let mut chart = ChartBuilder::on(&chart_area)
-            .caption("Block I/O Latency over Time by I/O Type", (config.font_family, config.title_font_size).into_font())
-            .margin(10)
-            .x_label_area_size(50)
-            .y_label_area_size(60)
-            .build_cartesian_2d(min_time..max_time, min_latency..max_latency)
-            .map_err(|e| e.to_string())?;
-        
-        // Configure the chart
-        chart.configure_mesh()
-            .x_desc("Time (s)")
-            .y_desc("Latency (ms)")
-            .axis_desc_style((config.font_family, config.axis_label_font_size))
-            .label_style((config.font_family, config.tick_label_font_size))
-            .draw()
-            .map_err(|e| e.to_string())?;
-        
-        // I/O 타입별 스캐터 플롯 추가
-        let mut legends = Vec::new();
-        
-        for (io_type, events) in &io_type_groups {
-            let color = get_color_for_io_type(io_type);
-            let filtered_events: Vec<&Block> = events.iter()
-                .filter(|e| e.dtoc > 0.0)
-                .cloned()
-                .collect();
-            
-            if !filtered_events.is_empty() {
-                legends.push((io_type.clone(), color));
-                
-                // 스캐터 플롯 그리기
-                chart.draw_series(
-                    filtered_events.iter().map(|event| 
-                        Circle::new((event.time, event.dtoc), config.point_size, color.filled())
-                    )
-                )
-                .map_err(|e| e.to_string())?;
-            }
-        }
-        
-        // 레전드 영역 그리기
-        draw_legend(&legend_area, &legends, config).map_err(|e| e.to_string())?;
-        
-        root.present().map_err(|e| e.to_string())?;
         println!("Block I/O analysis PNG chart saved to: {}", png_path);
     }
     
     // LBA vs Latency 스캐터 플롯
     {
-        // PNG 파일 경로 생성
         let png_path = format!("{}_block_lba_latency_plotters.png", output_prefix);
         
-        // Create the drawing area
-        let root = BitMapBackend::new(&png_path, (config.width, config.height))
-            .into_drawing_area();
-        root.fill(&WHITE).map_err(|e| e.to_string())?;
+        create_xy_scatter_chart(
+            &io_type_groups,
+            &png_path,
+            config,
+            "Block I/O Sector/LBA vs Latency by I/O Type",
+            "Sector/LBA",
+            "Latency (ms)",
+            |block| block.sector as f64,
+            |block| block.dtoc,
+            get_color_for_io_type,
+            Some(|block: &&Block| block.dtoc > 0.0)
+        )?;
         
-        // 차트 영역과 레전드 영역을 분리
-        let (chart_area, legend_area) = root.split_horizontally(800);
-        
-        // Find min and max values for LBA axis
-        let min_sector = data.iter().map(|e| e.sector as f64).fold(f64::MAX, |a, b| a.min(b));
-        let max_sector = data.iter().map(|e| e.sector as f64).fold(f64::MIN, |a, b| a.max(b));
-        
-        let min_latency = data.iter()
-            .filter(|b| b.dtoc > 0.0)
-            .map(|b| b.dtoc)
-            .fold(f64::MAX, |a, b| a.min(b));
-        
-        let max_latency = data.iter()
-            .map(|b| b.dtoc)
-            .fold(0.0_f64, |a: f64, b| a.max(b));
-        
-        // Add padding
-        let (min_sector, max_sector) = add_padding_to_range(min_sector, max_sector, 0.05);
-        let min_latency = min_latency.max(0.0) - (max_latency - min_latency) * 0.05;
-        let max_latency = max_latency + (max_latency - min_latency) * 0.05;
-        
-        // Create the chart
-        let mut chart = ChartBuilder::on(&chart_area)
-            .caption("Block I/O Sector/LBA vs Latency by I/O Type", (config.font_family, config.title_font_size).into_font())
-            .margin(10)
-            .x_label_area_size(50)
-            .y_label_area_size(60)
-            .build_cartesian_2d(min_sector..max_sector, min_latency..max_latency)
-            .map_err(|e| e.to_string())?;
-        
-        // Configure the chart
-        chart.configure_mesh()
-            .x_desc("Sector/LBA")
-            .y_desc("Latency (ms)")
-            .axis_desc_style((config.font_family, config.axis_label_font_size))
-            .label_style((config.font_family, config.tick_label_font_size))
-            .draw()
-            .map_err(|e| e.to_string())?;
-        
-        // I/O 타입별 스캐터 플롯 추가
-        let mut legends = Vec::new();
-        
-        for (io_type, events) in &io_type_groups {
-            let color = get_color_for_io_type(io_type);
-            let filtered_events: Vec<&Block> = events.iter()
-                .filter(|e| e.dtoc > 0.0)
-                .cloned()
-                .collect();
-            
-            if !filtered_events.is_empty() {
-                legends.push((io_type.clone(), color));
-                
-                // 스캐터 플롯 그리기
-                chart.draw_series(
-                    filtered_events.iter().map(|event| 
-                        Circle::new((event.sector as f64, event.dtoc), config.point_size, color.filled())
-                    )
-                )
-                .map_err(|e| e.to_string())?;
-            }
-        }
-        
-        // 레전드 영역 그리기
-        draw_legend(&legend_area, &legends, config).map_err(|e| e.to_string())?;
-        
-        root.present().map_err(|e| e.to_string())?;
         println!("Block I/O LBA vs Latency PNG chart saved to: {}", png_path);
     }
+    
+    Ok(())
+}
+
+/// 추가적인 차트 생성을 위한 헬퍼 함수 - UFS CTOC(Complete to Complete) 지표 생성
+pub fn create_ufs_ctoc_chart(data: &[UFS], output_prefix: &str, config: &PlottersConfig) -> Result<(), String> {
+    if data.is_empty() {
+        return Err("No UFS data available for generating charts".to_string());
+    }
+    
+    // 명령어별로 데이터 그룹화
+    let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
+    for item in data {
+        if item.ctoc > 0.0 {
+            opcode_groups.entry(item.opcode.clone()).or_default().push(item);
+        }
+    }
+    
+    if opcode_groups.is_empty() {
+        return Err("No valid CTOC data for UFS chart".to_string());
+    }
+    
+    // 명령어 이름 변환 및 색상 매핑을 위한 새로운 그룹 생성
+    let mut named_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
+    for (opcode, events) in opcode_groups {
+        let opcode_name = get_ufs_opcode_name(&opcode);
+        named_opcode_groups.insert(opcode_name, events);
+    }
+    
+    // PNG 파일 경로 생성
+    let png_path = format!("{}_ufs_ctoc_time_plotters.png", output_prefix);
+    
+    create_xy_scatter_chart(
+        &named_opcode_groups,
+        &png_path,
+        config,
+        "UFS Complete to Complete Time by Operation Code",
+        "Time (s)",
+        "Complete to Complete (ms)",
+        |ufs| ufs.time,
+        |ufs| ufs.ctoc,
+        ufs_opcode_color_mapper,
+        Some(|ufs: &&UFS| ufs.ctoc > 0.0)
+    )?;
+    
+    println!("UFS Complete to Complete PNG chart saved to: {}", png_path);
+    
+    Ok(())
+}
+
+/// 추가적인 차트 생성을 위한 헬퍼 함수 - UFS CTOD(Complete to Dispatch) 지표 생성
+pub fn create_ufs_ctod_chart(data: &[UFS], output_prefix: &str, config: &PlottersConfig) -> Result<(), String> {
+    if data.is_empty() {
+        return Err("No UFS data available for generating charts".to_string());
+    }
+    
+    // 명령어별로 데이터 그룹화
+    let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
+    for item in data {
+        if item.ctod > 0.0 {
+            opcode_groups.entry(item.opcode.clone()).or_default().push(item);
+        }
+    }
+    
+    if opcode_groups.is_empty() {
+        return Err("No valid CTOD data for UFS chart".to_string());
+    }
+    
+    // 명령어 이름 변환 및 색상 매핑을 위한 새로운 그룹 생성
+    let mut named_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
+    for (opcode, events) in opcode_groups {
+        let opcode_name = get_ufs_opcode_name(&opcode);
+        named_opcode_groups.insert(opcode_name, events);
+    }
+    
+    // PNG 파일 경로 생성
+    let png_path = format!("{}_ufs_ctod_time_plotters.png", output_prefix);
+    
+    create_xy_scatter_chart(
+        &named_opcode_groups,
+        &png_path,
+        config,
+        "UFS Complete to Dispatch Time by Operation Code",
+        "Time (s)",
+        "Complete to Dispatch (ms)",
+        |ufs| ufs.time,
+        |ufs| ufs.ctod,
+        ufs_opcode_color_mapper,
+        Some(|ufs: &&UFS| ufs.ctod > 0.0)
+    )?;
+    
+    println!("UFS Complete to Dispatch PNG chart saved to: {}", png_path);
+    
+    Ok(())
+}
+
+/// 추가적인 차트 생성을 위한 헬퍼 함수 - UFS Queue Depth 지표 생성
+pub fn create_ufs_qd_chart(data: &[UFS], output_prefix: &str, config: &PlottersConfig) -> Result<(), String> {
+    if data.is_empty() {
+        return Err("No UFS data available for generating charts".to_string());
+    }
+    
+    // 명령어별로 데이터 그룹화
+    let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
+    for item in data {
+        opcode_groups.entry(item.opcode.clone()).or_default().push(item);
+    }
+    
+    if opcode_groups.is_empty() {
+        return Err("No valid QD data for UFS chart".to_string());
+    }
+    
+    // 명령어 이름 변환 및 색상 매핑을 위한 새로운 그룹 생성
+    let mut named_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
+    for (opcode, events) in opcode_groups {
+        let opcode_name = get_ufs_opcode_name(&opcode);
+        named_opcode_groups.insert(opcode_name, events);
+    }
+    
+    // PNG 파일 경로 생성
+    let png_path = format!("{}_ufs_qd_time_plotters.png", output_prefix);
+    
+    create_xy_scatter_chart(
+        &named_opcode_groups,
+        &png_path,
+        config,
+        "UFS Queue Depth over Time by Operation Code",
+        "Time (s)",
+        "Queue Depth",
+        |ufs| ufs.time,
+        |ufs| ufs.qd as f64,
+        ufs_opcode_color_mapper,
+        Option::<fn(&&UFS) -> bool>::None
+    )?;
+    
+    println!("UFS Queue Depth PNG chart saved to: {}", png_path);
     
     Ok(())
 }
@@ -444,145 +564,41 @@ pub fn create_ufscustom_plotters(data: &[UFSCUSTOM], output_prefix: &str, config
     
     // LBA vs Time 스캐터 플롯 생성
     {
-        // PNG 파일 경로 생성
         let png_path = format!("{}_ufscustom_lba_time_plotters.png", output_prefix);
         
-        // Create the drawing area
-        let root = BitMapBackend::new(&png_path, (config.width, config.height))
-            .into_drawing_area();
-        root.fill(&WHITE).map_err(|e| e.to_string())?;
+        create_xy_scatter_chart(
+            &command_groups,
+            &png_path,
+            config,
+            "UFSCUSTOM LBA over Time by Opcode",
+            "Time (s)",
+            "LBA",
+            |event| event.start_time,
+            |event| event.lba as f64,
+            get_color_for_ufs_opcode,
+            Option::<fn(&&UFSCUSTOM) -> bool>::None
+        )?;
         
-        // Find min and max values for axes
-        let min_time = data.iter().map(|e| e.start_time).fold(f64::MAX, |a, b| a.min(b));
-        let max_time = data.iter().map(|e| e.start_time).fold(f64::MIN, |a, b| a.max(b));
-        
-        let min_lba = data.iter().map(|e| e.lba as f64).fold(f64::MAX, |a, b| a.min(b));
-        let max_lba = data.iter().map(|e| e.lba as f64).fold(f64::MIN, |a, b| a.max(b));
-        
-        // Add padding
-        let (min_time, max_time) = add_padding_to_range(min_time, max_time, 0.05);
-        let (min_lba, max_lba) = add_padding_to_range(min_lba, max_lba, 0.05);
-        
-        // 차트 영역과 레전드 영역을 분리
-        let (chart_area, legend_area) = root.split_horizontally(800);
-        
-        // Create the chart
-        let mut chart = ChartBuilder::on(&chart_area)
-            .caption("UFSCUSTOM LBA over Time by Opcode", (config.font_family, config.title_font_size).into_font())
-            .margin(10)
-            .x_label_area_size(50)
-            .y_label_area_size(60)
-            .build_cartesian_2d(min_time..max_time, min_lba..max_lba)
-            .map_err(|e| e.to_string())?;
-        
-        // Configure the chart
-        chart.configure_mesh()
-            .x_desc("Time (s)")
-            .y_desc("LBA")
-            .axis_desc_style((config.font_family, config.axis_label_font_size))
-            .label_style((config.font_family, config.tick_label_font_size))
-            .draw()
-            .map_err(|e| e.to_string())?;
-        
-        // Add each command as a series
-        let mut legends = Vec::new();
-        
-        for (command, events) in &command_groups {
-            // 명령어 타입에 따라 색상 지정
-            let color = get_color_for_ufs_opcode(command);
-            
-            legends.push((command.clone(), color));
-            
-            // 산점도 포인트 그리기
-            chart.draw_series(events.iter().map(|event| {
-                Circle::new((event.start_time, event.lba as f64), config.point_size, color.filled())
-            }))
-            .map_err(|e| e.to_string())?;
-        }
-        
-        // 레전드 영역을 오른쪽에 그리기
-        draw_legend(&legend_area, &legends, config).map_err(|e| e.to_string())?;
-        
-        root.present().map_err(|e| e.to_string())?;
         println!("UFSCUSTOM LBA over Time PNG chart saved to: {}", png_path);
     }
     
     // DTOC vs Time 스캐터 플롯 생성
     {
-        // PNG 파일 경로 생성
         let png_path = format!("{}_ufscustom_dtoc_time_plotters.png", output_prefix);
         
-        // Create the drawing area
-        let root = BitMapBackend::new(&png_path, (config.width, config.height))
-            .into_drawing_area();
-        root.fill(&WHITE).map_err(|e| e.to_string())?;
+        create_xy_scatter_chart(
+            &command_groups,
+            &png_path,
+            config,
+            "UFSCUSTOM Latency over Time by Command",
+            "Time (s)",
+            "Latency (ms)",
+            |event| event.start_time,
+            |event| event.dtoc,
+            get_color_for_ufs_opcode,
+            Some(|event: &&UFSCUSTOM| event.dtoc > 0.0)
+        )?;
         
-        // Find min and max values for axes
-        let min_time = data.iter().map(|e| e.start_time).fold(f64::MAX, |a, b| a.min(b));
-        let max_time = data.iter().map(|e| e.start_time).fold(f64::MIN, |a, b| a.max(b));
-        
-        let min_dtoc = data.iter()
-            .filter(|e| e.dtoc > 0.0)
-            .map(|e| e.dtoc)
-            .fold(f64::MAX, |a, b| a.min(b));
-        
-        let max_dtoc = data.iter()
-            .map(|e| e.dtoc)
-            .fold(f64::MIN, |a, b| a.max(b));
-        
-        // Add padding for latency axis
-        let (min_time, max_time) = add_padding_to_range(min_time, max_time, 0.05);
-        let min_dtoc = min_dtoc.max(0.0) - (max_dtoc - min_dtoc) * 0.05;
-        let max_dtoc = max_dtoc + (max_dtoc - min_dtoc) * 0.05;
-        
-        // 차트 영역과 레전드 영역을 분리
-        let (chart_area, legend_area) = root.split_horizontally(800);
-        
-        // Create the chart
-        let mut chart = ChartBuilder::on(&chart_area)
-            .caption("UFSCUSTOM Latency over Time by Command", (config.font_family, config.title_font_size).into_font())
-            .margin(10)
-            .x_label_area_size(50)
-            .y_label_area_size(60)
-            .build_cartesian_2d(min_time..max_time, min_dtoc..max_dtoc)
-            .map_err(|e| e.to_string())?;
-        
-        // Configure the chart
-        chart.configure_mesh()
-            .x_desc("Time (s)")
-            .y_desc("Latency (ms)")
-            .axis_desc_style((config.font_family, config.axis_label_font_size))
-            .label_style((config.font_family, config.tick_label_font_size))
-            .draw()
-            .map_err(|e| e.to_string())?;
-        
-        // Add each command as a series
-        let mut legends = Vec::new();
-        
-        for (command, events) in &command_groups {
-            // 명령어 타입에 따라 색상 지정
-            let color = get_color_for_ufs_opcode(command);
-            
-            let filtered_events: Vec<&UFSCUSTOM> = events.iter()
-                .filter(|e| e.dtoc > 0.0)
-                .cloned()
-                .collect();
-            
-            if !filtered_events.is_empty() {
-                legends.push((command.clone(), color));
-                
-                // 산점도 포인트 그리기
-                chart.draw_series(filtered_events.iter().map(|event| {
-                    Circle::new((event.start_time, event.dtoc), config.point_size, color.filled())
-                }))
-                .map_err(|e| e.to_string())?;
-            }
-        }
-        
-        // 레전드 영역을 오른쪽에 그리기
-        draw_legend(&legend_area, &legends, config).map_err(|e| e.to_string())?;
-        
-        root.present().map_err(|e| e.to_string())?;
         println!("UFSCUSTOM Latency over Time PNG chart saved to: {}", png_path);
     }
     
