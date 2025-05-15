@@ -4,6 +4,9 @@ pub mod parsers;
 pub mod processors;
 pub mod utils;
 
+use std::sync::OnceLock;
+use utils::filter::FilterOptions;
+
 // 주요 기능 재내보내기(re-exporting)
 pub use models::{Block, TraceType, UFS, UFSCUSTOM};
 pub use output::{
@@ -14,6 +17,20 @@ pub use output::{
 pub use parsers::log::{parse_log_file, parse_ufscustom_file};
 pub use processors::{block_bottom_half_latency_process, ufs_bottom_half_latency_process};
 pub use utils::latency::{get_user_latency_ranges, set_user_latency_ranges, parse_latency_ranges};
+pub use utils::filter::{filter_block_data, filter_ufs_data, filter_ufscustom_data};
+
+// 전역 필터 옵션 저장
+static FILTER_OPTIONS: OnceLock<FilterOptions> = OnceLock::new();
+
+// 필터 옵션 설정
+pub fn set_filter_options(filter: FilterOptions) {
+    let _ = FILTER_OPTIONS.set(filter);
+}
+
+// 필터 옵션 가져오기
+pub fn get_filter_options() -> Option<&'static FilterOptions> {
+    FILTER_OPTIONS.get()
+}
 
 // 새로운 트레이스 타입을 추가할 때는 다음과 같이 구성하면 됩니다:
 // 1. models/ 디렉토리에 새 트레이스 타입 구조체 추가 (예: nvme.rs)

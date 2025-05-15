@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use bincode::{Encode, Decode};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Encode, Decode)]
 pub struct Block {
     pub time: f64,
     pub process: String,

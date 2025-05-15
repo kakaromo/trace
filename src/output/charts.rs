@@ -879,7 +879,7 @@ fn create_operation_distribution_chart(data: &[UFS], output_prefix: &str) -> Res
     }
     
     // Create the chart
-    let mut chart = Chart::new()
+    let chart = Chart::new()
         .title(CharmingTitle::new().text("UFS Operation Distribution"))
         .tooltip(Tooltip::new().trigger(Trigger::Item))
         .legend(CharmingLegend::new().orient(Orient::Vertical).left("left"))
