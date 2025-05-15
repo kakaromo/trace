@@ -23,12 +23,12 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
             .partial_cmp(&b.time)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    
+
     // 메모리 효율성을 위한 용량 최적화 - 더 큰 초기 용량 설정
     // 더 보수적인 예상을 위해 전체 크기의 1/3을 사용
     let estimated_capacity = ufs_list.len() / 3;
     let mut req_times: HashMap<(u32, String), f64> = HashMap::with_capacity(estimated_capacity);
-    
+
     // 자주 사용되는 opcode 문자열을 저장하는 캐시 생성
     let mut opcode_cache: HashMap<String, String> = HashMap::with_capacity(32);
 
@@ -50,20 +50,22 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
 
     // 배치 처리로 변경하여 메모리 효율성 향상
     let batch_size = 10000; // 한 번에 처리할 항목 수
-    
+
     for batch_start in (0..ufs_list.len()).step_by(batch_size) {
         let batch_end = (batch_start + batch_size).min(ufs_list.len());
-        
+
         // 인덱스 기반 반복문을 iterator + enumerate()로 변경
         for (idx, ufs) in ufs_list[batch_start..batch_end].iter_mut().enumerate() {
             let idx = batch_start + idx; // 전체 인덱스 계산
-            
+
             // 진행 상황 보고 (5% 간격)
             if idx >= last_reported + report_interval {
                 let progress = (idx * 100) / total_events;
                 log!(
                     "  UFS processing progress: {}% ({}/{})",
-                    progress, idx, total_events
+                    progress,
+                    idx,
+                    total_events
                 );
                 last_reported = idx;
             }
@@ -139,7 +141,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
             }
             ufs.qd = current_qd;
         }
-        
+
         // 메모리 사용량 최적화를 위해 더 자주 해시맵 정리 (3배 간격으로)
         if batch_end % (batch_size * 3) == 0 {
             req_times.shrink_to_fit();
@@ -152,7 +154,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     opcode_cache.clear();
     opcode_cache.shrink_to_fit();
     ufs_list.shrink_to_fit();
-    
+
     // 불필요한 참조 명시적 해제
     drop(prev_send_req);
     drop(opcode_cache);

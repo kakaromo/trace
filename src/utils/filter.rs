@@ -3,10 +3,10 @@ use std::io::{self, BufRead};
 // 필터링 옵션을 저장할 구조체 정의
 #[derive(Debug, Clone)]
 pub struct FilterOptions {
-    pub start_time: f64,      // 시작 시간 (ms)
-    pub end_time: f64,        // 종료 시간 (ms)
-    pub start_sector: u64,    // 시작 섹터/LBA
-    pub end_sector: u64,      // 종료 섹터/LBA
+    pub start_time: f64,   // 시작 시간 (ms)
+    pub end_time: f64,     // 종료 시간 (ms)
+    pub start_sector: u64, // 시작 섹터/LBA
+    pub end_sector: u64,   // 종료 섹터/LBA
 }
 
 impl Default for FilterOptions {
@@ -35,8 +35,16 @@ impl FilterOptions {
         FilterOptions {
             start_time: self.start_time,
             end_time: self.end_time,
-            start_sector: if self.start_sector > 0 { self.start_sector / 8 } else { 0 },
-            end_sector: if self.end_sector > 0 { self.end_sector / 8 } else { 0 },
+            start_sector: if self.start_sector > 0 {
+                self.start_sector / 8
+            } else {
+                0
+            },
+            end_sector: if self.end_sector > 0 {
+                self.end_sector / 8
+            } else {
+                0
+            },
         }
     }
 }
@@ -45,7 +53,7 @@ impl FilterOptions {
 pub fn read_filter_options() -> io::Result<FilterOptions> {
     let stdin = io::stdin();
     let mut filter = FilterOptions::default();
-    
+
     // 시작 시간 입력
     println!("start time : ");
     let mut input = String::new();
@@ -55,7 +63,7 @@ pub fn read_filter_options() -> io::Result<FilterOptions> {
             filter.start_time = value;
         }
     }
-    
+
     // 종료 시간 입력
     println!("end time : ");
     input.clear();
@@ -65,7 +73,7 @@ pub fn read_filter_options() -> io::Result<FilterOptions> {
             filter.end_time = value;
         }
     }
-    
+
     // 시작 섹터/LBA 입력
     println!("start sector/lba : ");
     input.clear();
@@ -75,7 +83,7 @@ pub fn read_filter_options() -> io::Result<FilterOptions> {
             filter.start_sector = value;
         }
     }
-    
+
     // 종료 섹터/LBA 입력
     println!("end sector/lba : ");
     input.clear();
@@ -85,18 +93,22 @@ pub fn read_filter_options() -> io::Result<FilterOptions> {
             filter.end_sector = value;
         }
     }
-    
+
     Ok(filter)
 }
 
 // Block 데이터 필터링 함수
-pub fn filter_block_data(block_data: Vec<crate::Block>, filter: &FilterOptions) -> Vec<crate::Block> {
+pub fn filter_block_data(
+    block_data: Vec<crate::Block>,
+    filter: &FilterOptions,
+) -> Vec<crate::Block> {
     // 필터가 활성화되지 않은 경우 원본 데이터 반환
     if !filter.is_time_filter_active() && !filter.is_sector_filter_active() {
         return block_data;
     }
 
-    block_data.into_iter()
+    block_data
+        .into_iter()
         .filter(|item| {
             // 시간 필터 적용
             let time_match = if filter.is_time_filter_active() {
@@ -104,7 +116,7 @@ pub fn filter_block_data(block_data: Vec<crate::Block>, filter: &FilterOptions) 
             } else {
                 true
             };
-            
+
             // 섹터 필터 적용
             let sector_match = if filter.is_sector_filter_active() {
                 // 범위가 겹치는지 확인 (item.sector부터 item.sector + item.size까지)
@@ -113,7 +125,7 @@ pub fn filter_block_data(block_data: Vec<crate::Block>, filter: &FilterOptions) 
             } else {
                 true
             };
-            
+
             // 두 필터 조건 모두 만족해야 함
             time_match && sector_match
         })
@@ -130,7 +142,8 @@ pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec
     // UFS LBA로 변환된 필터 옵션 사용
     let ufs_filter = filter.to_ufs_lba();
 
-    ufs_data.into_iter()
+    ufs_data
+        .into_iter()
         .filter(|item| {
             // 시간 필터 적용
             let time_match = if filter.is_time_filter_active() {
@@ -138,7 +151,7 @@ pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec
             } else {
                 true
             };
-            
+
             // LBA 필터 적용
             let lba_match = if ufs_filter.is_sector_filter_active() {
                 // 범위가 겹치는지 확인 (item.lba부터 item.lba + item.size까지)
@@ -147,7 +160,7 @@ pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec
             } else {
                 true
             };
-            
+
             // 두 필터 조건 모두 만족해야 함
             time_match && lba_match
         })
@@ -155,7 +168,10 @@ pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec
 }
 
 // UFSCUSTOM 데이터 필터링 함수 (start_lba 기준)
-pub fn filter_ufscustom_data(ufscustom_data: Vec<crate::UFSCUSTOM>, filter: &FilterOptions) -> Vec<crate::UFSCUSTOM> {
+pub fn filter_ufscustom_data(
+    ufscustom_data: Vec<crate::UFSCUSTOM>,
+    filter: &FilterOptions,
+) -> Vec<crate::UFSCUSTOM> {
     // 필터가 활성화되지 않은 경우 원본 데이터 반환
     if !filter.is_time_filter_active() && !filter.is_sector_filter_active() {
         return ufscustom_data;
@@ -164,7 +180,8 @@ pub fn filter_ufscustom_data(ufscustom_data: Vec<crate::UFSCUSTOM>, filter: &Fil
     // UFS LBA로 변환된 필터 옵션 사용
     let ufs_filter = filter.to_ufs_lba();
 
-    ufscustom_data.into_iter()
+    ufscustom_data
+        .into_iter()
         .filter(|item| {
             // 시간 필터 적용 (start_time과 end_time 사용)
             let time_match = if filter.is_time_filter_active() {
@@ -173,7 +190,7 @@ pub fn filter_ufscustom_data(ufscustom_data: Vec<crate::UFSCUSTOM>, filter: &Fil
             } else {
                 true
             };
-            
+
             // LBA 필터 적용 (start_lba 기준)
             let lba_match = if ufs_filter.is_sector_filter_active() {
                 // 범위가 겹치는지 확인 (item.lba부터 item.lba + item.size까지)
@@ -182,7 +199,7 @@ pub fn filter_ufscustom_data(ufscustom_data: Vec<crate::UFSCUSTOM>, filter: &Fil
             } else {
                 true
             };
-            
+
             // 두 필터 조건 모두 만족해야 함
             time_match && lba_match
         })

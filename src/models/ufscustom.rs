@@ -1,5 +1,5 @@
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-use bincode::{Encode, Decode};
 
 // UFS는 Universal Flash Storage의 약어이므로 UFs로 변경하지 않고 원래 이름 유지
 #[allow(clippy::upper_case_acronyms)]

@@ -1,5 +1,5 @@
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-use bincode::{Encode, Decode};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Encode, Decode)]
 pub struct Block {

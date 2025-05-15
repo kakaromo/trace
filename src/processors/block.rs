@@ -59,7 +59,9 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                 let progress = (idx * 100) / total_blocks;
                 log!(
                     "  Duplicate removal progress: {}% ({}/{})",
-                    progress, idx, total_blocks
+                    progress,
+                    idx,
+                    total_blocks
                 );
                 last_reported = idx;
             }
@@ -133,8 +135,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     log!("  Calculating Block latency and continuity...");
     let mut filtered_blocks = Vec::with_capacity(deduplicated_blocks.len());
     // 더 큰 초기 용량으로 해시맵 생성 (1/3)
-    let mut req_times: HashMap<(u64, String), f64> =
-        HashMap::with_capacity(estimated_capacity);
+    let mut req_times: HashMap<(u64, String), f64> = HashMap::with_capacity(estimated_capacity);
     let mut current_qd: u32 = 0;
     let mut last_complete_time: Option<f64> = None;
     let mut last_complete_qd0_time: Option<f64> = None;
@@ -151,21 +152,26 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     // 배치 처리로 변경
     for batch_start in (0..deduplicated_blocks.len()).step_by(batch_size) {
         let batch_end = (batch_start + batch_size).min(deduplicated_blocks.len());
-        
+
         // 임시 버퍼 사용으로 메모리 할당 감소
         let mut temp_blocks = Vec::with_capacity(batch_end - batch_start);
-        
+
         // 인덱스 기반 반복문을 iterator + enumerate()로 변경
-        for (local_idx, block_orig) in deduplicated_blocks[batch_start..batch_end].iter().enumerate() {
+        for (local_idx, block_orig) in deduplicated_blocks[batch_start..batch_end]
+            .iter()
+            .enumerate()
+        {
             let idx = batch_start + local_idx; // 전체 인덱스 계산
             let mut block = block_orig.clone();
-            
+
             // Report progress (5% intervals)
             if idx >= last_reported_2 + report_interval_2 {
                 let progress = (idx * 100) / total_dedup;
                 log!(
                     "  Latency calculation progress: {}% ({}/{})",
-                    progress, idx, total_dedup
+                    progress,
+                    idx,
+                    total_dedup
                 );
                 last_reported_2 = idx;
             }
@@ -247,7 +253,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             block.qd = current_qd;
             temp_blocks.push(block);
         }
-        
+
         // 임시 버퍼에서 결과 버퍼로 이동
         filtered_blocks.append(&mut temp_blocks);
 
@@ -261,11 +267,11 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     req_times.clear();
     req_times.shrink_to_fit();
     filtered_blocks.shrink_to_fit();
-    
+
     // 중간 데이터 정리
     deduplicated_blocks.clear();
     deduplicated_blocks.shrink_to_fit();
-    
+
     // 강제 GC 트리거
     drop(sorted_blocks);
     drop(processed_issues);

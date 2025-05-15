@@ -19,7 +19,10 @@ pub fn save_to_parquet(
     save_block_to_parquet(block_traces, &format!("{}_block.parquet", output_path))?;
 
     // UFSCUSTOM 데이터 저장
-    save_ufscustom_to_parquet(ufscustom_traces, &format!("{}_ufscustom.parquet", output_path))?;
+    save_ufscustom_to_parquet(
+        ufscustom_traces,
+        &format!("{}_ufscustom.parquet", output_path),
+    )?;
 
     Ok(())
 }

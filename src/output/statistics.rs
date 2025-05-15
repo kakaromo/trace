@@ -193,31 +193,27 @@ impl LatencyStats {
     fn latency_ranges(&self) -> HashMap<String, usize> {
         // 사용자 정의 레이턴시 범위 또는 기본값 사용
         let user_ranges = get_user_latency_ranges();
-        
+
         let latency_ranges: Vec<(f64, f64, String)> = if let Some(ranges) = user_ranges {
             // 사용자 정의 범위를 사용
             let mut result = Vec::with_capacity(ranges.len() + 1);
-            
+
             // 첫 번째 범위 (0 ~ 첫번째 값)
             result.push((0.0, ranges[0], format!("≤ {}ms", ranges[0])));
-            
+
             // 중간 범위들
-            for i in 0..(ranges.len()-1) {
+            for i in 0..(ranges.len() - 1) {
                 result.push((
-                    ranges[i], 
-                    ranges[i+1], 
-                    format!("{}ms < v ≤ {}ms", ranges[i], ranges[i+1])
+                    ranges[i],
+                    ranges[i + 1],
+                    format!("{}ms < v ≤ {}ms", ranges[i], ranges[i + 1]),
                 ));
             }
-            
+
             // 마지막 범위 (마지막 값 이상)
             let last = ranges.last().unwrap();
-            result.push((
-                *last, 
-                f64::MAX, 
-                format!("> {}ms", last)
-            ));
-            
+            result.push((*last, f64::MAX, format!("> {}ms", last)));
+
             result
         } else {
             // 기본 레이턴시 범위 사용
@@ -242,7 +238,7 @@ impl LatencyStats {
         };
 
         let mut counts: HashMap<String, usize> = HashMap::new();
-        for &(_, _, ref label) in &latency_ranges {
+        for (_, _, label) in &latency_ranges {
             counts.insert(label.clone(), 0);
         }
 
@@ -268,7 +264,6 @@ fn count_sizes<T>(traces: &[&T], size_fn: impl Fn(&&T) -> u32) -> HashMap<u32, u
     }
     size_counts
 }
-
 
 // 모든 트레이스 타입에 공통으로 사용할 통계 처리 함수들
 
@@ -415,7 +410,7 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
             "Complete to Dispatch (ctod)",
             |trace| trace.get_ctod(),
         );
-    
+
         log!(
             "\n[{} Complete to Complete (ctoc) Distribution by Range]",
             trace_type_name
@@ -426,7 +421,6 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
             |trace| trace.get_ctoc(),
         );
     }
-    
 
     // 크기 분포 통계
     log!("\n[{} Request Size Distribution]", trace_type_name);
@@ -528,12 +522,12 @@ fn print_generic_latency_ranges_by_type<T: TraceItem>(
     // 지연 시간 범위를 동적으로 가져오기
     // 첫 번째 통계 객체에서 범위를 가져옴 (비어 있지 않다면)
     let mut range_labels: Vec<String> = Vec::new();
-    
+
     if let Some(&first_type) = types.first() {
         if let Some(stats) = all_stats.get(first_type) {
             let range_counts = stats.latency_ranges();
             range_labels = range_counts.keys().cloned().collect();
-            
+
             // 범위 레이블을 순서대로 정렬하는 완전히 새로운 방식
             range_labels.sort_by(|a, b| {
                 // 특별 케이스: "≤" 패턴은 항상 가장 먼저
@@ -543,7 +537,7 @@ fn print_generic_latency_ranges_by_type<T: TraceItem>(
                 if b.starts_with("≤") {
                     return std::cmp::Ordering::Greater;
                 }
-                
+
                 // 특별 케이스: ">" 패턴은 항상 가장 마지막
                 if a.starts_with(">") {
                     return std::cmp::Ordering::Greater;
@@ -551,26 +545,27 @@ fn print_generic_latency_ranges_by_type<T: TraceItem>(
                 if b.starts_with(">") {
                     return std::cmp::Ordering::Less;
                 }
-                
+
                 // 나머지 "X < v ≤ Y" 패턴: 하한값 X를 추출하여 비교
                 // "숫자ms" 또는 "숫자s" 패턴의 숫자 부분을 추출
                 fn extract_lower_bound(s: &str) -> f64 {
                     let parts: Vec<&str> = s.split_whitespace().collect();
-                    if parts.len() >= 1 {
+                    if !parts.is_empty() {
                         // 첫 번째 부분에서 숫자만 추출
-                        if let Ok(val) = parts[0].replace("ms", "")
-                                                 .replace("s", "")
-                                                 .parse::<f64>() {
+                        if let Ok(val) = parts[0].replace("ms", "").replace("s", "").parse::<f64>()
+                        {
                             return val;
                         }
                     }
                     0.0 // 기본값
                 }
-                
+
                 let a_val = extract_lower_bound(a);
                 let b_val = extract_lower_bound(b);
-                
-                a_val.partial_cmp(&b_val).unwrap_or(std::cmp::Ordering::Equal)
+
+                a_val
+                    .partial_cmp(&b_val)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
         }
     }
@@ -606,7 +601,7 @@ pub fn print_ufscustom_statistics(ufscustom_traces: &[UFSCUSTOM]) {
         log!("UFSCustom 트레이스가 비어 있습니다.");
         return;
     }
-    
+
     // 모든 통계 처리는 이제 print_trace_statistics 함수에서 수행
     print_trace_statistics(ufscustom_traces, "UFSCustom");
 }

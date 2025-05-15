@@ -51,7 +51,9 @@ pub fn read_block_from_parquet(filepath: &str) -> Result<Vec<Block>, Box<dyn std
 }
 
 /// UFSCUSTOM Parquet 파일에서 데이터를 읽어 UFSCUSTOM 구조체 벡터로 반환
-pub fn read_ufscustom_from_parquet(filepath: &str) -> Result<Vec<UFSCUSTOM>, Box<dyn std::error::Error>> {
+pub fn read_ufscustom_from_parquet(
+    filepath: &str,
+) -> Result<Vec<UFSCUSTOM>, Box<dyn std::error::Error>> {
     // 파일 열기
     let file = File::open(filepath)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
