@@ -5,14 +5,20 @@
 ## 주요 기능
 
 1. 로그 파일 파싱: UFS와 Block I/O 이벤트 추출
+   - 동기 및 비동기 파싱 지원
+   - 커스텀 UFS 형식 지원
 2. 데이터 처리: latency 계산 및 continuity 분석
-3. 결과 시각화: Plotly 및 Charming을 사용한 차트 생성
+3. 결과 시각화: 
+   - Plotly를 사용한 인터랙티브 차트 생성
+   - Plotters를 사용한 네이티브 차트 생성
    - 지연 시간 분포 히스토그램
    - 시간별 지연 시간 추이
    - Queue Depth 변화 차트
    - 지연 시간 범위별 분포 차트
    - LBA/섹터와 지연 시간 관계 산점도
-4. 데이터 저장: Parquet 형식으로 분석 데이터 저장
+4. 데이터 저장 및 읽기: 
+   - Parquet 형식으로 분석 데이터 저장
+   - 저장된 Parquet 데이터 읽기 및 재분석
 
 ## 코드 구조 및 설명
 
@@ -37,6 +43,19 @@ pub struct UFS {
     pub ctoc: f64,         // Complete to Complete latency
     pub ctod: f64,         // Complete to Dispatch latency
     pub continuous: bool,  // 연속적인 요청 여부
+}
+```
+
+#### UFSCUSTOM 구조체
+```rust
+// src/models/ufscustom.rs
+pub struct UFSCUSTOM {
+    pub opcode: String,     // 작업 유형(READ, WRITE 등)
+    pub lba: u64,           // Logical Block Address
+    pub size: u32,          // 요청 크기(섹터 수)
+    pub start_time: f64,    // 요청 시작 시간
+    pub end_time: f64,      // 요청 완료 시간
+    pub dtoc: f64,          // Dispatch to Complete latency
 }
 ```
 

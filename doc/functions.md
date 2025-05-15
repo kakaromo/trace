@@ -9,6 +9,7 @@
 4. [출력 모듈 함수](#출력-모듈-함수)
    - [통계 함수](#통계-함수)
    - [Parquet 저장 함수](#parquet-저장-함수)
+   - [Parquet 읽기 함수](#parquet-읽기-함수)
    - [차트 생성 함수](#차트-생성-함수)
 5. [유틸리티 함수](#유틸리티-함수)
 
@@ -64,24 +65,77 @@
 
 **위치**: `src/parsers/log.rs`
 
-**설명**: 로그 파일을 읽고 파싱하여 UFS 및 Block I/O 이벤트를 추출합니다.
+**설명**: 로그 파일을 읽고 파싱하여 트레이스 이벤트를 추출합니다.
 
 **동작**:
 1. 로그 파일 열기 및 크기 확인
-2. 파일 크기에 따라 적절한 처리 방식 선택:
-   - 작은 파일(1GB 이하): `parse_log_file_in_memory()` 호출
-   - 큰 파일(1GB 초과): `parse_log_file_streaming()` 호출
-3. 파싱된 UFS 및 Block I/O 이벤트 반환
+2. 파일 크기에 따라 적절한 처리 방식 선택
+3. 파싱된 트레이스 이벤트 반환
 
 **인자**:
 - `filepath: &str` - 분석할 로그 파일 경로
+- `trace_type: TraceType` - 파싱할 트레이스 타입 (UFS, Block, UFSCUSTOM 등)
 
-**반환 값**: `io::Result<(Vec<UFS>, Vec<Block>)>` - 파싱된 UFS 및 Block I/O 이벤트 벡터
+**반환 값**: `Result<Vec<Box<dyn TraceItem>>>` - 파싱된 트레이스 이벤트 벡터
 
 **최적화 방식**:
 - 파일 크기에 따른 자동 전략 선택
 - 대용량 파일은 메모리 효율적인 스트리밍 방식 사용
 - 소형 파일은 빠른 인메모리 처리 방식 사용
+
+### `parse_log_file_async()`
+
+**위치**: `src/parsers/log_async.rs`
+
+**설명**: 로그 파일을 비동기적으로 읽고 파싱하여 트레이스 이벤트를 추출합니다.
+
+**동작**:
+1. 로그 파일 비동기적으로 열기
+2. 토카이오 런타임 내에서 비동기 처리
+3. 파싱된 트레이스 이벤트 반환
+
+**인자**:
+- `filepath: &str` - 분석할 로그 파일 경로
+- `trace_type: TraceType` - 파싱할 트레이스 타입 (UFS, Block, UFSCUSTOM 등)
+
+**반환 값**: `Result<Vec<Box<dyn TraceItem>>>` - 파싱된 트레이스 이벤트 벡터
+
+**성능 특성**:
+- 비동기 I/O 작업으로 높은 처리량
+- 효율적인 리소스 활용
+- 대규모 파일 처리에 최적화
+
+### `parse_ufscustom_file()`
+
+**위치**: `src/parsers/log.rs`
+
+**설명**: 커스텀 형식의 UFS 로그 파일을 파싱하는 함수입니다.
+
+**동작**:
+1. 로그 파일 열기
+2. 각 라인을 파싱하여 UFSCUSTOM 구조체로 변환
+3. 파싱된 UFSCUSTOM 이벤트 반환
+
+**인자**:
+- `filepath: &str` - 분석할 로그 파일 경로
+
+**반환 값**: `Result<Vec<UFSCUSTOM>>` - 파싱된 UFSCUSTOM 이벤트 벡터
+
+### `parse_ufscustom_file_async()`
+
+**위치**: `src/parsers/log_async.rs`
+
+**설명**: 커스텀 형식의 UFS 로그 파일을 비동기적으로 파싱하는 함수입니다.
+
+**동작**:
+1. 로그 파일 비동기적으로 열기
+2. 각 라인을 비동기적으로 파싱하여 UFSCUSTOM 구조체로 변환
+3. 파싱된 UFSCUSTOM 이벤트 반환
+
+**인자**:
+- `filepath: &str` - 분석할 로그 파일 경로
+
+**반환 값**: `Result<Vec<UFSCUSTOM>>` - 파싱된 UFSCUSTOM 이벤트 벡터
 
 ### `parse_log_file_in_memory()`
 
@@ -451,76 +505,73 @@
 
 **위치**: `src/output/parquet.rs`
 
-**설명**: UFS 및 Block I/O 이벤트를 Parquet 파일로 저장하는 함수입니다.
+**설명**: 분석된 데이터를 Apache Parquet 형식으로 저장하는 함수입니다.
 
 **동작**:
-1. UFS 데이터를 "[prefix]_ufs.parquet" 파일로 저장 (`save_ufs_to_parquet()` 호출)
-2. Block I/O 데이터를 "[prefix]_block.parquet" 파일로 저장 (`save_block_to_parquet()` 호출)
+1. 제공된 데이터 슬라이스를 반복하여 레코드 작성자 생성
+2. Arrow 메모리 버퍼에 데이터 기록
+3. Parquet 파일로 저장
 
 **인자**:
-- `ufs_traces: &[UFS]` - 저장할 UFS 이벤트 슬라이스
-- `block_traces: &[Block]` - 저장할 Block I/O 이벤트 슬라이스
-- `output_prefix: &str` - 출력 파일 접두사
+- `items: &[T]` - 저장할 데이터 항목의 슬라이스 (제네릭 타입 T)
+- `file_path: &str` - 저장할 Parquet 파일 경로
 
-**반환 값**: `Result<(), Box<dyn std::error::Error>>` - 저장 성공 여부
+**반환 값**: `Result<()>` - 성공 또는 실패
 
-**Parquet 포맷 장점**:
-- Column 기반 저장으로 빠른 쿼리 가능
-- 효율적인 압축 알고리즘 지원
-- Schema 정보 내장
-- 다양한 데이터 분석 도구와 호환성
+**지원 타입**:
+- UFS 구조체
+- Block 구조체
+- UFSCUSTOM 구조체
 
-#### `save_ufs_to_parquet()`
+### Parquet 읽기 함수
 
-**위치**: `src/output/parquet.rs`
+#### `read_ufs_from_parquet()`
 
-**설명**: UFS 이벤트를 Parquet 파일로 저장하는 내부 함수입니다.
+**위치**: `src/output/reader.rs`
+
+**설명**: Parquet 파일에서 UFS 데이터를 읽는 함수입니다.
 
 **동작**:
-1. UFS 구조체의 각 필드를 Arrow 배열로 변환:
-   - time, cpu, tag, qd, dtoc, ctoc, ctod 등 숫자 필드
-   - process, action, opcode 등 문자열 필드
-   - continuous 불리언 필드
-2. Parquet schema 정의 및 필드 매핑
-3. Arrow RecordBatch 생성
-4. Parquet 파일로 저장 (압축 및 인코딩 설정 적용)
+1. 파일 경로에서 Parquet 파일 열기
+2. 파일 내용을 Arrow 레코드 배치로 변환
+3. 레코드를 UFS 구조체 벡터로 변환
 
 **인자**:
-- `traces: &[UFS]` - 저장할 UFS 이벤트 슬라이스
-- `filepath: &str` - 저장할 파일 경로
+- `file_path: &str` - 읽을 Parquet 파일 경로
 
-**반환 값**: `Result<(), Box<dyn std::error::Error>>` - 저장 성공 여부
+**반환 값**: `Result<Vec<UFS>>` - UFS 구조체 벡터 또는 오류
 
-**구현 세부사항**:
-- 컬럼별 적절한 Arrow 데이터 타입 사용
-- SNAPPY 압축 방식 적용
-- 내부적으로 Arrow 메모리 관리 최적화
+#### `read_block_from_parquet()`
 
-#### `save_block_to_parquet()`
+**위치**: `src/output/reader.rs`
 
-**위치**: `src/output/parquet.rs`
-
-**설명**: Block I/O 이벤트를 Parquet 파일로 저장하는 내부 함수입니다.
+**설명**: Parquet 파일에서 Block 데이터를 읽는 함수입니다.
 
 **동작**:
-1. Block 구조체의 각 필드를 Arrow 배열로 변환:
-   - time, cpu, devmajor, devminor, sector, size, qd, dtoc, ctoc, ctod 등 숫자 필드
-   - process, flags, action, io_type, comm 등 문자열 필드
-   - continuous 불리언 필드
-2. Parquet schema 정의 및 필드 매핑
-3. Arrow RecordBatch 생성
-4. Parquet 파일로 저장 (압축 및 인코딩 설정 적용)
+1. 파일 경로에서 Parquet 파일 열기
+2. 파일 내용을 Arrow 레코드 배치로 변환
+3. 레코드를 Block 구조체 벡터로 변환
 
 **인자**:
-- `traces: &[Block]` - 저장할 Block I/O 이벤트 슬라이스
-- `filepath: &str` - 저장할 파일 경로
+- `file_path: &str` - 읽을 Parquet 파일 경로
 
-**반환 값**: `Result<(), Box<dyn std::error::Error>>` - 저장 성공 여부
+**반환 값**: `Result<Vec<Block>>` - Block 구조체 벡터 또는 오류
 
-**데이터 활용**:
-- Python/R 등 데이터 분석 도구에서 후속 분석 가능
-- Pandas DataFrame으로 쉽게 로드 가능
-- 대용량 데이터의 효율적인 저장 및 분석
+#### `read_ufscustom_from_parquet()`
+
+**위치**: `src/output/reader.rs`
+
+**설명**: Parquet 파일에서 UFSCUSTOM 데이터를 읽는 함수입니다.
+
+**동작**:
+1. 파일 경로에서 Parquet 파일 열기
+2. 파일 내용을 Arrow 레코드 배치로 변환
+3. 레코드를 UFSCUSTOM 구조체 벡터로 변환
+
+**인자**:
+- `file_path: &str` - 읽을 Parquet 파일 경로
+
+**반환 값**: `Result<Vec<UFSCUSTOM>>` - UFSCUSTOM 구조체 벡터 또는 오류
 
 ### 차트 생성 함수
 
@@ -528,23 +579,47 @@
 
 **위치**: `src/output/charts.rs`
 
-**설명**: UFS 및 Block I/O 데이터를 시각화하는 차트를 생성합니다.
+**설명**: Plotly 라이브러리를 사용하여 트레이스 데이터에 대한 차트를 생성합니다.
 
 **동작**:
-1. `generate_ufs_charts()` 호출하여 UFS 데이터 시각화
-2. `generate_block_charts()` 호출하여 Block I/O 데이터 시각화
-3. 생성된 차트 파일 경로 출력
+1. 트레이스 타입 확인(UFS, Block, 또는 UFSCUSTOM)
+2. 해당 타입에 맞는 차트 생성 함수 호출
+3. 출력 디렉토리에 결과 저장
 
 **인자**:
-- `ufs_traces: &[UFS]` - 시각화할 UFS 이벤트 슬라이스
-- `block_traces: &[Block]` - 시각화할 Block I/O 이벤트 슬라이스
-- `output_prefix: &str` - 출력 파일 접두사
+- `traces: &[Box<dyn TraceItem>]` - 시각화할 트레이스 이벤트 슬라이스
+- `output_dir: &str` - 결과를 저장할 디렉토리 경로
 
-**반환 값**: `Result<(), Box<dyn std::error::Error>>` - 차트 생성 성공 여부
+**반환 값**: `Result<()>` - 차트 생성 성공 여부
 
-**생성되는 파일**:
-- HTML 형식 Plotly 차트 (대화형)
-- PNG 형식 이미지 (정적)
+**차트 종류**:
+- 지연 시간 히스토그램
+- 시간별 추이 차트
+- 큐 깊이 변화 차트
+- 작업 유형별 분포 차트
+
+#### `generate_plotters_charts()`
+
+**위치**: `src/output/plotters_charts.rs`
+
+**설명**: Plotters 라이브러리를 사용하여 트레이스 데이터에 대한 차트를 생성합니다. Plotters는 네이티브 렌더링을 지원하는 Rust 차트 라이브러리입니다.
+
+**동작**:
+1. 트레이스 타입 확인(UFS, Block, 또는 UFSCUSTOM)
+2. 해당 타입에 맞는 차트 생성 함수 호출
+3. PNG, SVG 등의 형식으로 차트 저장
+
+**인자**:
+- `traces: &[Box<dyn TraceItem>]` - 시각화할 트레이스 이벤트 슬라이스
+- `output_dir: &str` - 결과를 저장할 디렉토리 경로
+
+**반환 값**: `Result<()>` - 차트 생성 성공 여부
+
+**Plotters 장점**:
+- 네이티브 렌더링으로 빠른 성능
+- 다양한 출력 형식 지원 (PNG, SVG, PDF 등)
+- 메모리 효율적인 차트 생성
+- 자바스크립트 의존성 없음
 
 #### `generate_ufs_charts()`
 

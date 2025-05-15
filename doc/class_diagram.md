@@ -20,6 +20,9 @@ Trace 프로젝트는 다음과 같은 주요 모듈로 구성되어 있습니�
 +-------------------------+     +--------------------------+
 | - UFS                   |<--->| - ufs_processor          |
 | - Block                 |<--->| - block_processor        |
+| - UFSCUSTOM            |     |                          |
+| - TraceItem             |     |                          |
+| - TraceType             |     |                          |
 +-------------------------+     +--------------------------+
            ^                              ^
            |                              |
@@ -28,8 +31,10 @@ Trace 프로젝트는 다음과 같은 주요 모듈로 구성되어 있습니�
 |         Parsers         |     |          Output          |
 +-------------------------+     +--------------------------+
 | - log_parser            |---->| - charts                 |
-+-------------------------+     | - statistics             |
-                                | - parquet                |
+| - log_async             |     | - statistics             |
++-------------------------+     | - parquet                |
+                                | - plotters_charts        |
+                                | - reader                 |
                                 +--------------------------+
 ```
 
@@ -58,6 +63,18 @@ pub struct UFS {
 }
 ```
 
+#### UFSCUSTOM 구조체
+```rust
+pub struct UFSCUSTOM {
+    pub opcode: String,
+    pub lba: u64,
+    pub size: u32,
+    pub start_time: f64,
+    pub end_time: f64,
+    pub dtoc: f64,   // Dispatch to Complete latency
+}
+```
+
 #### Block 구조체
 ```rust
 pub struct Block {
@@ -81,6 +98,41 @@ pub struct Block {
 }
 ```
 
+#### TraceItem 트레이트
+```rust
+pub trait TraceItem {
+    // 트레이스 항목의 타입을 반환 (UFS의 opcode나 Block의 io_type 등)
+    fn get_type(&self) -> String;
+    
+    // 지연 시간 관련 메서드들
+    fn get_dtoc(&self) -> f64; // Dispatch to Complete 지연 시간
+    fn get_ctoc(&self) -> f64; // Complete to Complete 지연 시간
+    fn get_ctod(&self) -> f64; // Complete to Dispatch 지연 시간
+    
+    // 요청 크기
+    fn get_size(&self) -> u32;
+    
+    // 액션 타입
+    fn get_action(&self) -> &str;
+    
+    // continuous 여부
+    fn is_continuous(&self) -> bool;
+    
+    // Queue Depth
+    fn get_qd(&self) -> u32;
+}
+```
+
+#### TraceType 열거형
+```rust
+pub enum TraceType {
+    UFS,
+    Block,
+    UFSCUSTOM,
+    // 여기에 새로운 트레이스 타입 추가 가능
+}
+```
+
 ### 3.2 Processors
 
 UFS와 Block 데이터를 처리하는 모듈입니다. 주요 기능:
@@ -89,6 +141,15 @@ UFS와 Block 데이터를 처리하는 모듈입니다. 주요 기능:
 - 큐 깊이(queue depth) 추적
 - 연속성(continuity) 확인
 
+#### 주요 함수
+```rust
+// ufs.rs
+pub fn ufs_bottom_half_latency_process(ufs_events: &[UFS]) -> Vec<UFS>
+
+// block.rs
+pub fn block_bottom_half_latency_process(block_events: &[Block]) -> Vec<Block>
+```
+
 ### 3.3 Parsers
 
 로그 파일을 파싱하여 UFS 및 Block 구조체로 변환하는 모듈입니다.
@@ -96,12 +157,48 @@ UFS와 Block 데이터를 처리하는 모듈입니다. 주요 기능:
 - 데이터 유효성 검사
 - 구조체 인스턴스 생성
 
+#### 주요 함수
+```rust
+// log.rs - 동기 버전
+pub fn parse_log_file(file_path: &str, trace_type: TraceType) -> Result<Vec<Box<dyn TraceItem>>>
+pub fn parse_ufscustom_file(file_path: &str) -> Result<Vec<UFSCUSTOM>>
+
+// log_async.rs - 비동기 버전
+pub async fn parse_log_file_async(file_path: &str, trace_type: TraceType) -> Result<Vec<Box<dyn TraceItem>>>
+pub async fn parse_ufscustom_file_async(file_path: &str) -> Result<Vec<UFSCUSTOM>>
+```
+
 ### 3.4 Output
 
 처리된 데이터의 출력을 담당하는 모듈입니다:
 - **charts**: Plotly를 사용한 차트 생성
+- **plotters_charts**: Plotters 라이브러리를 사용한 차트 생성
 - **statistics**: 데이터 통계 계산 및 출력
 - **parquet**: Arrow/Parquet 형식으로 데이터 저장
+- **reader**: 저장된 Parquet 파일에서 데이터 읽기
+
+#### 주요 함수
+```rust
+// charts.rs
+pub fn generate_charts(items: &[Box<dyn TraceItem>], output_dir: &str) -> Result<()>
+
+// plotters_charts.rs
+pub fn generate_plotters_charts(items: &[Box<dyn TraceItem>], output_dir: &str) -> Result<()>
+
+// statistics.rs
+pub fn print_ufs_statistics(ufs_events: &[UFS])
+pub fn print_block_statistics(block_events: &[Block])
+pub fn print_ufscustom_statistics(ufscustom_events: &[UFSCUSTOM])
+
+// parquet.rs
+pub fn save_to_parquet<T>(items: &[T], file_path: &str) -> Result<()>
+where T: Serialize + for<'de> Deserialize<'de> + ?Sized
+
+// reader.rs
+pub fn read_ufs_from_parquet(file_path: &str) -> Result<Vec<UFS>>
+pub fn read_block_from_parquet(file_path: &str) -> Result<Vec<Block>>
+pub fn read_ufscustom_from_parquet(file_path: &str) -> Result<Vec<UFSCUSTOM>>
+```
 
 ## 4. 데이터 흐름
 
