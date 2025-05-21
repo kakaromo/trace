@@ -26,6 +26,28 @@ lazy_static! {
     static ref UFSCUSTOM_RE: Regex = Regex::new(r"^(?P<opcode>0x[0-9a-f]+),(?P<lba>\d+),(?P<size>\d+),(?P<start_time>\d+\.\d+),(?P<end_time>\d+\.\d+)$").unwrap();    
 }
 
+/// Asynchronously read a single line from the given reader and return it as a
+/// UTF-8 `String`. Invalid UTF-8 sequences will be replaced with the Unicode
+/// replacement character. Returns `Ok(None)` when EOF is reached.
+async fn read_line_lossy_async<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    buffer: &mut Vec<u8>,
+) -> io::Result<Option<String>> {
+    buffer.clear();
+    let bytes_read = reader.read_until(b'\n', buffer).await?;
+    if bytes_read == 0 {
+        return Ok(None);
+    }
+    if buffer.ends_with(&[b'\n']) {
+        buffer.pop();
+        if buffer.ends_with(&[b'\r']) {
+            buffer.pop();
+        }
+    }
+    Ok(Some(String::from_utf8_lossy(buffer).to_string()))
+}
+
+
 // 임시 파일 생성 함수 (비동기)
 #[allow(dead_code)]
 async fn create_temp_file_async(prefix: &str) -> io::Result<(std::fs::File, String)> {
@@ -165,8 +187,8 @@ async fn parse_small_file_async(
         (Vec::new(), Vec::new(), Vec::new());
 
     let file = TokioFile::open(filepath).await?;
-    let reader = TokioBufReader::new(file);
-    let mut lines = reader.lines();
+    let mut reader = TokioBufReader::new(file);
+    let mut buf = Vec::new();
 
     // 대기열 크기 설정
     const CHANNEL_SIZE: usize = 1000;
@@ -177,7 +199,10 @@ async fn parse_small_file_async(
         let mut count = 0;
 
         // 라인 비동기 읽기
-        while let Ok(Some(line)) = lines.next_line().await {
+        while let Some(line) = match read_line_lossy_async(&mut reader, &mut buf).await {
+            Ok(result) => result,
+            Err(e) => return Err(e),
+        } {
             if let Some(result) = process_line(&line) {
                 if sender.send(result).await.is_err() {
                     break;
@@ -190,7 +215,7 @@ async fn parse_small_file_async(
             }
         }
 
-        count
+        Ok(count)
     });
 
     // 처리된 결과 수집
@@ -207,7 +232,10 @@ async fn parse_small_file_async(
     }
 
     // 읽기 작업 완료 대기
-    let total_lines = read_task.await.unwrap_or(0);
+    let total_lines = match read_task.await {
+        Ok(Ok(count)) => count,
+        _ => 0,
+    };
 
     println!(
         "파싱 완료: 총 {} 라인 (UFS: {}, Block: {}, UFSCUSTOM: {}), 소요 시간: {:.2}초",
@@ -250,8 +278,8 @@ async fn parse_large_file_async(
 
     // 파일 열기 및 라인 단위 처리
     let file = TokioFile::open(filepath).await?;
-    let reader = TokioBufReader::new(file);
-    let mut lines = reader.lines();
+    let mut reader = TokioBufReader::new(file);
+    let mut buf = Vec::new();
 
     // 청크 크기 및 쓰레드 수 설정
     const CHUNK_SIZE: usize = 100_000;
@@ -394,29 +422,35 @@ async fn parse_large_file_async(
         let mut chunk = Vec::with_capacity(CHUNK_SIZE);
         let mut last_report_time = Instant::now();
 
-        while let Ok(Some(line)) = lines.next_line().await {
-            chunk.push(line);
+        loop {
+            match read_line_lossy_async(&mut reader, &mut buf).await {
+                Ok(Some(line)) => {
+                    chunk.push(line);
 
-            if chunk.len() >= CHUNK_SIZE {
-                let current_chunk = std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_SIZE));
-                // 라운드 로빈 방식으로 작업자에게 분배
-                let worker_index = (total_lines / CHUNK_SIZE) % senders.len();
-                if senders[worker_index].send(current_chunk).await.is_err() {
-                    break;
-                }
+                    if chunk.len() >= CHUNK_SIZE {
+                        let current_chunk = std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK_SIZE));
+                        // 라운드 로빈 방식으로 작업자에게 분배
+                        let worker_index = (total_lines / CHUNK_SIZE) % senders.len();
+                        if senders[worker_index].send(current_chunk).await.is_err() {
+                            break;
+                        }
 
-                total_lines += CHUNK_SIZE;
+                        total_lines += CHUNK_SIZE;
 
-                // 5초마다 진행 상황 보고
-                let now = Instant::now();
-                if now.duration_since(last_report_time).as_secs() >= 5 {
-                    println!(
-                        "처리 중: {} 백만 라인, 경과 시간: {:.2}초",
-                        total_lines / 1_000_000,
-                        start_time.elapsed().as_secs_f64()
-                    );
-                    last_report_time = now;
-                }
+                        // 5초마다 진행 상황 보고
+                        let now = Instant::now();
+                        if now.duration_since(last_report_time).as_secs() >= 5 {
+                            println!(
+                                "처리 중: {} 백만 라인, 경과 시간: {:.2}초",
+                                total_lines / 1_000_000,
+                                start_time.elapsed().as_secs_f64()
+                            );
+                            last_report_time = now;
+                        }
+                    }
+                },
+                Ok(None) => break, // End of file
+                Err(e) => return Err(e), // Propagate the error
             }
         }
 
@@ -433,7 +467,7 @@ async fn parse_large_file_async(
             let _ = sender.closed().await;
         }
 
-        total_lines
+        Ok(total_lines)
     });
 
     // 결과 수집
@@ -453,7 +487,10 @@ async fn parse_large_file_async(
     });
 
     // 라인 읽기 완료 기다림
-    let total_lines = read_task.await?;
+    let total_lines = match read_task.await {
+        Ok(Ok(count)) => count,
+        _ => 0,
+    };
 
     // 모든 데이터 전송 완료 후 결과 채널 닫기
     drop(result_sender);
@@ -683,8 +720,8 @@ pub async fn parse_ufscustom_file_async(filepath: &str) -> io::Result<Vec<UFSCUS
     }
 
     let file = TokioFile::open(filepath).await?;
-    let reader = TokioBufReader::new(file);
-    let mut lines = reader.lines();
+    let mut reader = TokioBufReader::new(file);
+    let mut buf = Vec::new();
 
     let mut ufscustom_traces = Vec::new();
     let mut header_found = false;
@@ -696,7 +733,7 @@ pub async fn parse_ufscustom_file_async(filepath: &str) -> io::Result<Vec<UFSCUS
     let mut chunk = Vec::with_capacity(CHUNK_SIZE);
 
     // 라인 읽기
-    while let Ok(Some(line)) = lines.next_line().await {
+    while let Some(line) = read_line_lossy_async(&mut reader, &mut buf).await? {
         // 헤더 라인 처리
         if line.starts_with("opcode,lba,size,start_time,end_time") {
             header_found = true;

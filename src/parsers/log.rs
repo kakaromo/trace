@@ -18,6 +18,24 @@ lazy_static! {
     static ref UFSCUSTOM_RE: Regex = Regex::new(r"^(?P<opcode>0x[0-9a-f]+),(?P<lba>\d+),(?P<size>\d+),(?P<start_time>\d+\.\d+),(?P<end_time>\d+\.\d+)$").unwrap();    
 }
 
+/// Read a single line from the provided reader and return it as a UTF-8 `String`.
+/// Any invalid UTF-8 sequences will be replaced with the Unicode replacement
+/// character. Returns `Ok(None)` when EOF is reached.
+fn read_line_lossy<R: BufRead>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Result<Option<String>> {
+    buffer.clear();
+    let bytes_read = reader.read_until(b'\n', buffer)?;
+    if bytes_read == 0 {
+        return Ok(None);
+    }
+    if buffer.ends_with(&[b'\n']) {
+        buffer.pop();
+        if buffer.ends_with(&[b'\r']) {
+            buffer.pop();
+        }
+    }
+    Ok(Some(String::from_utf8_lossy(buffer).to_string()))
+}
+
 // Create temporary file path
 fn create_temp_file(prefix: &str) -> io::Result<(File, String)> {
     let temp_path = format!("/tmp/{}_{}.tmp", prefix, random::<u64>());
@@ -351,9 +369,9 @@ fn parse_log_file_in_memory(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
                 println!("메모리 매핑된 파일을 UTF-8로 변환할 수 없음: {}", e);
                 // 대체 방법으로 일반 파일 읽기 사용
                 let mut reader = BufReader::with_capacity(16 * 1024 * 1024, file);
-                let mut content = String::new();
-                reader.read_to_string(&mut content)?;
-                content
+                let mut bytes = Vec::new();
+                reader.read_to_end(&mut bytes)?;
+                String::from_utf8_lossy(&bytes).into_owned()
             }
         };
 
@@ -387,17 +405,17 @@ fn parse_log_file_in_memory(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
     } else {
         // 메모리 매핑 실패 시 기존 방식 사용
         println!("메모리 매핑 실패, 일반 파일 읽기로 처리");
-
-        let reader = BufReader::with_capacity(16 * 1024 * 1024, file);
-
+    
+        let mut reader = BufReader::with_capacity(16 * 1024 * 1024, file);
+    
         // 청크 크기 설정
         const CHUNK_SIZE: usize = 100_000;
         let mut lines_chunk = Vec::with_capacity(CHUNK_SIZE);
         let mut total_lines = 0;
         let mut last_report_time = Instant::now();
-
-        for line_result in reader.lines() {
-            let line = line_result?;
+        let mut buf = Vec::new();
+    
+        while let Some(line) = read_line_lossy(&mut reader, &mut buf)? {
             lines_chunk.push(line);
 
             if lines_chunk.len() >= CHUNK_SIZE {
@@ -575,7 +593,7 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
         // 메모리 매핑 실패 시 일반 스트리밍 처리 (더 큰 버퍼 사용)
         println!("메모리 매핑 실패, 일반 스트리밍으로 처리");
 
-        let reader = BufReader::with_capacity(BUFFER_SIZE, file);
+        let mut reader = BufReader::with_capacity(BUFFER_SIZE, file);
 
         let mut ufs_writer = BufWriter::with_capacity(BUFFER_SIZE, &ufs_temp_file);
         let mut block_writer = BufWriter::with_capacity(BUFFER_SIZE, &block_temp_file);
@@ -587,8 +605,8 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
         let mut processed_lines = 0;
         let mut last_report_time = Instant::now();
 
-        for line_result in reader.lines() {
-            let line = line_result?;
+        let mut buf = Vec::new();
+        while let Some(line) = read_line_lossy(&mut reader, &mut buf)? {
             lines_chunk.push(line);
 
             if lines_chunk.len() >= LINES_PER_CHUNK {
@@ -938,8 +956,9 @@ pub fn parse_ufscustom_log(filepath: &str) -> io::Result<Vec<UFSCUSTOM>> {
                 println!("메모리 매핑된 파일을 UTF-8로 변환할 수 없음: {}", e);
                 // 대체 방법으로 일반 파일 읽기 사용
                 let mut reader = BufReader::with_capacity(16 * 1024 * 1024, file);
-                let mut content = String::new();
-                reader.read_to_string(&mut content)?;
+                let mut bytes = Vec::new();
+                reader.read_to_end(&mut bytes)?;
+                let content = String::from_utf8_lossy(&bytes).into_owned();
                 return process_ufscustom_content(&content);
             }
         };
@@ -952,8 +971,9 @@ pub fn parse_ufscustom_log(filepath: &str) -> io::Result<Vec<UFSCUSTOM>> {
         // 더 큰 버퍼 사용 (16MB)
         let mut reader = BufReader::with_capacity(16 * 1024 * 1024, file);
 
-        let mut content = String::new();
-        reader.read_to_string(&mut content)?;
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        let content = String::from_utf8_lossy(&bytes).into_owned();
 
         process_ufscustom_content(&content)
     }
