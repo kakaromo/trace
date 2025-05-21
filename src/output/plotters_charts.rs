@@ -137,6 +137,9 @@ fn ufs_opcode_color_mapper(opcode: &str) -> RGBColor {
 
 /// 일반적인 X대비 Y 그래프 생성을 위한 함수
 /// T: 데이터 타입, F: X축 추출 함수, G: Y축 데이터 추출 함수, H: 필터 조건 함수
+/// 
+/// 이 함수는 ChartConfig를 사용하는 create_xy_scatter_chart_with_config의 래퍼 함수입니다.
+#[allow(clippy::too_many_arguments)]
 pub fn create_xy_scatter_chart<T, F, G, H>(
     data_groups: &HashMap<String, Vec<&T>>,
     output_path: &str,

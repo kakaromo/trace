@@ -27,9 +27,9 @@ fn read_line_lossy<R: BufRead>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Resu
     if bytes_read == 0 {
         return Ok(None);
     }
-    if buffer.ends_with(&[b'\n']) {
+    if buffer.ends_with(b"\n") {
         buffer.pop();
-        if buffer.ends_with(&[b'\r']) {
+        if buffer.ends_with(b"\r") {
             buffer.pop();
         }
     }

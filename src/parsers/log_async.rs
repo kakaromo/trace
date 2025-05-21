@@ -38,9 +38,9 @@ async fn read_line_lossy_async<R: tokio::io::AsyncBufRead + Unpin>(
     if bytes_read == 0 {
         return Ok(None);
     }
-    if buffer.ends_with(&[b'\n']) {
+    if buffer.ends_with(b"\n") {
         buffer.pop();
-        if buffer.ends_with(&[b'\r']) {
+        if buffer.ends_with(b"\r") {
             buffer.pop();
         }
     }
