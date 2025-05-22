@@ -308,8 +308,20 @@ pub fn generate_plotters_charts(
 
     // UFS 차트 생성
     if !processed_ufs.is_empty() {
+        // UFS lba 차트
+        match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "lba") {
+            Ok(_) => {
+                println!("UFS lba trend PNG chart generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!(
+                    "Error generating UFS lba trend PNG chart with Plotters: {}",
+                    e
+                );
+            }
+        }
         // UFS DTOC (Dispatch to Complete) 차트
-        match create_ufs_latency_trend_plotters(processed_ufs, output_prefix, &config) {
+        match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "dtoc") {
             Ok(_) => {
                 println!("UFS latency trend PNG chart generated with Plotters.");
             }
@@ -322,7 +334,7 @@ pub fn generate_plotters_charts(
         }
 
         // UFS CTOC (Complete to Complete) 차트
-        match create_ufs_ctoc_chart(processed_ufs, output_prefix, &config) {
+        match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "ctoc") {
             Ok(_) => {
                 println!("UFS complete-to-complete trend PNG chart generated with Plotters.");
             }
@@ -335,7 +347,7 @@ pub fn generate_plotters_charts(
         }
 
         // UFS CTOD (Complete to Dispatch) 차트
-        match create_ufs_ctod_chart(processed_ufs, output_prefix, &config) {
+        match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "ctod") {
             Ok(_) => {
                 println!("UFS complete-to-dispatch trend PNG chart generated with Plotters.");
             }
@@ -348,7 +360,7 @@ pub fn generate_plotters_charts(
         }
 
         // UFS Queue Depth 차트
-        match create_ufs_qd_chart(processed_ufs, output_prefix, &config) {
+        match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "qd") {
             Ok(_) => {
                 println!("UFS queue depth trend PNG chart generated with Plotters.");
             }
@@ -360,12 +372,53 @@ pub fn generate_plotters_charts(
 
     // Block I/O 차트 생성
     if !processed_blocks.is_empty() {
-        match create_block_io_plotters(processed_blocks, output_prefix, &config) {
+        // Block dtoc_time (시간에 따른 레이턴시) 차트
+        match create_block_metric_chart(processed_blocks, output_prefix, &config, "dtoc_time") {
             Ok(_) => {
-                println!("Block I/O PNG charts generated with Plotters.");
+                println!("Block I/O latency over time chart generated with Plotters.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O PNG charts with Plotters: {}", e);
+                eprintln!("Error generating Block I/O latency over time chart: {}", e);
+            }
+        }
+
+        // Block dtoc_lba (LBA와 레이턴시) 차트
+        match create_block_metric_chart(processed_blocks, output_prefix, &config, "dtoc_lba") {
+            Ok(_) => {
+                println!("Block I/O LBA vs latency chart generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!("Error generating Block I/O LBA vs latency chart: {}", e);
+            }
+        }
+
+        // Block ctoc (Complete to Complete) 차트
+        match create_block_metric_chart(processed_blocks, output_prefix, &config, "ctoc") {
+            Ok(_) => {
+                println!("Block I/O complete-to-complete chart generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!("Error generating Block I/O complete-to-complete chart: {}", e);
+            }
+        }
+
+        // Block ctod (Complete to Device) 차트
+        match create_block_metric_chart(processed_blocks, output_prefix, &config, "ctod") {
+            Ok(_) => {
+                println!("Block I/O complete-to-device chart generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!("Error generating Block I/O complete-to-device chart: {}", e);
+            }
+        }
+
+        // Block qd (Queue Depth) 차트
+        match create_block_metric_chart(processed_blocks, output_prefix, &config, "qd") {
+            Ok(_) => {
+                println!("Block I/O queue depth chart generated with Plotters.");
+            }
+            Err(e) => {
+                eprintln!("Error generating Block I/O queue depth chart: {}", e);
             }
         }
     }
@@ -387,20 +440,95 @@ pub fn generate_plotters_charts(
     Ok(())
 }
 
-/// Create UFS latency trend chart using Plotters library and save as PNG
-pub fn create_ufs_latency_trend_plotters(
+/// UFS 메트릭 정보를 담는 구조체
+struct UfsMetricInfo<'a> {
+    metric_name: &'a str,
+    metric_label: &'a str,
+    metric_extractor: fn(&UFS) -> f64,
+    x_extractor: fn(&UFS) -> f64,
+    x_axis_label: &'a str,
+    file_suffix: &'a str,
+    require_positive: bool,
+}
+
+/// Block I/O 메트릭 정보를 담는 구조체
+struct BlockMetricInfo<'a> {
+    metric_name: &'a str,
+    metric_label: &'a str,
+    metric_extractor: fn(&Block) -> f64,
+    x_extractor: fn(&Block) -> f64,
+    x_axis_label: &'a str,
+    file_suffix: &'a str,
+    require_positive: bool,
+}
+
+/// 통합된 UFS 지표 차트 생성 함수
+/// 매개변수로 받은 metric에 따라 다양한 UFS 차트를 생성합니다
+pub fn create_ufs_metric_chart(
     data: &[UFS],
     output_prefix: &str,
     config: &PlottersConfig,
+    metric: &str,
 ) -> Result<(), String> {
     if data.is_empty() {
         return Err("No UFS data available for generating charts".to_string());
     }
 
+    // 메트릭 이름과 값 추출기를 매핑
+    let metric_info = match metric {
+        "dtoc" => UfsMetricInfo {
+            metric_name: "Latency",
+            metric_label: "Latency (ms)",
+            metric_extractor: |ufs| ufs.dtoc,
+            x_extractor: |ufs| ufs.time,
+            x_axis_label: "Time (s)",
+            file_suffix: "latency",
+            require_positive: true,
+        },
+        "ctoc" => UfsMetricInfo {
+            metric_name: "Complete to Complete Time",
+            metric_label: "Complete to Complete (ms)",
+            metric_extractor: |ufs| ufs.ctoc,
+            x_extractor: |ufs| ufs.time,
+            x_axis_label: "Time (s)",
+            file_suffix: "ctoc",
+            require_positive: true,
+        },
+        "ctod" => UfsMetricInfo {
+            metric_name: "Complete to Dispatch Time",
+            metric_label: "Complete to Dispatch (ms)",
+            metric_extractor: |ufs| ufs.ctod,
+            x_extractor: |ufs| ufs.time,
+            x_axis_label: "Time (s)",
+            file_suffix: "ctod",
+            require_positive: true,
+        },
+        "qd" => UfsMetricInfo {
+            metric_name: "Queue Depth",
+            metric_label: "Queue Depth",
+            metric_extractor: |ufs| ufs.qd as f64,
+            x_extractor: |ufs| ufs.time,
+            x_axis_label: "Time (s)",
+            file_suffix: "qd",
+            require_positive: false,
+        },
+        "lba" => UfsMetricInfo {
+            metric_name: "LBA",
+            metric_label: "LBA",
+            metric_extractor: |ufs| ufs.lba as f64,
+            x_extractor: |ufs| ufs.time,
+            x_axis_label: "Time (s)",
+            file_suffix: "lba",
+            require_positive: false,
+        },
+        _ => return Err(format!("Unknown metric: {}", metric)),
+    };
+
     // 명령어별로 데이터 그룹화
     let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
     for item in data {
-        if item.dtoc > 0.0 {
+        // 양수 값이 필요한 메트릭은 필터링
+        if !metric_info.require_positive || (metric_info.metric_extractor)(item) > 0.0 {
             opcode_groups
                 .entry(item.opcode.clone())
                 .or_default()
@@ -409,7 +537,7 @@ pub fn create_ufs_latency_trend_plotters(
     }
 
     if opcode_groups.is_empty() {
-        return Err("No valid data for UFS latency trend chart".to_string());
+        return Err(format!("No valid data for UFS {} chart", metric_info.metric_name));
     }
 
     // 명령어 이름 변환 및 색상 매핑을 위한 새로운 그룹 생성
@@ -420,244 +548,161 @@ pub fn create_ufs_latency_trend_plotters(
     }
 
     // PNG 파일 경로 생성
-    let png_path = format!("{}_ufs_latency_trend_plotters.png", output_prefix);
+    let png_path = format!("{}_ufs_{}_plotters.png", output_prefix, metric_info.file_suffix);
+
+    // 필터 조건 생성
+    let filter_condition = if metric_info.require_positive {
+        Some(move |ufs: &&UFS| (metric_info.metric_extractor)(ufs) > 0.0)
+    } else {
+        None
+    };
 
     create_xy_scatter_chart(
         &named_opcode_groups,
         &png_path,
         config,
-        "UFS Latency Trend by Operation Code",
+        &format!("UFS {} by Operation Code", metric_info.metric_name),
         "Time (s)",
-        "Latency (ms)",
+        metric_info.metric_label,
         |ufs| ufs.time,
-        |ufs| ufs.dtoc,
+        metric_info.metric_extractor,
         ufs_opcode_color_mapper,
-        Some(|ufs: &&UFS| ufs.dtoc > 0.0),
+        filter_condition,
     )?;
 
-    println!("UFS latency trend PNG chart saved to: {}", png_path);
+    println!("UFS {} PNG chart saved to: {}", metric_info.metric_name, png_path);
 
     Ok(())
 }
 
-/// Creates Block I/O charts using Plotters library
-pub fn create_block_io_plotters(
+/// 통합된 Block I/O 지표 차트 생성 함수
+/// 매개변수로 받은 metric에 따라 다양한 Block I/O 차트를 생성합니다
+pub fn create_block_metric_chart(
     data: &[Block],
     output_prefix: &str,
     config: &PlottersConfig,
+    metric: &str,
 ) -> Result<(), String> {
     if data.is_empty() {
         return Err("Block I/O data is empty.".to_string());
     }
 
+    // 메트릭 이름과 값 추출기를 매핑
+    let metric_info = match metric {
+        "dtoc_time" => BlockMetricInfo {
+            metric_name: "Latency over Time",
+            metric_label: "Latency (ms)",
+            metric_extractor: |block| block.dtoc,
+            x_extractor: |block| block.time,
+            x_axis_label: "Time (s)",
+            file_suffix: "io_analysis",
+            require_positive: true,
+        },
+        "dtoc_lba" => BlockMetricInfo {
+            metric_name: "Sector/LBA vs Latency",
+            metric_label: "Latency (ms)",
+            metric_extractor: |block| block.dtoc,
+            x_extractor: |block| block.sector as f64,
+            x_axis_label: "Sector/LBA",
+            file_suffix: "lba_latency",
+            require_positive: true,
+        },
+        "ctoc" => BlockMetricInfo {
+            metric_name: "Complete to Complete Time",
+            metric_label: "Complete to Complete (ms)",
+            metric_extractor: |block| block.ctoc,
+            x_extractor: |block| block.time,
+            x_axis_label: "Time (s)",
+            file_suffix: "ctoc",
+            require_positive: true,
+        },
+        "ctod" => BlockMetricInfo {
+            metric_name: "Complete to Device Time",
+            metric_label: "Complete to Device (ms)",
+            metric_extractor: |block| block.ctod,
+            x_extractor: |block| block.time,
+            x_axis_label: "Time (s)",
+            file_suffix: "ctod",
+            require_positive: true,
+        },
+        "qd" => BlockMetricInfo {
+            metric_name: "Queue Depth",
+            metric_label: "Queue Depth",
+            metric_extractor: |block| block.qd as f64,
+            x_extractor: |block| block.time,
+            x_axis_label: "Time (s)",
+            file_suffix: "qd",
+            require_positive: false,
+        },
+        _ => return Err(format!("Unknown Block I/O metric: {}", metric)),
+    };
+
     // I/O 타입별로 데이터 그룹화
     let mut io_type_groups: HashMap<String, Vec<&Block>> = HashMap::new();
     for block in data {
-        io_type_groups
-            .entry(block.io_type.clone())
-            .or_default()
-            .push(block);
-    }
-
-    // Block I/O Latency over Time 차트
-    {
-        let png_path = format!("{}_block_io_analysis_plotters.png", output_prefix);
-
-        create_xy_scatter_chart(
-            &io_type_groups,
-            &png_path,
-            config,
-            "Block I/O Latency over Time by I/O Type",
-            "Time (s)",
-            "Latency (ms)",
-            |block| block.time,
-            |block| block.dtoc,
-            get_color_for_io_type,
-            Some(|block: &&Block| block.dtoc > 0.0),
-        )?;
-
-        println!("Block I/O analysis PNG chart saved to: {}", png_path);
-    }
-
-    // LBA vs Latency 스캐터 플롯
-    {
-        let png_path = format!("{}_block_lba_latency_plotters.png", output_prefix);
-
-        create_xy_scatter_chart(
-            &io_type_groups,
-            &png_path,
-            config,
-            "Block I/O Sector/LBA vs Latency by I/O Type",
-            "Sector/LBA",
-            "Latency (ms)",
-            |block| block.sector as f64,
-            |block| block.dtoc,
-            get_color_for_io_type,
-            Some(|block: &&Block| block.dtoc > 0.0),
-        )?;
-
-        println!("Block I/O LBA vs Latency PNG chart saved to: {}", png_path);
-    }
-
-    Ok(())
-}
-
-/// 추가적인 차트 생성을 위한 헬퍼 함수 - UFS CTOC(Complete to Complete) 지표 생성
-pub fn create_ufs_ctoc_chart(
-    data: &[UFS],
-    output_prefix: &str,
-    config: &PlottersConfig,
-) -> Result<(), String> {
-    if data.is_empty() {
-        return Err("No UFS data available for generating charts".to_string());
-    }
-
-    // 명령어별로 데이터 그룹화
-    let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
-    for item in data {
-        if item.ctoc > 0.0 {
-            opcode_groups
-                .entry(item.opcode.clone())
+        // 양수 값이 필요한 메트릭은 필터링
+        if !metric_info.require_positive || (metric_info.metric_extractor)(block) > 0.0 {
+            io_type_groups
+                .entry(block.io_type.clone())
                 .or_default()
-                .push(item);
+                .push(block);
         }
     }
 
-    if opcode_groups.is_empty() {
-        return Err("No valid CTOC data for UFS chart".to_string());
-    }
-
-    // 명령어 이름 변환 및 색상 매핑을 위한 새로운 그룹 생성
-    let mut named_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
-    for (opcode, events) in opcode_groups {
-        let opcode_name = get_ufs_opcode_name(&opcode);
-        named_opcode_groups.insert(opcode_name, events);
+    if io_type_groups.is_empty() {
+        return Err(format!("No valid data for Block I/O {} chart", metric_info.metric_name));
     }
 
     // PNG 파일 경로 생성
-    let png_path = format!("{}_ufs_ctoc_time_plotters.png", output_prefix);
+    let png_path = format!("{}_block_{}_plotters.png", output_prefix, metric_info.file_suffix);
+
+    // 필터 조건 생성
+    let filter_condition = if metric_info.require_positive {
+        Some(move |block: &&Block| (metric_info.metric_extractor)(block) > 0.0)
+    } else {
+        None
+    };
 
     create_xy_scatter_chart(
-        &named_opcode_groups,
+        &io_type_groups,
         &png_path,
         config,
-        "UFS Complete to Complete Time by Operation Code",
-        "Time (s)",
-        "Complete to Complete (ms)",
-        |ufs| ufs.time,
-        |ufs| ufs.ctoc,
-        ufs_opcode_color_mapper,
-        Some(|ufs: &&UFS| ufs.ctoc > 0.0),
+        &format!("Block I/O {} by I/O Type", metric_info.metric_name),
+        metric_info.x_axis_label,
+        metric_info.metric_label,
+        metric_info.x_extractor,
+        metric_info.metric_extractor,
+        get_color_for_io_type,
+        filter_condition,
     )?;
 
-    println!("UFS Complete to Complete PNG chart saved to: {}", png_path);
+    println!("Block I/O {} PNG chart saved to: {}", metric_info.metric_name, png_path);
 
     Ok(())
 }
 
-/// 추가적인 차트 생성을 위한 헬퍼 함수 - UFS CTOD(Complete to Dispatch) 지표 생성
-pub fn create_ufs_ctod_chart(
-    data: &[UFS],
+/// 이전 방식의 Block I/O 차트 생성 함수 (호환성 유지)
+pub fn create_block_io_plotters(
+    data: &[Block],
     output_prefix: &str,
     config: &PlottersConfig,
 ) -> Result<(), String> {
-    if data.is_empty() {
-        return Err("No UFS data available for generating charts".to_string());
+    // 시간에 따른 레이턴시 차트
+    match create_block_metric_chart(data, output_prefix, config, "dtoc_time") {
+        Ok(_) => {},
+        Err(e) => return Err(e),
     }
-
-    // 명령어별로 데이터 그룹화
-    let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
-    for item in data {
-        if item.ctod > 0.0 {
-            opcode_groups
-                .entry(item.opcode.clone())
-                .or_default()
-                .push(item);
-        }
+    
+    // LBA vs Latency 차트
+    match create_block_metric_chart(data, output_prefix, config, "dtoc_lba") {
+        Ok(_) => {},
+        Err(e) => return Err(e),
     }
-
-    if opcode_groups.is_empty() {
-        return Err("No valid CTOD data for UFS chart".to_string());
-    }
-
-    // 명령어 이름 변환 및 색상 매핑을 위한 새로운 그룹 생성
-    let mut named_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
-    for (opcode, events) in opcode_groups {
-        let opcode_name = get_ufs_opcode_name(&opcode);
-        named_opcode_groups.insert(opcode_name, events);
-    }
-
-    // PNG 파일 경로 생성
-    let png_path = format!("{}_ufs_ctod_time_plotters.png", output_prefix);
-
-    create_xy_scatter_chart(
-        &named_opcode_groups,
-        &png_path,
-        config,
-        "UFS Complete to Dispatch Time by Operation Code",
-        "Time (s)",
-        "Complete to Dispatch (ms)",
-        |ufs| ufs.time,
-        |ufs| ufs.ctod,
-        ufs_opcode_color_mapper,
-        Some(|ufs: &&UFS| ufs.ctod > 0.0),
-    )?;
-
-    println!("UFS Complete to Dispatch PNG chart saved to: {}", png_path);
 
     Ok(())
 }
 
-/// 추가적인 차트 생성을 위한 헬퍼 함수 - UFS Queue Depth 지표 생성
-pub fn create_ufs_qd_chart(
-    data: &[UFS],
-    output_prefix: &str,
-    config: &PlottersConfig,
-) -> Result<(), String> {
-    if data.is_empty() {
-        return Err("No UFS data available for generating charts".to_string());
-    }
-
-    // 명령어별로 데이터 그룹화
-    let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
-    for item in data {
-        opcode_groups
-            .entry(item.opcode.clone())
-            .or_default()
-            .push(item);
-    }
-
-    if opcode_groups.is_empty() {
-        return Err("No valid QD data for UFS chart".to_string());
-    }
-
-    // 명령어 이름 변환 및 색상 매핑을 위한 새로운 그룹 생성
-    let mut named_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
-    for (opcode, events) in opcode_groups {
-        let opcode_name = get_ufs_opcode_name(&opcode);
-        named_opcode_groups.insert(opcode_name, events);
-    }
-
-    // PNG 파일 경로 생성
-    let png_path = format!("{}_ufs_qd_time_plotters.png", output_prefix);
-
-    create_xy_scatter_chart(
-        &named_opcode_groups,
-        &png_path,
-        config,
-        "UFS Queue Depth over Time by Operation Code",
-        "Time (s)",
-        "Queue Depth",
-        |ufs| ufs.time,
-        |ufs| ufs.qd as f64,
-        ufs_opcode_color_mapper,
-        Option::<fn(&&UFS) -> bool>::None,
-    )?;
-
-    println!("UFS Queue Depth PNG chart saved to: {}", png_path);
-
-    Ok(())
-}
+// 중복된 UFS 관련 차트 함수들은 create_ufs_metric_chart 함수로 통합되었습니다.
 
 /// Create UFSCUSTOM charts using Plotters library
 pub fn create_ufscustom_plotters(
