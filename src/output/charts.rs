@@ -240,7 +240,7 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
                 CharmingScatter::new()
                     .name(opcode_name)
                     .data(qd_data)
-                    .symbol_size(8)
+                    .symbol_size(2)
                     .item_style(ItemStyle::new().color(color)),
             );
         }
@@ -291,7 +291,7 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
                 CharmingScatter::new()
                     .name(opcode_name)
                     .data(dtoc_data)
-                    .symbol_size(8)
+                    .symbol_size(2)
                     .item_style(ItemStyle::new().color(color)),
             );
         }
@@ -343,7 +343,7 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
                 CharmingScatter::new()
                     .name(opcode_name)
                     .data(ctod_data)
-                    .symbol_size(8)
+                    .symbol_size(2)
                     .item_style(ItemStyle::new().color(color)),
             );
         }
@@ -395,7 +395,7 @@ pub fn create_ufs_charts(data: &[UFS], output_prefix: &str) -> Result<(), String
                 CharmingScatter::new()
                     .name(opcode_name)
                     .data(ctoc_data)
-                    .symbol_size(8)
+                    .symbol_size(2)
                     .item_style(ItemStyle::new().color(color)),
             );
         }
@@ -732,7 +732,7 @@ fn create_ufs_latency_trend_chart(data: &[UFS], output_prefix: &str) -> Result<(
                         .map(|(x, y)| vec![*x, *y])
                         .collect::<Vec<Vec<f64>>>(),
                 )
-                .symbol_size(8)
+                .symbol_size(2)
                 .item_style(ItemStyle::new().color(line_color)),
         );
     }
@@ -1062,7 +1062,7 @@ fn create_lba_latency_scatter(data: &[Block], output_prefix: &str) -> Result<(),
             EffectScatter::new()
                 .name("READ")
                 .data(read_data)
-                .symbol_size(8)
+                .symbol_size(2)
                 .item_style(ItemStyle::new().color("#5470c6")),
         );
     }
@@ -1072,7 +1072,7 @@ fn create_lba_latency_scatter(data: &[Block], output_prefix: &str) -> Result<(),
             EffectScatter::new()
                 .name("WRITE")
                 .data(write_data)
-                .symbol_size(8)
+                .symbol_size(2)
                 .item_style(ItemStyle::new().color("#91cc75")),
         );
     }

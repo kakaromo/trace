@@ -1,5 +1,6 @@
 pub mod log;
 pub mod log_async;
+pub mod log_common;
 
 // 기존 함수들 내보내기
 pub use log::{parse_log_file, parse_ufscustom_file};

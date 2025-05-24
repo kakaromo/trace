@@ -812,6 +812,45 @@ async fn process_async_log_file(
             return Ok(());
         }
     };
+    
+    // UFS 데이터 처리 (Latency 계산 등)
+    let (ufs_data, block_data, ufscustom_data) = traces;
+    
+    log!("\n[1.2/3] Processing UFS data for latency calculations...");
+    let ufs_process_start = Instant::now();
+    
+    let processed_ufs = if !ufs_data.is_empty() {
+        log!("Applying latency analysis to UFS data...");
+        ufs_bottom_half_latency_process(ufs_data)
+    } else {
+        ufs_data
+    };
+    
+    log!(
+        "UFS data processing complete: {} events (Time taken: {:.2}s)",
+        processed_ufs.len(),
+        ufs_process_start.elapsed().as_secs_f64()
+    );
+    
+    // Block I/O 데이터 처리 (Latency 계산 등)
+    log!("\n[1.3/3] Processing Block I/O data for latency calculations...");
+    let block_process_start = Instant::now();
+    
+    let processed_block = if !block_data.is_empty() {
+        log!("Applying latency analysis to Block I/O data...");
+        block_bottom_half_latency_process(block_data)
+    } else {
+        block_data
+    };
+    
+    log!(
+        "Block I/O data processing complete: {} events (Time taken: {:.2}s)",
+        processed_block.len(),
+        block_process_start.elapsed().as_secs_f64()
+    );
+    
+    // 처리된 데이터로 업데이트
+    traces = (processed_ufs, processed_block, ufscustom_data);
 
     // 필터 옵션이 있다면 로그에 기록
     if let Some(f) = filter {

@@ -372,53 +372,12 @@ pub fn generate_plotters_charts(
 
     // Block I/O 차트 생성
     if !processed_blocks.is_empty() {
-        // Block dtoc_time (시간에 따른 레이턴시) 차트
-        match create_block_metric_chart(processed_blocks, output_prefix, &config, "dtoc_time") {
+        match create_block_io_plotters(processed_blocks, output_prefix, &config) {
             Ok(_) => {
-                println!("Block I/O latency over time chart generated with Plotters.");
+                println!("Block I/O PNG charts generated with Plotters.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O latency over time chart: {}", e);
-            }
-        }
-
-        // Block dtoc_lba (LBA와 레이턴시) 차트
-        match create_block_metric_chart(processed_blocks, output_prefix, &config, "dtoc_lba") {
-            Ok(_) => {
-                println!("Block I/O LBA vs latency chart generated with Plotters.");
-            }
-            Err(e) => {
-                eprintln!("Error generating Block I/O LBA vs latency chart: {}", e);
-            }
-        }
-
-        // Block ctoc (Complete to Complete) 차트
-        match create_block_metric_chart(processed_blocks, output_prefix, &config, "ctoc") {
-            Ok(_) => {
-                println!("Block I/O complete-to-complete chart generated with Plotters.");
-            }
-            Err(e) => {
-                eprintln!("Error generating Block I/O complete-to-complete chart: {}", e);
-            }
-        }
-
-        // Block ctod (Complete to Device) 차트
-        match create_block_metric_chart(processed_blocks, output_prefix, &config, "ctod") {
-            Ok(_) => {
-                println!("Block I/O complete-to-device chart generated with Plotters.");
-            }
-            Err(e) => {
-                eprintln!("Error generating Block I/O complete-to-device chart: {}", e);
-            }
-        }
-
-        // Block qd (Queue Depth) 차트
-        match create_block_metric_chart(processed_blocks, output_prefix, &config, "qd") {
-            Ok(_) => {
-                println!("Block I/O queue depth chart generated with Plotters.");
-            }
-            Err(e) => {
-                eprintln!("Error generating Block I/O queue depth chart: {}", e);
+                eprintln!("Error generating Block I/O PNG charts with Plotters: {}", e);
             }
         }
     }
@@ -445,19 +404,6 @@ struct UfsMetricInfo<'a> {
     metric_name: &'a str,
     metric_label: &'a str,
     metric_extractor: fn(&UFS) -> f64,
-    x_extractor: fn(&UFS) -> f64,
-    x_axis_label: &'a str,
-    file_suffix: &'a str,
-    require_positive: bool,
-}
-
-/// Block I/O 메트릭 정보를 담는 구조체
-struct BlockMetricInfo<'a> {
-    metric_name: &'a str,
-    metric_label: &'a str,
-    metric_extractor: fn(&Block) -> f64,
-    x_extractor: fn(&Block) -> f64,
-    x_axis_label: &'a str,
     file_suffix: &'a str,
     require_positive: bool,
 }
@@ -480,8 +426,6 @@ pub fn create_ufs_metric_chart(
             metric_name: "Latency",
             metric_label: "Latency (ms)",
             metric_extractor: |ufs| ufs.dtoc,
-            x_extractor: |ufs| ufs.time,
-            x_axis_label: "Time (s)",
             file_suffix: "latency",
             require_positive: true,
         },
@@ -489,8 +433,6 @@ pub fn create_ufs_metric_chart(
             metric_name: "Complete to Complete Time",
             metric_label: "Complete to Complete (ms)",
             metric_extractor: |ufs| ufs.ctoc,
-            x_extractor: |ufs| ufs.time,
-            x_axis_label: "Time (s)",
             file_suffix: "ctoc",
             require_positive: true,
         },
@@ -498,8 +440,6 @@ pub fn create_ufs_metric_chart(
             metric_name: "Complete to Dispatch Time",
             metric_label: "Complete to Dispatch (ms)",
             metric_extractor: |ufs| ufs.ctod,
-            x_extractor: |ufs| ufs.time,
-            x_axis_label: "Time (s)",
             file_suffix: "ctod",
             require_positive: true,
         },
@@ -507,8 +447,6 @@ pub fn create_ufs_metric_chart(
             metric_name: "Queue Depth",
             metric_label: "Queue Depth",
             metric_extractor: |ufs| ufs.qd as f64,
-            x_extractor: |ufs| ufs.time,
-            x_axis_label: "Time (s)",
             file_suffix: "qd",
             require_positive: false,
         },
@@ -516,8 +454,6 @@ pub fn create_ufs_metric_chart(
             metric_name: "LBA",
             metric_label: "LBA",
             metric_extractor: |ufs| ufs.lba as f64,
-            x_extractor: |ufs| ufs.time,
-            x_axis_label: "Time (s)",
             file_suffix: "lba",
             require_positive: false,
         },
@@ -575,128 +511,63 @@ pub fn create_ufs_metric_chart(
     Ok(())
 }
 
-/// 통합된 Block I/O 지표 차트 생성 함수
-/// 매개변수로 받은 metric에 따라 다양한 Block I/O 차트를 생성합니다
-pub fn create_block_metric_chart(
-    data: &[Block],
-    output_prefix: &str,
-    config: &PlottersConfig,
-    metric: &str,
-) -> Result<(), String> {
-    if data.is_empty() {
-        return Err("Block I/O data is empty.".to_string());
-    }
-
-    // 메트릭 이름과 값 추출기를 매핑
-    let metric_info = match metric {
-        "dtoc_time" => BlockMetricInfo {
-            metric_name: "Latency over Time",
-            metric_label: "Latency (ms)",
-            metric_extractor: |block| block.dtoc,
-            x_extractor: |block| block.time,
-            x_axis_label: "Time (s)",
-            file_suffix: "io_analysis",
-            require_positive: true,
-        },
-        "dtoc_lba" => BlockMetricInfo {
-            metric_name: "Sector/LBA vs Latency",
-            metric_label: "Latency (ms)",
-            metric_extractor: |block| block.dtoc,
-            x_extractor: |block| block.sector as f64,
-            x_axis_label: "Sector/LBA",
-            file_suffix: "lba_latency",
-            require_positive: true,
-        },
-        "ctoc" => BlockMetricInfo {
-            metric_name: "Complete to Complete Time",
-            metric_label: "Complete to Complete (ms)",
-            metric_extractor: |block| block.ctoc,
-            x_extractor: |block| block.time,
-            x_axis_label: "Time (s)",
-            file_suffix: "ctoc",
-            require_positive: true,
-        },
-        "ctod" => BlockMetricInfo {
-            metric_name: "Complete to Device Time",
-            metric_label: "Complete to Device (ms)",
-            metric_extractor: |block| block.ctod,
-            x_extractor: |block| block.time,
-            x_axis_label: "Time (s)",
-            file_suffix: "ctod",
-            require_positive: true,
-        },
-        "qd" => BlockMetricInfo {
-            metric_name: "Queue Depth",
-            metric_label: "Queue Depth",
-            metric_extractor: |block| block.qd as f64,
-            x_extractor: |block| block.time,
-            x_axis_label: "Time (s)",
-            file_suffix: "qd",
-            require_positive: false,
-        },
-        _ => return Err(format!("Unknown Block I/O metric: {}", metric)),
-    };
-
-    // I/O 타입별로 데이터 그룹화
-    let mut io_type_groups: HashMap<String, Vec<&Block>> = HashMap::new();
-    for block in data {
-        // 양수 값이 필요한 메트릭은 필터링
-        if !metric_info.require_positive || (metric_info.metric_extractor)(block) > 0.0 {
-            io_type_groups
-                .entry(block.io_type.clone())
-                .or_default()
-                .push(block);
-        }
-    }
-
-    if io_type_groups.is_empty() {
-        return Err(format!("No valid data for Block I/O {} chart", metric_info.metric_name));
-    }
-
-    // PNG 파일 경로 생성
-    let png_path = format!("{}_block_{}_plotters.png", output_prefix, metric_info.file_suffix);
-
-    // 필터 조건 생성
-    let filter_condition = if metric_info.require_positive {
-        Some(move |block: &&Block| (metric_info.metric_extractor)(block) > 0.0)
-    } else {
-        None
-    };
-
-    create_xy_scatter_chart(
-        &io_type_groups,
-        &png_path,
-        config,
-        &format!("Block I/O {} by I/O Type", metric_info.metric_name),
-        metric_info.x_axis_label,
-        metric_info.metric_label,
-        metric_info.x_extractor,
-        metric_info.metric_extractor,
-        get_color_for_io_type,
-        filter_condition,
-    )?;
-
-    println!("Block I/O {} PNG chart saved to: {}", metric_info.metric_name, png_path);
-
-    Ok(())
-}
-
-/// 이전 방식의 Block I/O 차트 생성 함수 (호환성 유지)
+/// Creates Block I/O charts using Plotters library
 pub fn create_block_io_plotters(
     data: &[Block],
     output_prefix: &str,
     config: &PlottersConfig,
 ) -> Result<(), String> {
-    // 시간에 따른 레이턴시 차트
-    match create_block_metric_chart(data, output_prefix, config, "dtoc_time") {
-        Ok(_) => {},
-        Err(e) => return Err(e),
+    if data.is_empty() {
+        return Err("Block I/O data is empty.".to_string());
     }
-    
-    // LBA vs Latency 차트
-    match create_block_metric_chart(data, output_prefix, config, "dtoc_lba") {
-        Ok(_) => {},
-        Err(e) => return Err(e),
+
+    // I/O 타입별로 데이터 그룹화
+    let mut io_type_groups: HashMap<String, Vec<&Block>> = HashMap::new();
+    for block in data {
+        io_type_groups
+            .entry(block.io_type.clone())
+            .or_default()
+            .push(block);
+    }
+
+    // Block I/O Latency over Time 차트
+    {
+        let png_path = format!("{}_block_io_analysis_plotters.png", output_prefix);
+
+        create_xy_scatter_chart(
+            &io_type_groups,
+            &png_path,
+            config,
+            "Block I/O Latency over Time by I/O Type",
+            "Time (s)",
+            "Latency (ms)",
+            |block| block.time,
+            |block| block.dtoc,
+            get_color_for_io_type,
+            Some(|block: &&Block| block.dtoc > 0.0),
+        )?;
+
+        println!("Block I/O analysis PNG chart saved to: {}", png_path);
+    }
+
+    // LBA vs Latency 스캐터 플롯
+    {
+        let png_path = format!("{}_block_lba_latency_plotters.png", output_prefix);
+
+        create_xy_scatter_chart(
+            &io_type_groups,
+            &png_path,
+            config,
+            "Block I/O Sector/LBA vs Latency by I/O Type",
+            "Sector/LBA",
+            "Latency (ms)",
+            |block| block.sector as f64,
+            |block| block.dtoc,
+            get_color_for_io_type,
+            Some(|block: &&Block| block.dtoc > 0.0),
+        )?;
+
+        println!("Block I/O LBA vs Latency PNG chart saved to: {}", png_path);
     }
 
     Ok(())
