@@ -260,7 +260,7 @@ fn process_log_file(
     log!("===== Starting Log File Processing =====");
 
     // Parse log file
-    log!("\n[1/6] Parsing log file...");
+    log!("\n[1/5] Parsing log file...");
     let parse_start = Instant::now();
 
     // 로그 파일 파싱 - UFS, Block IO, UFSCUSTOM 타입 지원
@@ -297,7 +297,7 @@ fn process_log_file(
     log!("Parsed traces: {}", trace_counts.join(", "));
 
     // Post-processing (parallel processing)
-    log!("\n[2/6] Post-processing data...");
+    log!("\n[2/5] Post-processing data...");
     let process_start = Instant::now();
 
     // 발견된 각 트레이스 타입 처리
@@ -383,7 +383,7 @@ fn process_log_file(
     );
 
     // Output analysis results
-    log!("\n[3/6] Calculating analysis results...");
+    log!("\n[3/5] Calculating analysis results...");
     let analysis_start = Instant::now();
 
     // 각 트레이스 타입에 대한 통계 계산
@@ -408,7 +408,7 @@ fn process_log_file(
     );
 
     // Save to Parquet files
-    log!("\n[4/6] Saving to Parquet files...");
+    log!("\n[4/5] Saving to Parquet files...");
     let save_start = Instant::now();
 
     match save_to_parquet(
@@ -438,7 +438,7 @@ fn process_log_file(
     }
 
     // Generate Plotly charts
-    log!("\n[5/6] Generating Plotly charts...");
+    log!("\n[5/5] Generating  charts...");
     let charts_start = Instant::now();
 
     match generate_charts(
@@ -452,15 +452,6 @@ fn process_log_file(
             charts_start.elapsed().as_secs_f64()
         ),
         Err(e) => log_error!("Error while generating Plotly charts: {}", e),
-    }
-    log!("\n[6/6] Generating Plotly charts...");
-    if let Err(e) = generate_plotters_charts(
-        &processed_ufs,
-        &processed_blocks,
-        &processed_ufscustom,
-        output_prefix,
-    ) {
-        eprintln!("차트 생성 중 오류 발생: {}", e);
     }
 
     log!("\n===== All Processing Complete! =====");
@@ -621,19 +612,6 @@ fn process_single_parquet_file(
         Err(e) => log_error!("Error while generating {} Plotly charts: {}", data_label, e),
     }
 
-    match trace_data.generate_plotters_charts(output_prefix) {
-        Ok(()) => log!(
-            "{} plotters charts generated successfully (Time taken: {:.2}s)",
-            data_label,
-            charts_start.elapsed().as_secs_f64()
-        ),
-        Err(e) => log_error!(
-            "Error while generating {} plotters charts: {}",
-            data_label,
-            e
-        ),
-    }
-
     // 4. 요약 정보 출력
     log!("\n===== {} Parquet Analysis Complete! =====", data_label);
     log!(
@@ -738,7 +716,7 @@ fn process_ufscustom_file(
     log!("\n[3/3] Generating UFSCustom Plotly charts...");
     let charts_start = Instant::now();
 
-    match output::charts::generate_ufscustom_charts(&traces, output_prefix) {
+    match output::charts::generate_charts(&[], &[], &traces, output_prefix) {
         Ok(()) => log!(
             "UFSCustom Plotly charts generated successfully (Time taken: {:.2}s)",
             charts_start.elapsed().as_secs_f64()
@@ -746,9 +724,6 @@ fn process_ufscustom_file(
         Err(e) => log_error!("Error while generating UFSCustom Plotly charts: {}", e),
     }
 
-    if let Err(e) = generate_plotters_charts(&[], &[], &traces, output_prefix) {
-        eprintln!("차트 생성 중 오류 발생: {}", e);
-    }
 
     // 4. 요약 정보 출력
     log!("\n===== UFSCustom File Processing Complete! =====");
@@ -1014,20 +989,7 @@ impl TraceData {
         match self {
             TraceData::UFS(traces) => generate_charts(traces, &[], &[], output_prefix),
             TraceData::Block(traces) => generate_charts(&[], traces, &[], output_prefix),
-            TraceData::UFSCUSTOM(traces) => {
-                output::charts::generate_ufscustom_charts(traces, output_prefix)
-            }
-            // 새 트레이스 타입 추가 시 여기에 추가
-        }
-    }
-
-    fn generate_plotters_charts(&self, output_prefix: &str) -> Result<(), String> {
-        match self {
-            TraceData::UFS(traces) => generate_plotters_charts(traces, &[], &[], output_prefix),
-            TraceData::Block(traces) => generate_plotters_charts(&[], traces, &[], output_prefix),
-            TraceData::UFSCUSTOM(traces) => {
-                generate_plotters_charts(&[], &[], traces, output_prefix)
-            }
+            TraceData::UFSCUSTOM(traces) => generate_charts(&[], &[], traces, output_prefix),
             // 새 트레이스 타입 추가 시 여기에 추가
         }
     }

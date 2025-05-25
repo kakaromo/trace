@@ -10,7 +10,7 @@ use utils::filter::FilterOptions;
 // 주요 기능 재내보내기(re-exporting)
 pub use models::{Block, TraceType, UFS, UFSCUSTOM};
 pub use output::{
-    generate_charts, generate_plotters_charts, print_block_statistics, print_ufs_statistics,
+    generate_charts, print_block_statistics, print_ufs_statistics,
     print_ufscustom_statistics, read_block_from_parquet, read_ufs_from_parquet,
     read_ufscustom_from_parquet, save_to_parquet,
 };
