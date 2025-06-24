@@ -273,19 +273,19 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
 
                 for i in 0..chunk_bytes.len() {
                     if chunk_bytes[i] == b'\n' {
-                        if let Ok(line) = str::from_utf8(&chunk_bytes[line_start..i]) {
-                            lines.push(line.to_string());
-                        }
+                        // Use from_utf8_lossy to handle non-UTF8 characters
+                        let line = String::from_utf8_lossy(&chunk_bytes[line_start..i]).to_string();
+                        lines.push(line);
                         line_start = i + 1;
                     }
                 }
 
                 // Process last line
                 if line_start < chunk_bytes.len() {
-                    if let Ok(line) = str::from_utf8(&chunk_bytes[line_start..]) {
-                        if !line.is_empty() {
-                            lines.push(line.to_string());
-                        }
+                    // Use from_utf8_lossy to handle non-UTF8 characters
+                    let line = String::from_utf8_lossy(&chunk_bytes[line_start..]).to_string();
+                    if !line.is_empty() {
+                        lines.push(line);
                     }
                 }
 
@@ -541,22 +541,11 @@ pub fn parse_ufscustom_log(filepath: &str) -> io::Result<Vec<UFSCUSTOM>> {
     if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
         println!("Memory mapping successful, starting parallel processing");
 
-        // Split file content into lines
-        let content = match std::str::from_utf8(&mmap[..]) {
-            Ok(content) => content,
-            Err(e) => {
-                println!("Cannot convert memory-mapped file to UTF-8: {}", e);
-                // Fall back to standard file reading
-                let mut reader = BufReader::with_capacity(16 * 1024 * 1024, file);
-                let mut bytes = Vec::new();
-                reader.read_to_end(&mut bytes)?;
-                let content = String::from_utf8_lossy(&bytes).into_owned();
-                return process_ufscustom_content(&content);
-            }
-        };
+        // Split file content into lines using lossy conversion
+        let content = String::from_utf8_lossy(&mmap[..]).into_owned();
 
         // Process content at once without parallel processing
-        process_ufscustom_content(content)
+        process_ufscustom_content(&content)
     } else {
         println!("Memory mapping failed, processing with standard file reading");
 

@@ -9,7 +9,6 @@ use std::fs::{self, OpenOptions, File};
 use std::io::{Read, BufWriter, BufRead, Write};
 use std::time::Instant;
 use memmap2::{Mmap, MmapOptions};
-use std::str::from_utf8;
 use rayon::prelude::*;
 
 // Common regex patterns for all three log types
@@ -392,16 +391,8 @@ where
 {
     let start_time = Instant::now();
     
-    // Convert memory mapped file to string
-    let content = match from_utf8(&mmap[..]) {
-        Ok(content) => content,
-        Err(e) => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Cannot convert memory mapped file to UTF-8: {}", e)
-            ));
-        }
-    };
+    // Convert memory mapped file to string using lossy conversion
+    let content = String::from_utf8_lossy(&mmap[..]);
 
     // Split into lines
     let lines: Vec<&str> = content.lines().collect();
