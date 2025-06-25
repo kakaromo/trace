@@ -9,6 +9,7 @@ use std::io::{self, BufReader, BufWriter, Read, Write, Seek};
 use std::str;
 use std::sync::mpsc;
 use std::time::Instant;
+use crate::utils::encoding::{open_encoded_reader, decode_bytes_auto};
 
 // Using read_line_lossy from log_common module
 use crate::parsers::log_common::read_line_lossy;
@@ -150,7 +151,7 @@ fn parse_log_file_in_memory(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
         // Fall back to traditional method if memory mapping fails
         println!("Memory mapping failed, processing with standard file reading");
     
-        let mut reader = BufReader::with_capacity(16 * 1024 * 1024, file);
+        let mut reader = open_encoded_reader(filepath, 16 * 1024 * 1024)?;
     
         // Set chunk size
         const CHUNK_SIZE: usize = 100_000;
@@ -274,7 +275,7 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
                 for i in 0..chunk_bytes.len() {
                     if chunk_bytes[i] == b'\n' {
                         // Use from_utf8_lossy to handle non-UTF8 characters
-                        let line = String::from_utf8_lossy(&chunk_bytes[line_start..i]).to_string();
+                        let line = decode_bytes_auto(&chunk_bytes[line_start..i]);
                         lines.push(line);
                         line_start = i + 1;
                     }
@@ -283,7 +284,7 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
                 // Process last line
                 if line_start < chunk_bytes.len() {
                     // Use from_utf8_lossy to handle non-UTF8 characters
-                    let line = String::from_utf8_lossy(&chunk_bytes[line_start..]).to_string();
+                    let line = decode_bytes_auto(&chunk_bytes[line_start..]);
                     if !line.is_empty() {
                         lines.push(line);
                     }
@@ -337,7 +338,7 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
         // Use standard streaming with larger buffers if memory mapping fails
         println!("Memory mapping failed, processing with standard streaming");
 
-        let mut reader = BufReader::with_capacity(BUFFER_SIZE, file);
+        let mut reader = open_encoded_reader(filepath, BUFFER_SIZE)?;
 
         let mut ufs_writer = BufWriter::with_capacity(BUFFER_SIZE, &ufs_temp_file);
         let mut block_writer = BufWriter::with_capacity(BUFFER_SIZE, &block_temp_file);

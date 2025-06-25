@@ -10,6 +10,7 @@ use std::io::{Read, BufWriter, BufRead, Write};
 use std::time::Instant;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
+use crate::utils::encoding::decode_bytes_auto;
 
 // Common regex patterns for all three log types
 lazy_static! {
@@ -392,7 +393,8 @@ where
     let start_time = Instant::now();
     
     // Convert memory mapped file to string using lossy conversion
-    let content = String::from_utf8_lossy(&mmap[..]);
+    // Convert memory mapped file to string using automatic encoding detection
+    let content = decode_bytes_auto(&mmap[..]);
 
     // Split into lines
     let lines: Vec<&str> = content.lines().collect();
