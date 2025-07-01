@@ -46,10 +46,11 @@ fn print_usage(program: &str) {
     eprintln!("  {} [options] --async <log_file> <output_prefix>              - Parse log file using async I/O (optimized)", program);
     eprintln!("\nOptions:");
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
-    eprintln!("  -f           - Apply filters (time, sector/lba) with interactive input");
+    eprintln!("  -f           - Apply filters (time, sector/lba, latency, queue depth) with interactive input");
     eprintln!("  -y <ranges>  - Set y-axis ranges for charts. Format: metric:min:max,metric:min:max");
     eprintln!("                 Metrics: ufs_dtoc, ufs_ctoc, ufs_ctod, ufs_qd, ufs_lba, block_dtoc, block_ctoc, block_ctod, block_qd, block_lba");
     eprintln!("                 Example: -y ufs_dtoc:0:100,block_dtoc:0:50");
+    eprintln!("  -c <size>    - Set chunk size for Parquet file writing (default: 50000). Example: -c 100000");
     // 새 트레이스 타입이나 옵션이 추가되면 여기에 업데이트
 }
 
@@ -79,6 +80,7 @@ async fn main() -> io::Result<()> {
     let mut async_output_prefix_index = 0;
     let mut use_filter = false;
     let mut y_axis_ranges: Option<HashMap<String, (f64, f64)>> = None;
+    let mut chunk_size: usize = 50_000; // 기본 청크 크기
 
     while i < args.len() {
         match args[i].as_str() {
@@ -121,6 +123,32 @@ async fn main() -> io::Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Error in y-axis ranges: {}", e);
+                        print_usage(&args[0]);
+                        return Ok(());
+                    }
+                }
+
+                i += 2; // 옵션과 값을 건너뜀
+            }
+            "-c" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: -c option requires chunk size value");
+                    print_usage(&args[0]);
+                    return Ok(());
+                }
+
+                match args[i + 1].parse::<usize>() {
+                    Ok(size) => {
+                        if size < 1000 {
+                            eprintln!("Error: Chunk size must be at least 1000");
+                            print_usage(&args[0]);
+                            return Ok(());
+                        }
+                        chunk_size = size;
+                        log!("Using custom chunk size: {}", chunk_size);
+                    }
+                    Err(_) => {
+                        eprintln!("Error: Invalid chunk size value '{}'", args[i + 1]);
                         print_usage(&args[0]);
                         return Ok(());
                     }
@@ -186,6 +214,46 @@ async fn main() -> io::Result<()> {
                     println!("  섹터/LBA 필터: 사용하지 않음");
                 }
 
+                if filter.is_dtoc_filter_active() {
+                    println!(
+                        "  DTOC 레이턴시 필터: {:.3} - {:.3} ms",
+                        if filter.min_dtoc > 0.0 { filter.min_dtoc } else { 0.0 },
+                        if filter.max_dtoc > 0.0 { filter.max_dtoc } else { f64::INFINITY }
+                    );
+                } else {
+                    println!("  DTOC 레이턴시 필터: 사용하지 않음");
+                }
+
+                if filter.is_ctoc_filter_active() {
+                    println!(
+                        "  CTOC 레이턴시 필터: {:.3} - {:.3} ms",
+                        if filter.min_ctoc > 0.0 { filter.min_ctoc } else { 0.0 },
+                        if filter.max_ctoc > 0.0 { filter.max_ctoc } else { f64::INFINITY }
+                    );
+                } else {
+                    println!("  CTOC 레이턴시 필터: 사용하지 않음");
+                }
+
+                if filter.is_ctod_filter_active() {
+                    println!(
+                        "  CTOD 레이턴시 필터: {:.3} - {:.3} ms",
+                        if filter.min_ctod > 0.0 { filter.min_ctod } else { 0.0 },
+                        if filter.max_ctod > 0.0 { filter.max_ctod } else { f64::INFINITY }
+                    );
+                } else {
+                    println!("  CTOD 레이턴시 필터: 사용하지 않음");
+                }
+
+                if filter.is_qd_filter_active() {
+                    println!(
+                        "  QD 필터: {} - {}",
+                        if filter.min_qd > 0 { filter.min_qd } else { 0 },
+                        if filter.max_qd > 0 { filter.max_qd } else { u32::MAX }
+                    );
+                } else {
+                    println!("  QD 필터: 사용하지 않음");
+                }
+
                 // 전역 필터 옵션 설정
                 set_filter_options(filter.clone());
                 Some(filter)
@@ -212,6 +280,7 @@ async fn main() -> io::Result<()> {
             &args[output_prefix_index],
             filter_options.as_ref(),
             y_axis_ranges.as_ref(),
+            chunk_size,
         )
     } else if is_parquet_mode
         && parquet_type_index > 0
@@ -237,6 +306,7 @@ async fn main() -> io::Result<()> {
             &args[output_prefix_index],
             filter_options.as_ref(),
             y_axis_ranges.as_ref(),
+            chunk_size,
         )
     } else if is_ufscustom_mode
         && ufscustom_file_index > 0
@@ -250,6 +320,7 @@ async fn main() -> io::Result<()> {
             &args[output_prefix_index],
             filter_options.as_ref(),
             y_axis_ranges.as_ref(),
+            chunk_size,
         )
     } else if is_async_mode
         && async_log_file_index > 0
@@ -263,6 +334,7 @@ async fn main() -> io::Result<()> {
             &args[async_output_prefix_index],
             filter_options.as_ref(),
             y_axis_ranges.as_ref(),
+            chunk_size,
         )
         .await
     } else {
@@ -287,6 +359,7 @@ fn process_log_file(
     output_prefix: &str,
     filter: Option<&FilterOptions>,
     y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
+    chunk_size: usize,
 ) -> io::Result<()> {
     // Logger 초기화 - 로그 파일은 trace가 저장되는 경로와 동일하게 설정
     Logger::init(output_prefix);
@@ -295,6 +368,9 @@ fn process_log_file(
     if let Some(ranges) = trace::utils::get_user_latency_ranges() {
         log!("Using custom latency ranges: {:?}", ranges);
     }
+
+    // 청크 크기 로그에 기록
+    log!("Using Parquet chunk size: {}", chunk_size);
 
     // 필터 옵션이 있다면 로그에 기록
     if let Some(f) = filter {
@@ -311,6 +387,38 @@ fn process_log_file(
                 "Using sector/LBA filter: {} - {}",
                 f.start_sector,
                 f.end_sector
+            );
+        }
+
+        if f.is_dtoc_filter_active() {
+            log!(
+                "Using DTOC latency filter: {:.3} - {:.3} ms",
+                if f.min_dtoc > 0.0 { f.min_dtoc } else { 0.0 },
+                if f.max_dtoc > 0.0 { f.max_dtoc } else { f64::INFINITY }
+            );
+        }
+
+        if f.is_ctoc_filter_active() {
+            log!(
+                "Using CTOC latency filter: {:.3} - {:.3} ms",
+                if f.min_ctoc > 0.0 { f.min_ctoc } else { 0.0 },
+                if f.max_ctoc > 0.0 { f.max_ctoc } else { f64::INFINITY }
+            );
+        }
+
+        if f.is_ctod_filter_active() {
+            log!(
+                "Using CTOD latency filter: {:.3} - {:.3} ms",
+                if f.min_ctod > 0.0 { f.min_ctod } else { 0.0 },
+                if f.max_ctod > 0.0 { f.max_ctod } else { f64::INFINITY }
+            );
+        }
+
+        if f.is_qd_filter_active() {
+            log!(
+                "Using QD filter: {} - {}",
+                if f.min_qd > 0 { f.min_qd } else { 0 },
+                if f.max_qd > 0 { f.max_qd } else { u32::MAX }
             );
         }
     }
@@ -391,7 +499,9 @@ fn process_log_file(
 
     // 필터링 적용
     if let Some(filter) = filter {
-        if filter.is_time_filter_active() || filter.is_sector_filter_active() {
+        if filter.is_time_filter_active() || filter.is_sector_filter_active() 
+            || filter.is_dtoc_filter_active() || filter.is_ctoc_filter_active() 
+            || filter.is_ctod_filter_active() || filter.is_qd_filter_active() {
             log!("\n[2.5/6] Applying filters...");
             let filter_start = Instant::now();
 
@@ -475,6 +585,7 @@ fn process_log_file(
         &processed_blocks,
         &processed_ufscustom,
         output_prefix,
+        chunk_size,
     ) {
         Ok(()) => {
             let mut saved_files = Vec::new();
@@ -574,6 +685,7 @@ fn process_single_parquet_file(
     output_prefix: &str,
     filter: Option<&FilterOptions>,
     y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
+    _chunk_size: usize, // Parquet 읽기에서는 사용하지 않지만 일관성을 위해 유지
 ) -> io::Result<()> {
     // Logger 초기화
     Logger::init(output_prefix);
@@ -630,8 +742,42 @@ fn process_single_parquet_file(
             );
         }
 
+        if f.is_dtoc_filter_active() {
+            log!(
+                "Using DTOC latency filter: {:.3} - {:.3} ms",
+                if f.min_dtoc > 0.0 { f.min_dtoc } else { 0.0 },
+                if f.max_dtoc > 0.0 { f.max_dtoc } else { f64::INFINITY }
+            );
+        }
+
+        if f.is_ctoc_filter_active() {
+            log!(
+                "Using CTOC latency filter: {:.3} - {:.3} ms",
+                if f.min_ctoc > 0.0 { f.min_ctoc } else { 0.0 },
+                if f.max_ctoc > 0.0 { f.max_ctoc } else { f64::INFINITY }
+            );
+        }
+
+        if f.is_ctod_filter_active() {
+            log!(
+                "Using CTOD latency filter: {:.3} - {:.3} ms",
+                if f.min_ctod > 0.0 { f.min_ctod } else { 0.0 },
+                if f.max_ctod > 0.0 { f.max_ctod } else { f64::INFINITY }
+            );
+        }
+
+        if f.is_qd_filter_active() {
+            log!(
+                "Using QD filter: {} - {}",
+                if f.min_qd > 0 { f.min_qd } else { 0 },
+                if f.max_qd > 0 { f.max_qd } else { u32::MAX }
+            );
+        }
+
         // 필터링 적용
-        if f.is_time_filter_active() || f.is_sector_filter_active() {
+        if f.is_time_filter_active() || f.is_sector_filter_active() 
+            || f.is_dtoc_filter_active() || f.is_ctoc_filter_active() 
+            || f.is_ctod_filter_active() || f.is_qd_filter_active() {
             log!("\n[1.5/3] Applying filters...");
             let filter_start = Instant::now();
 
@@ -696,6 +842,7 @@ fn process_ufscustom_file(
     output_prefix: &str,
     filter: Option<&FilterOptions>,
     y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
+    _chunk_size: usize, // UFSCustom은 Parquet 저장하지 않으므로 사용하지 않지만 일관성을 위해 유지
 ) -> io::Result<()> {
     // Logger 초기화
     Logger::init(output_prefix);
@@ -745,8 +892,17 @@ fn process_ufscustom_file(
             );
         }
 
-        // 필터링 적용
-        if f.is_time_filter_active() || f.is_sector_filter_active() {
+        // UFSCUSTOM은 dtoc만 지원
+        if f.is_dtoc_filter_active() {
+            log!(
+                "Using DTOC latency filter: {:.3} - {:.3} ms",
+                if f.min_dtoc > 0.0 { f.min_dtoc } else { 0.0 },
+                if f.max_dtoc > 0.0 { f.max_dtoc } else { f64::INFINITY }
+            );
+        }
+
+        // 필터링 적용 (UFSCUSTOM은 dtoc만 지원)
+        if f.is_time_filter_active() || f.is_sector_filter_active() || f.is_dtoc_filter_active() {
             log!("\n[1.5/3] Applying filters...");
             let filter_start = Instant::now();
 
@@ -818,6 +974,7 @@ async fn process_async_log_file(
     output_prefix: &str,
     filter: Option<&FilterOptions>,
     y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
+    _chunk_size: usize, // 비동기 처리에서는 Parquet 저장하지 않으므로 사용하지 않지만 일관성을 위해 유지
 ) -> io::Result<()> {
     // Logger 초기화
     Logger::init(output_prefix);
@@ -908,8 +1065,42 @@ async fn process_async_log_file(
             );
         }
 
+        if f.is_dtoc_filter_active() {
+            log!(
+                "Using DTOC latency filter: {:.3} - {:.3} ms",
+                if f.min_dtoc > 0.0 { f.min_dtoc } else { 0.0 },
+                if f.max_dtoc > 0.0 { f.max_dtoc } else { f64::INFINITY }
+            );
+        }
+
+        if f.is_ctoc_filter_active() {
+            log!(
+                "Using CTOC latency filter: {:.3} - {:.3} ms",
+                if f.min_ctoc > 0.0 { f.min_ctoc } else { 0.0 },
+                if f.max_ctoc > 0.0 { f.max_ctoc } else { f64::INFINITY }
+            );
+        }
+
+        if f.is_ctod_filter_active() {
+            log!(
+                "Using CTOD latency filter: {:.3} - {:.3} ms",
+                if f.min_ctod > 0.0 { f.min_ctod } else { 0.0 },
+                if f.max_ctod > 0.0 { f.max_ctod } else { f64::INFINITY }
+            );
+        }
+
+        if f.is_qd_filter_active() {
+            log!(
+                "Using QD filter: {} - {}",
+                if f.min_qd > 0 { f.min_qd } else { 0 },
+                if f.max_qd > 0 { f.max_qd } else { u32::MAX }
+            );
+        }
+
         // 필터링 적용
-        if f.is_time_filter_active() || f.is_sector_filter_active() {
+        if f.is_time_filter_active() || f.is_sector_filter_active() 
+            || f.is_dtoc_filter_active() || f.is_ctoc_filter_active() 
+            || f.is_ctod_filter_active() || f.is_qd_filter_active() {
             log!("\n[1.5/3] Applying filters...");
             let filter_start = Instant::now();
 

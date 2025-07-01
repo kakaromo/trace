@@ -7,6 +7,15 @@ pub struct FilterOptions {
     pub end_time: f64,     // 종료 시간 (ms)
     pub start_sector: u64, // 시작 섹터/LBA
     pub end_sector: u64,   // 종료 섹터/LBA
+    // 레이턴시 필터링 옵션
+    pub min_dtoc: f64,     // 최소 Device to Complete 레이턴시 (ms)
+    pub max_dtoc: f64,     // 최대 Device to Complete 레이턴시 (ms)
+    pub min_ctoc: f64,     // 최소 Complete to Complete 레이턴시 (ms)
+    pub max_ctoc: f64,     // 최대 Complete to Complete 레이턴시 (ms)
+    pub min_ctod: f64,     // 최소 Complete to Device 레이턴시 (ms)
+    pub max_ctod: f64,     // 최대 Complete to Device 레이턴시 (ms)
+    pub min_qd: u32,       // 최소 Queue Depth
+    pub max_qd: u32,       // 최대 Queue Depth
 }
 
 impl Default for FilterOptions {
@@ -16,6 +25,14 @@ impl Default for FilterOptions {
             end_time: 0.0,
             start_sector: 0,
             end_sector: 0,
+            min_dtoc: 0.0,
+            max_dtoc: 0.0,
+            min_ctoc: 0.0,
+            max_ctoc: 0.0,
+            min_ctod: 0.0,
+            max_ctod: 0.0,
+            min_qd: 0,
+            max_qd: 0,
         }
     }
 }
@@ -28,6 +45,23 @@ impl FilterOptions {
 
     pub fn is_sector_filter_active(&self) -> bool {
         self.start_sector > 0 && self.end_sector > 0
+    }
+
+    // 레이턴시 필터가 활성화되어 있는지 확인
+    pub fn is_dtoc_filter_active(&self) -> bool {
+        self.min_dtoc > 0.0 || self.max_dtoc > 0.0
+    }
+
+    pub fn is_ctoc_filter_active(&self) -> bool {
+        self.min_ctoc > 0.0 || self.max_ctoc > 0.0
+    }
+
+    pub fn is_ctod_filter_active(&self) -> bool {
+        self.min_ctod > 0.0 || self.max_ctod > 0.0
+    }
+
+    pub fn is_qd_filter_active(&self) -> bool {
+        self.min_qd > 0 || self.max_qd > 0
     }
 
     // UFS LBA로 변환 (4KB = 8 섹터)
@@ -45,6 +79,14 @@ impl FilterOptions {
             } else {
                 0
             },
+            min_dtoc: self.min_dtoc,
+            max_dtoc: self.max_dtoc,
+            min_ctoc: self.min_ctoc,
+            max_ctoc: self.max_ctoc,
+            min_ctod: self.min_ctod,
+            max_ctod: self.max_ctod,
+            min_qd: self.min_qd,
+            max_qd: self.max_qd,
         }
     }
 }
@@ -55,7 +97,7 @@ pub fn read_filter_options() -> io::Result<FilterOptions> {
     let mut filter = FilterOptions::default();
 
     // 시작 시간 입력
-    println!("start time : ");
+    println!("start time (ms, 0 to skip): ");
     let mut input = String::new();
     stdin.lock().read_line(&mut input)?;
     if let Ok(value) = input.trim().parse::<f64>() {
@@ -65,7 +107,7 @@ pub fn read_filter_options() -> io::Result<FilterOptions> {
     }
 
     // 종료 시간 입력
-    println!("end time : ");
+    println!("end time (ms, 0 to skip): ");
     input.clear();
     stdin.lock().read_line(&mut input)?;
     if let Ok(value) = input.trim().parse::<f64>() {
@@ -75,7 +117,7 @@ pub fn read_filter_options() -> io::Result<FilterOptions> {
     }
 
     // 시작 섹터/LBA 입력
-    println!("start sector/lba : ");
+    println!("start sector/lba (0 to skip): ");
     input.clear();
     stdin.lock().read_line(&mut input)?;
     if let Ok(value) = input.trim().parse::<u64>() {
@@ -85,12 +127,92 @@ pub fn read_filter_options() -> io::Result<FilterOptions> {
     }
 
     // 종료 섹터/LBA 입력
-    println!("end sector/lba : ");
+    println!("end sector/lba (0 to skip): ");
     input.clear();
     stdin.lock().read_line(&mut input)?;
     if let Ok(value) = input.trim().parse::<u64>() {
         if value > 0 {
             filter.end_sector = value;
+        }
+    }
+
+    // DTOC 최소값 입력
+    println!("min dtoc latency (ms, 0 to skip): ");
+    input.clear();
+    stdin.lock().read_line(&mut input)?;
+    if let Ok(value) = input.trim().parse::<f64>() {
+        if value > 0.0 {
+            filter.min_dtoc = value;
+        }
+    }
+
+    // DTOC 최대값 입력
+    println!("max dtoc latency (ms, 0 to skip): ");
+    input.clear();
+    stdin.lock().read_line(&mut input)?;
+    if let Ok(value) = input.trim().parse::<f64>() {
+        if value > 0.0 {
+            filter.max_dtoc = value;
+        }
+    }
+
+    // CTOC 최소값 입력
+    println!("min ctoc latency (ms, 0 to skip): ");
+    input.clear();
+    stdin.lock().read_line(&mut input)?;
+    if let Ok(value) = input.trim().parse::<f64>() {
+        if value > 0.0 {
+            filter.min_ctoc = value;
+        }
+    }
+
+    // CTOC 최대값 입력
+    println!("max ctoc latency (ms, 0 to skip): ");
+    input.clear();
+    stdin.lock().read_line(&mut input)?;
+    if let Ok(value) = input.trim().parse::<f64>() {
+        if value > 0.0 {
+            filter.max_ctoc = value;
+        }
+    }
+
+    // CTOD 최소값 입력
+    println!("min ctod latency (ms, 0 to skip): ");
+    input.clear();
+    stdin.lock().read_line(&mut input)?;
+    if let Ok(value) = input.trim().parse::<f64>() {
+        if value > 0.0 {
+            filter.min_ctod = value;
+        }
+    }
+
+    // CTOD 최대값 입력
+    println!("max ctod latency (ms, 0 to skip): ");
+    input.clear();
+    stdin.lock().read_line(&mut input)?;
+    if let Ok(value) = input.trim().parse::<f64>() {
+        if value > 0.0 {
+            filter.max_ctod = value;
+        }
+    }
+
+    // QD 최소값 입력
+    println!("min queue depth (0 to skip): ");
+    input.clear();
+    stdin.lock().read_line(&mut input)?;
+    if let Ok(value) = input.trim().parse::<u32>() {
+        if value > 0 {
+            filter.min_qd = value;
+        }
+    }
+
+    // QD 최대값 입력
+    println!("max queue depth (0 to skip): ");
+    input.clear();
+    stdin.lock().read_line(&mut input)?;
+    if let Ok(value) = input.trim().parse::<u32>() {
+        if value > 0 {
+            filter.max_qd = value;
         }
     }
 
@@ -103,7 +225,12 @@ pub fn filter_block_data(
     filter: &FilterOptions,
 ) -> Vec<crate::Block> {
     // 필터가 활성화되지 않은 경우 원본 데이터 반환
-    if !filter.is_time_filter_active() && !filter.is_sector_filter_active() {
+    if !filter.is_time_filter_active() 
+        && !filter.is_sector_filter_active()
+        && !filter.is_dtoc_filter_active()
+        && !filter.is_ctoc_filter_active()
+        && !filter.is_ctod_filter_active()
+        && !filter.is_qd_filter_active() {
         return block_data;
     }
 
@@ -126,8 +253,44 @@ pub fn filter_block_data(
                 true
             };
 
-            // 두 필터 조건 모두 만족해야 함
-            time_match && sector_match
+            // DTOC 필터 적용
+            let dtoc_match = if filter.is_dtoc_filter_active() {
+                let min_ok = filter.min_dtoc == 0.0 || item.dtoc >= filter.min_dtoc;
+                let max_ok = filter.max_dtoc == 0.0 || item.dtoc <= filter.max_dtoc;
+                min_ok && max_ok
+            } else {
+                true
+            };
+
+            // CTOC 필터 적용
+            let ctoc_match = if filter.is_ctoc_filter_active() {
+                let min_ok = filter.min_ctoc == 0.0 || item.ctoc >= filter.min_ctoc;
+                let max_ok = filter.max_ctoc == 0.0 || item.ctoc <= filter.max_ctoc;
+                min_ok && max_ok
+            } else {
+                true
+            };
+
+            // CTOD 필터 적용
+            let ctod_match = if filter.is_ctod_filter_active() {
+                let min_ok = filter.min_ctod == 0.0 || item.ctod >= filter.min_ctod;
+                let max_ok = filter.max_ctod == 0.0 || item.ctod <= filter.max_ctod;
+                min_ok && max_ok
+            } else {
+                true
+            };
+
+            // QD 필터 적용
+            let qd_match = if filter.is_qd_filter_active() {
+                let min_ok = filter.min_qd == 0 || item.qd >= filter.min_qd;
+                let max_ok = filter.max_qd == 0 || item.qd <= filter.max_qd;
+                min_ok && max_ok
+            } else {
+                true
+            };
+
+            // 모든 필터 조건을 만족해야 함
+            time_match && sector_match && dtoc_match && ctoc_match && ctod_match && qd_match
         })
         .collect()
 }
@@ -135,7 +298,12 @@ pub fn filter_block_data(
 // UFS 데이터 필터링 함수 (4KB LBA로 변환 적용)
 pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec<crate::UFS> {
     // 필터가 활성화되지 않은 경우 원본 데이터 반환
-    if !filter.is_time_filter_active() && !filter.is_sector_filter_active() {
+    if !filter.is_time_filter_active() 
+        && !filter.is_sector_filter_active()
+        && !filter.is_dtoc_filter_active()
+        && !filter.is_ctoc_filter_active()
+        && !filter.is_ctod_filter_active()
+        && !filter.is_qd_filter_active() {
         return ufs_data;
     }
 
@@ -161,19 +329,57 @@ pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec
                 true
             };
 
-            // 두 필터 조건 모두 만족해야 함
-            time_match && lba_match
+            // DTOC 필터 적용
+            let dtoc_match = if filter.is_dtoc_filter_active() {
+                let min_ok = filter.min_dtoc == 0.0 || item.dtoc >= filter.min_dtoc;
+                let max_ok = filter.max_dtoc == 0.0 || item.dtoc <= filter.max_dtoc;
+                min_ok && max_ok
+            } else {
+                true
+            };
+
+            // CTOC 필터 적용
+            let ctoc_match = if filter.is_ctoc_filter_active() {
+                let min_ok = filter.min_ctoc == 0.0 || item.ctoc >= filter.min_ctoc;
+                let max_ok = filter.max_ctoc == 0.0 || item.ctoc <= filter.max_ctoc;
+                min_ok && max_ok
+            } else {
+                true
+            };
+
+            // CTOD 필터 적용
+            let ctod_match = if filter.is_ctod_filter_active() {
+                let min_ok = filter.min_ctod == 0.0 || item.ctod >= filter.min_ctod;
+                let max_ok = filter.max_ctod == 0.0 || item.ctod <= filter.max_ctod;
+                min_ok && max_ok
+            } else {
+                true
+            };
+
+            // QD 필터 적용
+            let qd_match = if filter.is_qd_filter_active() {
+                let min_ok = filter.min_qd == 0 || item.qd >= filter.min_qd;
+                let max_ok = filter.max_qd == 0 || item.qd <= filter.max_qd;
+                min_ok && max_ok
+            } else {
+                true
+            };
+
+            // 모든 필터 조건을 만족해야 함
+            time_match && lba_match && dtoc_match && ctoc_match && ctod_match && qd_match
         })
         .collect()
 }
 
-// UFSCUSTOM 데이터 필터링 함수 (start_lba 기준)
+// UFSCUSTOM 데이터 필터링 함수 (start_lba 기준, dtoc만 적용)
 pub fn filter_ufscustom_data(
     ufscustom_data: Vec<crate::UFSCUSTOM>,
     filter: &FilterOptions,
 ) -> Vec<crate::UFSCUSTOM> {
     // 필터가 활성화되지 않은 경우 원본 데이터 반환
-    if !filter.is_time_filter_active() && !filter.is_sector_filter_active() {
+    if !filter.is_time_filter_active() 
+        && !filter.is_sector_filter_active()
+        && !filter.is_dtoc_filter_active() {
         return ufscustom_data;
     }
 
@@ -200,8 +406,17 @@ pub fn filter_ufscustom_data(
                 true
             };
 
-            // 두 필터 조건 모두 만족해야 함
-            time_match && lba_match
+            // DTOC 필터 적용 (UFSCUSTOM은 dtoc만 가지고 있음)
+            let dtoc_match = if filter.is_dtoc_filter_active() {
+                let min_ok = filter.min_dtoc == 0.0 || item.dtoc >= filter.min_dtoc;
+                let max_ok = filter.max_dtoc == 0.0 || item.dtoc <= filter.max_dtoc;
+                min_ok && max_ok
+            } else {
+                true
+            };
+
+            // 모든 필터 조건을 만족해야 함 (ctoc, ctod, qd는 UFSCUSTOM에 없으므로 제외)
+            time_match && lba_match && dtoc_match
         })
         .collect()
 }
