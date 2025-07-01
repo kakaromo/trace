@@ -13,12 +13,13 @@ pub struct PlottersConfig {
     pub tick_label_font_size: u32,
     pub point_size: u32,
     pub legend_spacing: u32,
+    pub y_axis_range: Option<(f64, f64)>, // y축 범위 고정 옵션 (min, max)
 }
 
 impl Default for PlottersConfig {
     fn default() -> Self {
         Self {
-            width: 1000,
+            width: 1400,
             height: 800,
             font_family: "sans-serif",
             title_font_size: 30,
@@ -26,6 +27,7 @@ impl Default for PlottersConfig {
             tick_label_font_size: 15,
             point_size: 2,
             legend_spacing: 30,
+            y_axis_range: None, // 기본값은 자동 범위
         }
     }
 }
@@ -190,8 +192,8 @@ where
     .into_drawing_area();
     root.fill(&WHITE).map_err(|e| e.to_string())?;
 
-    // 차트 영역과 레전드 영역을 분리
-    let (chart_area, legend_area) = root.split_horizontally(800);
+    // 차트 영역과 레전드 영역을 분리 (y축 라벨을 위한 공간 확보)
+    let (chart_area, legend_area) = root.split_horizontally(1100);
 
     // Find min and max values for axes
     let mut min_x = f64::MAX;
@@ -220,8 +222,15 @@ where
 
     // Add padding
     let (min_x, max_x) = add_padding_to_range(min_x, max_x, 0.05);
-    let min_y = (min_y.max(0.0) - (max_y - min_y) * 0.05).max(0.0); // 0 아래로 내려가지 않게
-    let max_y = max_y + (max_y - min_y) * 0.05;
+    
+    // y축 범위 설정 - 고정 범위가 설정되어 있으면 사용, 없으면 자동 계산
+    let (min_y, max_y) = if let Some((fixed_min, fixed_max)) = chart_config.config.y_axis_range {
+        (fixed_min, fixed_max)
+    } else {
+        let min_y = (min_y.max(0.0) - (max_y - min_y) * 0.05).max(0.0); // 0 아래로 내려가지 않게
+        let max_y = max_y + (max_y - min_y) * 0.05;
+        (min_y, max_y)
+    };
 
     // Create the chart
     let mut chart = ChartBuilder::on(&chart_area)
@@ -233,9 +242,9 @@ where
             )
                 .into_font(),
         )
-        .margin(10)
-        .x_label_area_size(50)
-        .y_label_area_size(60)
+        .margin(15)
+        .x_label_area_size(60)
+        .y_label_area_size(140)  // y축 라벨 영역 더 확대
         .build_cartesian_2d(min_x..max_x, min_y..max_y)
         .map_err(|e| e.to_string())?;
 
@@ -323,7 +332,7 @@ fn create_ufs_metric_chart(
             metric_name: "Latency",
             metric_label: "Latency (ms)",
             metric_extractor: |ufs| ufs.dtoc,
-            file_suffix: "latency",
+            file_suffix: "dtoc",
             require_positive: true,
         },
         "ctoc" => UfsMetricInfo {
@@ -435,7 +444,7 @@ fn create_block_metric_chart(
             metric_name: "Latency",
             metric_label: "Latency (ms)",
             metric_extractor: |block| block.dtoc,
-            file_suffix: "latency",
+            file_suffix: "dtoc",
             require_positive: true,
         },
         "ctoc" => BlockMetricInfo {
@@ -647,14 +656,29 @@ pub fn generate_charts(
     processed_ufscustom: &[UFSCUSTOM],
     output_prefix: &str,
 ) -> Result<(), String> {
-    // 기본 차트 구성 생성
-    let config = PlottersConfig::default();
+    generate_charts_with_config(processed_ufs, processed_blocks, processed_ufscustom, output_prefix, None)
+}
 
+/// Generate charts with custom y-axis ranges for different metrics.
+pub fn generate_charts_with_config(
+    processed_ufs: &[UFS],
+    processed_blocks: &[Block],
+    processed_ufscustom: &[UFSCUSTOM],
+    output_prefix: &str,
+    y_axis_ranges: Option<&std::collections::HashMap<String, (f64, f64)>>,
+) -> Result<(), String> {
     println!("\nGenerating charts...");
+
+    // 메트릭별 y축 범위를 가져오는 헬퍼 함수
+    let get_y_range_for_metric = |metric: &str| -> Option<(f64, f64)> {
+        y_axis_ranges.and_then(|ranges| ranges.get(metric).copied())
+    };
 
     // UFS 차트 생성
     if !processed_ufs.is_empty() {
         // UFS lba 차트
+        let mut config = PlottersConfig::default();
+        config.y_axis_range = get_y_range_for_metric("ufs_lba");
         match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "lba") {
             Ok(_) => {
                 println!("UFS lba trend PNG chart generated.");
@@ -663,17 +687,22 @@ pub fn generate_charts(
                 eprintln!("Error generating UFS lba trend PNG chart: {}", e);
             }
         }
+        
         // UFS DTOC (Dispatch to Complete) 차트
+        let mut config = PlottersConfig::default();
+        config.y_axis_range = get_y_range_for_metric("ufs_dtoc");
         match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "dtoc") {
             Ok(_) => {
-                println!("UFS latency trend PNG chart generated.");
+                println!("UFS dtoc trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFS latency trend PNG chart: {}", e);
+                eprintln!("Error generating UFS dtoc trend PNG chart: {}", e);
             }
         }
 
         // UFS CTOC (Complete to Complete) 차트
+        let mut config = PlottersConfig::default();
+        config.y_axis_range = get_y_range_for_metric("ufs_ctoc");
         match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "ctoc") {
             Ok(_) => {
                 println!("UFS complete-to-complete trend PNG chart generated.");
@@ -684,6 +713,8 @@ pub fn generate_charts(
         }
 
         // UFS CTOD (Complete to Dispatch) 차트
+        let mut config = PlottersConfig::default();
+        config.y_axis_range = get_y_range_for_metric("ufs_ctod");
         match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "ctod") {
             Ok(_) => {
                 println!("UFS complete-to-dispatch trend PNG chart generated.");
@@ -694,6 +725,8 @@ pub fn generate_charts(
         }
 
         // UFS Queue Depth 차트
+        let mut config = PlottersConfig::default();
+        config.y_axis_range = get_y_range_for_metric("ufs_qd");
         match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "qd") {
             Ok(_) => {
                 println!("UFS queue depth trend PNG chart generated.");
@@ -707,6 +740,8 @@ pub fn generate_charts(
     // Block I/O 차트 생성
     if !processed_blocks.is_empty() {
         // Block I/O lba 차트
+        let mut config = PlottersConfig::default();
+        config.y_axis_range = get_y_range_for_metric("block_lba");
         match create_block_metric_chart(processed_blocks, output_prefix, &config, "lba") {
             Ok(_) => {
                 println!("Block I/O lba trend PNG chart generated.");
@@ -717,16 +752,20 @@ pub fn generate_charts(
         }
         
         // Block I/O DTOC (Dispatch to Complete) 차트
+        let mut config = PlottersConfig::default();
+        config.y_axis_range = get_y_range_for_metric("block_dtoc");
         match create_block_metric_chart(processed_blocks, output_prefix, &config, "dtoc") {
             Ok(_) => {
-                println!("Block I/O latency trend PNG chart generated.");
+                println!("Block I/O dtoc trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O latency trend PNG chart: {}", e);
+                eprintln!("Error generating Block I/O dtoc trend PNG chart: {}", e);
             }
         }
 
         // Block I/O CTOC (Complete to Complete) 차트
+        let mut config = PlottersConfig::default();
+        config.y_axis_range = get_y_range_for_metric("block_ctoc");
         match create_block_metric_chart(processed_blocks, output_prefix, &config, "ctoc") {
             Ok(_) => {
                 println!("Block I/O complete-to-complete trend PNG chart generated.");
@@ -737,6 +776,8 @@ pub fn generate_charts(
         }
 
         // Block I/O CTOD (Complete to Dispatch) 차트
+        let mut config = PlottersConfig::default();
+        config.y_axis_range = get_y_range_for_metric("block_ctod");
         match create_block_metric_chart(processed_blocks, output_prefix, &config, "ctod") {
             Ok(_) => {
                 println!("Block I/O complete-to-dispatch trend PNG chart generated.");
@@ -747,6 +788,8 @@ pub fn generate_charts(
         }
 
         // Block I/O Queue Depth 차트
+        let mut config = PlottersConfig::default();
+        config.y_axis_range = get_y_range_for_metric("block_qd");
         match create_block_metric_chart(processed_blocks, output_prefix, &config, "qd") {
             Ok(_) => {
                 println!("Block I/O queue depth trend PNG chart generated.");
@@ -757,6 +800,7 @@ pub fn generate_charts(
         }
 
         // 기존 차트도 유지 (하위 호환성)
+        let config = PlottersConfig::default();
         match create_block_io_charts(processed_blocks, output_prefix, &config) {
             Ok(_) => {
                 println!("Legacy Block I/O PNG charts generated.");
@@ -769,6 +813,7 @@ pub fn generate_charts(
 
     // UFSCUSTOM 차트 생성
     if !processed_ufscustom.is_empty() {
+        let config = PlottersConfig::default();
         match create_ufscustom_charts(processed_ufscustom, output_prefix, &config) {
             Ok(_) => {
                 println!("UFSCUSTOM PNG charts generated.");

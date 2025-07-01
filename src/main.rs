@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::io;
 use std::time::Instant;
@@ -7,6 +8,34 @@ use trace::utils::{
 };
 use trace::TraceType;
 use trace::*;
+
+/// Parse y-axis ranges from command line argument
+/// Format: "metric:min:max,metric:min:max"
+/// Example: "ufs_dtoc:0:100,block_dtoc:0:50"
+fn parse_y_axis_ranges(input: &str) -> Result<HashMap<String, (f64, f64)>, String> {
+    let mut ranges = HashMap::new();
+    
+    for part in input.split(',') {
+        let components: Vec<&str> = part.split(':').collect();
+        if components.len() != 3 {
+            return Err(format!("Invalid format for y-axis range: '{}'. Expected format: metric:min:max", part));
+        }
+        
+        let metric = components[0].to_string();
+        let min = components[1].parse::<f64>()
+            .map_err(|_| format!("Invalid minimum value '{}' for metric '{}'", components[1], metric))?;
+        let max = components[2].parse::<f64>()
+            .map_err(|_| format!("Invalid maximum value '{}' for metric '{}'", components[2], metric))?;
+        
+        if min >= max {
+            return Err(format!("Minimum value ({}) must be less than maximum value ({}) for metric '{}'", min, max, metric));
+        }
+        
+        ranges.insert(metric, (min, max));
+    }
+    
+    Ok(ranges)
+}
 
 fn print_usage(program: &str) {
     eprintln!("Usage:");
@@ -18,6 +47,9 @@ fn print_usage(program: &str) {
     eprintln!("\nOptions:");
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
     eprintln!("  -f           - Apply filters (time, sector/lba) with interactive input");
+    eprintln!("  -y <ranges>  - Set y-axis ranges for charts. Format: metric:min:max,metric:min:max");
+    eprintln!("                 Metrics: ufs_dtoc, ufs_ctoc, ufs_ctod, ufs_qd, ufs_lba, block_dtoc, block_ctoc, block_ctod, block_qd, block_lba");
+    eprintln!("                 Example: -y ufs_dtoc:0:100,block_dtoc:0:50");
     // 새 트레이스 타입이나 옵션이 추가되면 여기에 업데이트
 }
 
@@ -46,6 +78,7 @@ async fn main() -> io::Result<()> {
     let mut async_log_file_index = 0;
     let mut async_output_prefix_index = 0;
     let mut use_filter = false;
+    let mut y_axis_ranges: Option<HashMap<String, (f64, f64)>> = None;
 
     while i < args.len() {
         match args[i].as_str() {
@@ -73,6 +106,27 @@ async fn main() -> io::Result<()> {
             "-f" => {
                 use_filter = true;
                 i += 1;
+            }
+            "-y" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: -y option requires y-axis range values");
+                    print_usage(&args[0]);
+                    return Ok(());
+                }
+
+                match parse_y_axis_ranges(&args[i + 1]) {
+                    Ok(ranges) => {
+                        y_axis_ranges = Some(ranges);
+                        log!("Using custom y-axis ranges: {:?}", args[i + 1]);
+                    }
+                    Err(e) => {
+                        eprintln!("Error in y-axis ranges: {}", e);
+                        print_usage(&args[0]);
+                        return Ok(());
+                    }
+                }
+
+                i += 2; // 옵션과 값을 건너뜀
             }
             "--parquet" => {
                 is_parquet_mode = true;
@@ -157,6 +211,7 @@ async fn main() -> io::Result<()> {
             &args[log_file_index],
             &args[output_prefix_index],
             filter_options.as_ref(),
+            y_axis_ranges.as_ref(),
         )
     } else if is_parquet_mode
         && parquet_type_index > 0
@@ -181,6 +236,7 @@ async fn main() -> io::Result<()> {
             &args[parquet_path_index],
             &args[output_prefix_index],
             filter_options.as_ref(),
+            y_axis_ranges.as_ref(),
         )
     } else if is_ufscustom_mode
         && ufscustom_file_index > 0
@@ -193,6 +249,7 @@ async fn main() -> io::Result<()> {
             &args[ufscustom_file_index],
             &args[output_prefix_index],
             filter_options.as_ref(),
+            y_axis_ranges.as_ref(),
         )
     } else if is_async_mode
         && async_log_file_index > 0
@@ -205,6 +262,7 @@ async fn main() -> io::Result<()> {
             &args[async_log_file_index],
             &args[async_output_prefix_index],
             filter_options.as_ref(),
+            y_axis_ranges.as_ref(),
         )
         .await
     } else {
@@ -228,6 +286,7 @@ fn process_log_file(
     log_file_path: &str,
     output_prefix: &str,
     filter: Option<&FilterOptions>,
+    y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
 ) -> io::Result<()> {
     // Logger 초기화 - 로그 파일은 trace가 저장되는 경로와 동일하게 설정
     Logger::init(output_prefix);
@@ -441,11 +500,12 @@ fn process_log_file(
     log!("\n[5/5] Generating  charts...");
     let charts_start = Instant::now();
 
-    match generate_charts(
+    match output::charts::generate_charts_with_config(
         &processed_ufs,
         &processed_blocks,
         &processed_ufscustom,
         output_prefix,
+        y_axis_ranges,
     ) {
         Ok(()) => log!(
             "Plotly charts generated successfully (Time taken: {:.2}s)",
@@ -513,6 +573,7 @@ fn process_single_parquet_file(
     parquet_path: &str,
     output_prefix: &str,
     filter: Option<&FilterOptions>,
+    y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
 ) -> io::Result<()> {
     // Logger 초기화
     Logger::init(output_prefix);
@@ -603,7 +664,7 @@ fn process_single_parquet_file(
     log!("\n[3/3] Generating {} Plotly charts...", data_label);
     let charts_start = Instant::now();
 
-    match trace_data.generate_charts(output_prefix) {
+    match trace_data.generate_charts(output_prefix, y_axis_ranges) {
         Ok(()) => log!(
             "{} Plotly charts generated successfully (Time taken: {:.2}s)",
             data_label,
@@ -634,6 +695,7 @@ fn process_ufscustom_file(
     custom_file_path: &str,
     output_prefix: &str,
     filter: Option<&FilterOptions>,
+    y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
 ) -> io::Result<()> {
     // Logger 초기화
     Logger::init(output_prefix);
@@ -716,7 +778,7 @@ fn process_ufscustom_file(
     log!("\n[3/3] Generating UFSCustom Plotly charts...");
     let charts_start = Instant::now();
 
-    match output::charts::generate_charts(&[], &[], &traces, output_prefix) {
+    match output::charts::generate_charts_with_config(&[], &[], &traces, output_prefix, y_axis_ranges) {
         Ok(()) => log!(
             "UFSCustom Plotly charts generated successfully (Time taken: {:.2}s)",
             charts_start.elapsed().as_secs_f64()
@@ -755,6 +817,7 @@ async fn process_async_log_file(
     log_file_path: &str,
     output_prefix: &str,
     filter: Option<&FilterOptions>,
+    y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
 ) -> io::Result<()> {
     // Logger 초기화
     Logger::init(output_prefix);
@@ -906,7 +969,7 @@ async fn process_async_log_file(
     log!("\n[3/3] Generating charts...");
     let charts_start = Instant::now();
 
-    match trace::output::generate_charts(ufs_traces, block_traces, ufscustom_traces, output_prefix)
+    match trace::output::charts::generate_charts_with_config(ufs_traces, block_traces, ufscustom_traces, output_prefix, y_axis_ranges)
     {
         Ok(()) => log!(
             "Async charts generated successfully (Time taken: {:.2}s)",
@@ -985,11 +1048,11 @@ impl TraceData {
     }
 
     // 차트 생성
-    fn generate_charts(&self, output_prefix: &str) -> Result<(), String> {
+    fn generate_charts(&self, output_prefix: &str, y_axis_ranges: Option<&HashMap<String, (f64, f64)>>) -> Result<(), String> {
         match self {
-            TraceData::UFS(traces) => generate_charts(traces, &[], &[], output_prefix),
-            TraceData::Block(traces) => generate_charts(&[], traces, &[], output_prefix),
-            TraceData::UFSCUSTOM(traces) => generate_charts(&[], &[], traces, output_prefix),
+            TraceData::UFS(traces) => output::charts::generate_charts_with_config(traces, &[], &[], output_prefix, y_axis_ranges),
+            TraceData::Block(traces) => output::charts::generate_charts_with_config(&[], traces, &[], output_prefix, y_axis_ranges),
+            TraceData::UFSCUSTOM(traces) => output::charts::generate_charts_with_config(&[], &[], traces, output_prefix, y_axis_ranges),
             // 새 트레이스 타입 추가 시 여기에 추가
         }
     }
