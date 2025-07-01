@@ -8,6 +8,7 @@ use trace::utils::{
 };
 use trace::TraceType;
 use trace::*;
+use trace::output::save_to_csv;
 
 /// Parse y-axis ranges from command line argument
 /// Format: "metric:min:max,metric:min:max"
@@ -51,6 +52,7 @@ fn print_usage(program: &str) {
     eprintln!("                 Metrics: ufs_dtoc, ufs_ctoc, ufs_ctod, ufs_qd, ufs_lba, block_dtoc, block_ctoc, block_ctod, block_qd, block_lba");
     eprintln!("                 Example: -y ufs_dtoc:0:100,block_dtoc:0:50");
     eprintln!("  -c <size>    - Set chunk size for Parquet file writing (default: 50000). Example: -c 100000");
+    eprintln!("  --csv        - Export data to CSV files in addition to Parquet files");
     // 새 트레이스 타입이나 옵션이 추가되면 여기에 업데이트
 }
 
@@ -81,6 +83,7 @@ async fn main() -> io::Result<()> {
     let mut use_filter = false;
     let mut y_axis_ranges: Option<HashMap<String, (f64, f64)>> = None;
     let mut chunk_size: usize = 50_000; // 기본 청크 크기
+    let mut export_csv = false; // CSV export 옵션
 
     while i < args.len() {
         match args[i].as_str() {
@@ -155,6 +158,10 @@ async fn main() -> io::Result<()> {
                 }
 
                 i += 2; // 옵션과 값을 건너뜀
+            }
+            "--csv" => {
+                export_csv = true;
+                i += 1;
             }
             "--parquet" => {
                 is_parquet_mode = true;
@@ -281,6 +288,7 @@ async fn main() -> io::Result<()> {
             filter_options.as_ref(),
             y_axis_ranges.as_ref(),
             chunk_size,
+            export_csv,
         )
     } else if is_parquet_mode
         && parquet_type_index > 0
@@ -360,6 +368,7 @@ fn process_log_file(
     filter: Option<&FilterOptions>,
     y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
     chunk_size: usize,
+    export_csv: bool,
 ) -> io::Result<()> {
     // Logger 초기화 - 로그 파일은 trace가 저장되는 경로와 동일하게 설정
     Logger::init(output_prefix);
@@ -607,6 +616,38 @@ fn process_log_file(
         Err(e) => log_error!("Error while saving Parquet files: {}", e),
     }
 
+    // Save to CSV files if requested
+    if export_csv {
+        log!("\n[4.5/5] Saving to CSV files...");
+        let csv_save_start = Instant::now();
+
+        match save_to_csv(
+            &processed_ufs,
+            &processed_blocks,
+            &processed_ufscustom,
+            output_prefix,
+        ) {
+            Ok(()) => {
+                let mut saved_csv_files = Vec::new();
+                if has_ufs {
+                    saved_csv_files.push(format!("{}_ufs.csv", output_prefix));
+                }
+                if has_block {
+                    saved_csv_files.push(format!("{}_block.csv", output_prefix));
+                }
+                if has_ufscustom {
+                    saved_csv_files.push(format!("{}_ufscustom.csv", output_prefix));
+                }
+                log!(
+                    "CSV files saved successfully (Time taken: {:.2}s):\n{}",
+                    csv_save_start.elapsed().as_secs_f64(),
+                    saved_csv_files.join("\n")
+                );
+            }
+            Err(e) => log_error!("Error while saving CSV files: {}", e),
+        }
+    }
+
     // Generate Plotly charts
     log!("\n[5/5] Generating  charts...");
     let charts_start = Instant::now();
@@ -642,12 +683,18 @@ fn process_log_file(
     // 생성된 파일 목록
     if has_ufs {
         log!("- UFS Parquet file: {}_ufs.parquet", output_prefix);
+        if export_csv {
+            log!("- UFS CSV file: {}_ufs.csv", output_prefix);
+        }
         log!("- UFS Plotly charts: {}_ufs_*.html", output_prefix);
         log!("- UFS Matplotlib charts: {}_ufs_*.png", output_prefix);
     }
 
     if has_block {
         log!("- Block I/O Parquet file: {}_block.parquet", output_prefix);
+        if export_csv {
+            log!("- Block I/O CSV file: {}_block.csv", output_prefix);
+        }
         log!("- Block I/O Plotly charts: {}_block_*.html", output_prefix);
         log!(
             "- Block I/O Matplotlib charts: {}_block_*.png",
@@ -660,6 +707,9 @@ fn process_log_file(
             "- UFSCUSTOM Parquet file: {}_ufscustom.parquet",
             output_prefix
         );
+        if export_csv {
+            log!("- UFSCUSTOM CSV file: {}_ufscustom.csv", output_prefix);
+        }
         log!(
             "- UFSCUSTOM Plotly charts: {}_ufscustom_*.html",
             output_prefix
