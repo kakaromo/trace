@@ -21,12 +21,12 @@ impl Default for PlottersConfig {
         Self {
             width: 1400,
             height: 800,
-            font_family: "sans-serif",
-            title_font_size: 30,
-            axis_label_font_size: 20,
-            tick_label_font_size: 15,
+            font_family: "D2Coding", // D2Coding 폰트 (크로스플랫폼 개발자용 폰트)
+            title_font_size: 24,      // 30 -> 24로 줄임
+            axis_label_font_size: 16, // 20 -> 16으로 줄임
+            tick_label_font_size: 12, // 15 -> 12로 줄임
             point_size: 2,
-            legend_spacing: 30,
+            legend_spacing: 25,       // 30 -> 25로 줄임
             y_axis_range: None, // 기본값은 자동 범위
         }
     }
@@ -46,21 +46,6 @@ pub struct ChartConfig<'a, T, F, G, H> {
     pub filter_condition: Option<H>,
 }
 
-/// UFS 명령어 타입에 따른 색상 매핑
-fn get_color_for_ufs_opcode(opcode: &str) -> RGBColor {
-    if opcode == "0x28" {
-        RGBColor(65, 105, 225) // READ - 파란색 계열
-    } else if opcode == "0x2a" {
-        RGBColor(220, 20, 60) // WRITE - 빨간색 계열
-    } else if opcode == "0x35" {
-        RGBColor(255, 215, 0) // SYNC - 노란색 계열
-    } else if opcode == "0x42" {
-        RGBColor(138, 43, 226) // UNMAP/DISCARD - 보라색 계열
-    } else {
-        RGBColor(50, 50, 50) // 기타 - 검은색 계열
-    }
-}
-
 /// Block I/O 타입에 따른 색상 매핑
 fn get_color_for_io_type(io_type: &str) -> RGBColor {
     if let Some(first_char) = io_type.chars().next() {
@@ -73,17 +58,6 @@ fn get_color_for_io_type(io_type: &str) -> RGBColor {
         }
     } else {
         RGBColor(50, 50, 50) // Empty string fallback
-    }
-}
-
-/// UFS 명령어 이름 매핑 함수
-fn get_ufs_opcode_name(opcode: &str) -> String {
-    match opcode {
-        "0x28" => "READ_10".to_string(),
-        "0x2a" => "WRITE_10".to_string(),
-        "0x35" => "SYNCHRONIZE_CACHE_10".to_string(),
-        "0x42" => "UNMAP".to_string(),
-        _ => opcode.to_string(),
     }
 }
 
@@ -102,38 +76,41 @@ fn draw_legend(
 ) -> Result<(), Box<dyn Error>> {
     legend_area.fill(&WHITE.mix(0.95))?;
 
+    // 레전드 영역의 높이 가져오기
+    let (_, legend_height) = legend_area.dim_in_pixel();
+    let total_legend_height = legends.len() * config.legend_spacing as usize;
+    
+    // 세로 가운데 정렬을 위한 시작 위치 계산
+    let start_y = ((legend_height as i32 - total_legend_height as i32) / 2).max(20);
+
     for (i, (name, color)) in legends.iter().enumerate() {
         let spacing = config.legend_spacing as usize;
-        let y_pos = (50 + i * spacing) as i32;
+        let y_pos = start_y + (i * spacing) as i32;
 
         // 직선으로 레전드 표시
         legend_area.draw(&PathElement::new(
-            vec![(20_i32, y_pos), (50_i32, y_pos)],
+            vec![(15_i32, y_pos), (45_i32, y_pos)],
             color.stroke_width(2),
         ))?;
 
         legend_area.draw(&Text::new(
             name.clone(),
-            (60_i32, y_pos),
-            (config.font_family, config.tick_label_font_size),
+            (50_i32, y_pos),
+            (config.font_family, config.tick_label_font_size, FontStyle::Normal),  // Bold 제거
         ))?;
     }
 
     Ok(())
 }
 
-/// UFS 색상 매핑 헬퍼 함수
+/// UFS 색상 매핑 헬퍼 함수 - 주요 opcode 색상 고정
 fn ufs_opcode_color_mapper(opcode: &str) -> RGBColor {
-    if opcode == "READ_10" {
-        RGBColor(65, 105, 225) // READ - 파란색 계열
-    } else if opcode == "WRITE_10" {
-        RGBColor(220, 20, 60) // WRITE - 빨간색 계열
-    } else if opcode == "SYNCHRONIZE_CACHE_10" {
-        RGBColor(255, 215, 0) // SYNC - 노란색 계열
-    } else if opcode == "UNMAP" {
-        RGBColor(138, 43, 226) // UNMAP/DISCARD - 보라색 계열
-    } else {
-        RGBColor(50, 50, 50) // 기타 - 검은색 계열
+    match opcode {
+        "0x28" => RGBColor(65, 105, 225),  // READ_10 - 파란색 계열
+        "0x2a" => RGBColor(220, 20, 60),   // WRITE_10 - 빨간색 계열  
+        "0x35" => RGBColor(255, 215, 0),   // SYNCHRONIZE_CACHE_10 - 노란색 계열
+        "0x42" => RGBColor(138, 43, 226),  // UNMAP/DISCARD - 보라색 계열
+        _ => RGBColor(50, 50, 50),         // 기타 - 검은색 계열
     }
 }
 
@@ -239,12 +216,12 @@ where
             (
                 chart_config.config.font_family,
                 chart_config.config.title_font_size,
-            )
-                .into_font(),
+                FontStyle::Normal,  // Bold 제거, Normal 스타일 명시적 지정
+            ),
         )
-        .margin(15)
-        .x_label_area_size(60)
-        .y_label_area_size(140)  // y축 라벨 영역 더 확대
+        .margin(30)              // 20 -> 30으로 늘림 (제목과 차트 간격)
+        .x_label_area_size(70)   // 60 -> 70으로 늘림
+        .y_label_area_size(150)  // 140 -> 150으로 늘림 (y축 라벨 영역 더 확대)
         .build_cartesian_2d(min_x..max_x, min_y..max_y)
         .map_err(|e| e.to_string())?;
 
@@ -256,11 +233,14 @@ where
         .axis_desc_style((
             chart_config.config.font_family,
             chart_config.config.axis_label_font_size,
+            FontStyle::Normal,  // Bold 제거, Normal 스타일 명시적 지정
         ))
         .label_style((
             chart_config.config.font_family,
             chart_config.config.tick_label_font_size,
+            FontStyle::Normal,  // Bold 제거, Normal 스타일 명시적 지정
         ))
+        .disable_mesh()  // 격자 비활성화
         .draw()
         .map_err(|e| e.to_string())?;
 
@@ -366,13 +346,13 @@ fn create_ufs_metric_chart(
         _ => return Err(format!("Unknown metric: {}", metric)),
     };
 
-    // 명령어별로 데이터 그룹화
+    // 명령어별로 데이터 그룹화 (opcode 값 그대로 사용)
     let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
     for item in data {
         // 양수 값이 필요한 메트릭은 필터링
         if !metric_info.require_positive || (metric_info.metric_extractor)(item) > 0.0 {
             opcode_groups
-                .entry(item.opcode.clone())
+                .entry(item.opcode.clone())  // opcode 값 그대로 사용
                 .or_default()
                 .push(item);
         }
@@ -380,13 +360,6 @@ fn create_ufs_metric_chart(
 
     if opcode_groups.is_empty() {
         return Err(format!("No valid data for UFS {} chart", metric_info.metric_name));
-    }
-
-    // 명령어 이름 변환 및 색상 매핑을 위한 새로운 그룹 생성
-    let mut named_opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
-    for (opcode, events) in opcode_groups {
-        let opcode_name = get_ufs_opcode_name(&opcode);
-        named_opcode_groups.insert(opcode_name, events);
     }
 
     // PNG 파일 경로 생성
@@ -400,7 +373,7 @@ fn create_ufs_metric_chart(
     };
 
     create_xy_scatter_chart(
-        &named_opcode_groups,
+        &opcode_groups,
         &png_path,
         config,
         &format!("UFS {} by Operation Code", metric_info.metric_name),
@@ -408,7 +381,7 @@ fn create_ufs_metric_chart(
         metric_info.metric_label,
         |ufs| ufs.time,
         metric_info.metric_extractor,
-        ufs_opcode_color_mapper,
+        ufs_opcode_color_mapper,  // 주요 opcode 색상 고정
         filter_condition,
     )?;
 
@@ -616,7 +589,7 @@ fn create_ufscustom_charts(
             "LBA",
             |event| event.start_time,
             |event| event.lba as f64,
-            get_color_for_ufs_opcode,
+            ufs_opcode_color_mapper,  // 주요 opcode 색상 고정
             Option::<fn(&&UFSCUSTOM) -> bool>::None,
         )?;
 
@@ -636,7 +609,7 @@ fn create_ufscustom_charts(
             "Latency (ms)",
             |event| event.start_time,
             |event| event.dtoc,
-            get_color_for_ufs_opcode,
+            ufs_opcode_color_mapper,  // 주요 opcode 색상 고정
             Some(|event: &&UFSCUSTOM| event.dtoc > 0.0),
         )?;
 

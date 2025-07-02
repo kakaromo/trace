@@ -1,7 +1,7 @@
 use crate::log;
 use crate::models::UFS;
 use crate::utils::constants::MILLISECONDS;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     // 이벤트가 없으면 빈 벡터 반환
@@ -45,6 +45,67 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let total_events = ufs_list.len();
     let report_interval = (total_events / 20).max(1000);
     let mut last_reported = 0;
+
+    // send_req와 complete_rsp 쌍 매칭 - 개선된 방식
+    log!("  Checking and filtering orphaned send_req events...");
+    let original_count = ufs_list.len();
+    
+    // 첫 번째 패스: 모든 complete_rsp의 (tag, opcode) 쌍을 수집
+    let mut complete_pairs: HashSet<(u32, String)> = HashSet::new();
+    let mut complete_count = 0;
+    for ufs in &ufs_list {
+        if ufs.action == "complete_rsp" {
+            complete_pairs.insert((ufs.tag, ufs.opcode.clone()));
+            complete_count += 1;
+        }
+    }
+    
+    log!("    Found {} complete_rsp events with {} unique (tag, opcode) pairs", 
+         complete_count, complete_pairs.len());
+    
+    // 두 번째 패스: complete_rsp가 없는 send_req만 제거 (중복은 허용)
+    let mut send_req_before = 0;
+    let mut send_req_after = 0;
+    let mut other_events = 0;
+    
+    // 필터링 전 카운트
+    for ufs in &ufs_list {
+        match ufs.action.as_str() {
+            "send_req" => send_req_before += 1,
+            _ => other_events += 1,
+        }
+    }
+    
+    ufs_list.retain(|ufs| {
+        if ufs.action == "send_req" {
+            // send_req의 경우 corresponding complete_rsp가 있는지만 확인
+            let has_complete = complete_pairs.contains(&(ufs.tag, ufs.opcode.clone()));
+            if has_complete {
+                send_req_after += 1;
+            }
+            has_complete
+        } else {
+            // send_req가 아닌 경우는 모두 유지
+            true
+        }
+    });
+    
+    let filtered_count = ufs_list.len();
+    let removed_count = original_count - filtered_count;
+    let orphaned_send_req = send_req_before - send_req_after;
+    
+    log!("    Before filtering: {} send_req, {} other events", send_req_before, other_events);
+    log!("    After filtering: {} send_req, {} other events", send_req_after, other_events);
+    
+    if removed_count > 0 {
+        log!(
+            "  Removed {} orphaned send_req events (remaining: {})",
+            orphaned_send_req,
+            filtered_count
+        );
+    } else {
+        log!("  No orphaned send_req events found - all send_req have corresponding complete_rsp");
+    }
 
     log!("  Calculating UFS Latency and continuity...");
 

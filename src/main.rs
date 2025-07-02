@@ -52,7 +52,7 @@ fn print_usage(program: &str) {
     eprintln!("                 Metrics: ufs_dtoc, ufs_ctoc, ufs_ctod, ufs_qd, ufs_lba, block_dtoc, block_ctoc, block_ctod, block_qd, block_lba");
     eprintln!("                 Example: -y ufs_dtoc:0:100,block_dtoc:0:50");
     eprintln!("  -c <size>    - Set chunk size for Parquet file writing (default: 50000). Example: -c 100000");
-    eprintln!("  --csv        - Export data to CSV files in addition to Parquet files");
+    eprintln!("  --csv        - Export filtered data to CSV files (works with all modes including --parquet)");
     // 새 트레이스 타입이나 옵션이 추가되면 여기에 업데이트
 }
 
@@ -315,6 +315,7 @@ async fn main() -> io::Result<()> {
             filter_options.as_ref(),
             y_axis_ranges.as_ref(),
             chunk_size,
+            export_csv,
         )
     } else if is_ufscustom_mode
         && ufscustom_file_index > 0
@@ -616,9 +617,9 @@ fn process_log_file(
         Err(e) => log_error!("Error while saving Parquet files: {}", e),
     }
 
-    // Save to CSV files if requested
+    // Save to CSV files if requested (using filtered data)
     if export_csv {
-        log!("\n[4.5/5] Saving to CSV files...");
+        log!("\n[4.5/5] Saving filtered data to CSV files...");
         let csv_save_start = Instant::now();
 
         match save_to_csv(
@@ -629,20 +630,24 @@ fn process_log_file(
         ) {
             Ok(()) => {
                 let mut saved_csv_files = Vec::new();
-                if has_ufs {
+                if has_ufs && !processed_ufs.is_empty() {
                     saved_csv_files.push(format!("{}_ufs.csv", output_prefix));
                 }
-                if has_block {
+                if has_block && !processed_blocks.is_empty() {
                     saved_csv_files.push(format!("{}_block.csv", output_prefix));
                 }
-                if has_ufscustom {
+                if has_ufscustom && !processed_ufscustom.is_empty() {
                     saved_csv_files.push(format!("{}_ufscustom.csv", output_prefix));
                 }
-                log!(
-                    "CSV files saved successfully (Time taken: {:.2}s):\n{}",
-                    csv_save_start.elapsed().as_secs_f64(),
-                    saved_csv_files.join("\n")
-                );
+                if !saved_csv_files.is_empty() {
+                    log!(
+                        "Filtered CSV files saved successfully (Time taken: {:.2}s):\n{}",
+                        csv_save_start.elapsed().as_secs_f64(),
+                        saved_csv_files.join("\n")
+                    );
+                } else {
+                    log!("No CSV files saved (all filtered data is empty)");
+                }
             }
             Err(e) => log_error!("Error while saving CSV files: {}", e),
         }
@@ -736,6 +741,7 @@ fn process_single_parquet_file(
     filter: Option<&FilterOptions>,
     y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
     _chunk_size: usize, // Parquet 읽기에서는 사용하지 않지만 일관성을 위해 유지
+    export_csv: bool,
 ) -> io::Result<()> {
     // Logger 초기화
     Logger::init(output_prefix);
@@ -856,8 +862,26 @@ fn process_single_parquet_file(
         stats_start.elapsed().as_secs_f64()
     );
 
-    // 3. 차트 생성
-    log!("\n[3/3] Generating {} Plotly charts...", data_label);
+    // 3. CSV 내보내기 (요청된 경우)
+    if export_csv {
+        log!("\n[2.5/4] Saving filtered data to CSV files...");
+        let csv_save_start = Instant::now();
+
+        match trace_data.save_to_csv(output_prefix) {
+            Ok(()) => {
+                log!(
+                    "Filtered CSV file saved successfully (Time taken: {:.2}s): {}_{}.csv",
+                    csv_save_start.elapsed().as_secs_f64(),
+                    output_prefix,
+                    data_label.to_lowercase()
+                );
+            }
+            Err(e) => log_error!("Error while saving CSV file: {}", e),
+        }
+    }
+
+    // 4. 차트 생성
+    log!("\n[{}/{}] Generating {} Plotly charts...", if export_csv { 3 } else { 3 }, if export_csv { 4 } else { 3 }, data_label);
     let charts_start = Instant::now();
 
     match trace_data.generate_charts(output_prefix, y_axis_ranges) {
@@ -869,7 +893,7 @@ fn process_single_parquet_file(
         Err(e) => log_error!("Error while generating {} Plotly charts: {}", data_label, e),
     }
 
-    // 4. 요약 정보 출력
+    // 5. 요약 정보 출력
     log!("\n===== {} Parquet Analysis Complete! =====", data_label);
     log!(
         "Total time taken: {:.2}s",
@@ -878,6 +902,9 @@ fn process_single_parquet_file(
 
     trace_data.print_summary(output_prefix);
 
+    if export_csv {
+        log!("- {} CSV file: {}_{}.csv", data_label, output_prefix, data_label.to_lowercase());
+    }
     log!("- Log file: {}_result.log", output_prefix);
 
     // 로그 파일 버퍼 비우기
@@ -1296,6 +1323,23 @@ impl TraceData {
             TraceData::UFSCUSTOM(traces) => output::charts::generate_charts_with_config(&[], &[], traces, output_prefix, y_axis_ranges),
             // 새 트레이스 타입 추가 시 여기에 추가
         }
+    }
+
+    // CSV 저장
+    fn save_to_csv(&self, output_prefix: &str) -> Result<(), Box<dyn std::error::Error>> {
+        match self {
+            TraceData::UFS(traces) => {
+                save_to_csv(traces, &[], &[], output_prefix)?;
+            }
+            TraceData::Block(traces) => {
+                save_to_csv(&[], traces, &[], output_prefix)?;
+            }
+            TraceData::UFSCUSTOM(traces) => {
+                save_to_csv(&[], &[], traces, output_prefix)?;
+            }
+            // 새 트레이스 타입 추가 시 여기에 추가
+        }
+        Ok(())
     }
 
     // 요약 정보 출력
