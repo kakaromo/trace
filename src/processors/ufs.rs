@@ -41,76 +41,96 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     // 이전 send_req의 정보를 저장할 변수들
     let mut prev_send_req: Option<(u64, u32, String)> = None; // (lba, size, opcode)
 
-    // 프로그레스 카운터 - 5%마다 보고 (최대 20번의 업데이트)
-    let total_events = ufs_list.len();
-    let report_interval = (total_events / 20).max(1000);
-    let mut last_reported = 0;
-
-    // send_req와 complete_rsp 쌍 매칭 - 개선된 방식
-    log!("  Checking and filtering orphaned send_req events...");
-    let original_count = ufs_list.len();
+    // send_req와 complete_rsp의 쌍을 추적하기 위한 집합
+    let mut send_req_indices: HashSet<usize> = HashSet::new();
+    let mut complete_rsp_indices: HashSet<usize> = HashSet::new();
+    let mut paired_tags: HashMap<(u32, String), usize> = HashMap::new(); // (tag, opcode) -> send_req index
     
-    // 첫 번째 패스: 모든 complete_rsp의 (tag, opcode) 쌍을 수집
-    let mut complete_pairs: HashSet<(u32, String)> = HashSet::new();
-    let mut complete_count = 0;
-    for ufs in &ufs_list {
-        if ufs.action == "complete_rsp" {
-            complete_pairs.insert((ufs.tag, ufs.opcode.clone()));
-            complete_count += 1;
-        }
-    }
-    
-    log!("    Found {} complete_rsp events with {} unique (tag, opcode) pairs", 
-         complete_count, complete_pairs.len());
-    
-    // 두 번째 패스: complete_rsp가 없는 send_req만 제거 (중복은 허용)
-    let mut send_req_before = 0;
-    let mut send_req_after = 0;
-    let mut other_events = 0;
-    
-    // 필터링 전 카운트
-    for ufs in &ufs_list {
-        match ufs.action.as_str() {
-            "send_req" => send_req_before += 1,
-            _ => other_events += 1,
-        }
-    }
-    
-    ufs_list.retain(|ufs| {
-        if ufs.action == "send_req" {
-            // send_req의 경우 corresponding complete_rsp가 있는지만 확인
-            let has_complete = complete_pairs.contains(&(ufs.tag, ufs.opcode.clone()));
-            if has_complete {
-                send_req_after += 1;
-            }
-            has_complete
-        } else {
-            // send_req가 아닌 경우는 모두 유지
-            true
-        }
-    });
-    
-    let filtered_count = ufs_list.len();
-    let removed_count = original_count - filtered_count;
-    let orphaned_send_req = send_req_before - send_req_after;
-    
-    log!("    Before filtering: {} send_req, {} other events", send_req_before, other_events);
-    log!("    After filtering: {} send_req, {} other events", send_req_after, other_events);
-    
-    if removed_count > 0 {
-        log!(
-            "  Removed {} orphaned send_req events (remaining: {})",
-            orphaned_send_req,
-            filtered_count
-        );
-    } else {
-        log!("  No orphaned send_req events found - all send_req have corresponding complete_rsp");
-    }
-
     log!("  Calculating UFS Latency and continuity...");
+
+    // 첫 번째 패스: send_req와 complete_rsp의 쌍을 찾기
+    log!("  Finding send_req and complete_rsp pairs...");
+    
+    for (idx, ufs) in ufs_list.iter().enumerate() {
+        match ufs.action.as_str() {
+            "send_req" => {
+                let key = (ufs.tag, ufs.opcode.clone());
+                // 같은 키가 이미 존재하는 경우 덮어쓰기 (최신 send_req 사용)
+                paired_tags.insert(key, idx);
+                send_req_indices.insert(idx);
+            }
+            "complete_rsp" => {
+                let key = (ufs.tag, ufs.opcode.clone());
+                if paired_tags.contains_key(&key) {
+                    // 쌍이 있는 경우
+                    complete_rsp_indices.insert(idx);
+                } else {
+                    // 쌍이 없는 complete_rsp는 제거 대상
+                    log!("  Warning: Found complete_rsp without matching send_req (tag: {}, opcode: {})", ufs.tag, ufs.opcode);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 쌍이 없는 send_req 찾기
+    let mut unpaired_send_req: Vec<usize> = Vec::new();
+    for (key, send_idx) in &paired_tags {
+        let has_complete = ufs_list.iter().enumerate().any(|(idx, ufs)| {
+            ufs.action == "complete_rsp" && 
+            ufs.tag == key.0 && 
+            ufs.opcode == key.1 &&
+            complete_rsp_indices.contains(&idx)
+        });
+        
+        if !has_complete {
+            unpaired_send_req.push(*send_idx);
+            log!("  Warning: Found send_req without matching complete_rsp (tag: {}, opcode: {})", key.0, key.1);
+        }
+    }
+
+    // 유효한 인덱스만 유지 (쌍이 있는 것들만)
+    let valid_indices: HashSet<usize> = send_req_indices.union(&complete_rsp_indices)
+        .filter(|&&idx| !unpaired_send_req.contains(&idx))
+        .copied()
+        .collect();
+
+    // 쌍이 없는 이벤트들 제거
+    let original_len = ufs_list.len();
+    ufs_list.retain(|_| true); // 임시로 모두 유지
+    let mut filtered_ufs_list = Vec::new();
+    for (idx, ufs) in ufs_list.into_iter().enumerate() {
+        if valid_indices.contains(&idx) || (ufs.action != "send_req" && ufs.action != "complete_rsp") {
+            filtered_ufs_list.push(ufs);
+        }
+    }
+    ufs_list = filtered_ufs_list;
+    
+    let removed_count = original_len - ufs_list.len();
+    if removed_count > 0 {
+        log!("  Removed {} unpaired events", removed_count);
+    }
+
+    // 다시 정렬 (필터링 후)
+    ufs_list.sort_by(|a, b| {
+        a.time
+            .partial_cmp(&b.time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // 해시맵 다시 초기화
+    req_times.clear();
+    paired_tags.clear();
+    send_req_indices.clear();
+    complete_rsp_indices.clear();
 
     // 배치 처리로 변경하여 메모리 효율성 향상
     let batch_size = 10000; // 한 번에 처리할 항목 수
+    
+    // 프로그레스 카운터 업데이트 (필터링 후 새로운 크기 기준)
+    let total_events = ufs_list.len();
+    let report_interval = (total_events / 20).max(1000);
+    let mut last_reported = 0;
 
     for batch_start in (0..ufs_list.len()).step_by(batch_size) {
         let batch_end = (batch_start + batch_size).min(ufs_list.len());
@@ -156,7 +176,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
                     // 현재 send_req 정보 저장
                     prev_send_req = Some((ufs.lba, ufs.size, opcode_ref.clone()));
 
-                    // 해시맵에 삽입
+                    // 해시맵에 삽입 (이제 쌍이 있는 것들만 처리되므로 안전)
                     req_times.insert((ufs.tag, opcode_ref), ufs.time);
 
                     current_qd += 1;
@@ -220,6 +240,9 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     drop(prev_send_req);
     drop(opcode_cache);
     drop(req_times);
+    drop(send_req_indices);
+    drop(complete_rsp_indices);
+    drop(paired_tags);
 
     let elapsed = start_time.elapsed();
     log!(
