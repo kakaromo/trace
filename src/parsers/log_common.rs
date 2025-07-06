@@ -564,3 +564,23 @@ where
 
     (ufs_items, block_items, ufscustom_items)
 }
+
+/// Parse a single log line and return trace type and parsed string
+pub fn parse_log_line(line: &str) -> Option<(crate::TraceType, String)> {
+    // UFSCustom format 체크 (가장 구체적인 형태부터)
+    if UFSCUSTOM_QUICK_CHECK.is_match(line) {
+        return Some((crate::TraceType::UFSCUSTOM, line.to_string()));
+    }
+    
+    // UFS format 체크
+    if UFS_QUICK_CHECK.is_match(line) {
+        return Some((crate::TraceType::UFS, line.to_string()));
+    }
+    
+    // Block format 체크
+    if BLOCK_QUICK_CHECK.is_match(line) {
+        return Some((crate::TraceType::Block, line.to_string()));
+    }
+    
+    None
+}

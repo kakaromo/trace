@@ -63,6 +63,7 @@ fn print_usage(program: &str) {
     eprintln!("    where <type> is one of: 'ufs', 'block'");
     eprintln!("  {} [options] --streaming <log_file> <output_prefix>          - Force streaming mode for log file processing", program);
     eprintln!("  {} --migrate <path> [migration_options]                      - Migrate existing Parquet files to new schema", program);
+    eprintln!("  {} --realtime <log_file> [realtime_options]                  - Start realtime log analysis dashboard", program);
     eprintln!("\nOptions:");
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
     eprintln!("  -f           - Apply filters (time, sector/lba, latency, queue depth) with interactive input");
@@ -75,6 +76,11 @@ fn print_usage(program: &str) {
     eprintln!("  --chunk-size <size> - Set chunk size for migration (default: 10000)");
     eprintln!("  --no-backup        - Don't create backup files before migration");
     eprintln!("  --recursive        - Recursively migrate all Parquet files in subdirectories");
+    eprintln!("\nRealtime Options:");
+    eprintln!("  --refresh-rate <ms> - Dashboard refresh rate in milliseconds (default: 1000)");
+    eprintln!("  --compact           - Use compact dashboard mode");
+    eprintln!("  --detailed          - Use detailed dashboard mode (default)");
+    eprintln!("  --poll-interval <ms> - File polling interval in milliseconds (default: 100)");
     eprintln!("\nNote: Files >= 1GB are automatically processed using high-performance mode.");
     // 새 트레이스 타입이나 옵션이 추가되면 여기에 업데이트
 }
@@ -100,6 +106,12 @@ fn main() -> io::Result<()> {
     let mut is_streaming_mode = false;
     let mut streaming_log_file_index = 0;
     let mut streaming_output_prefix_index = 0;
+    let mut is_realtime_mode = false;
+    let mut realtime_log_file_index = 0;
+    let mut realtime_refresh_rate = 1000; // 기본 1초
+    let mut realtime_compact_mode = false;
+    let mut realtime_detailed_mode = true;
+    let mut realtime_poll_interval = 100; // 기본 100ms
     let mut use_filter = false;
     let mut y_axis_ranges: Option<HashMap<String, (f64, f64)>> = None;
     let mut chunk_size: usize = 50_000; // 기본 청크 크기
@@ -233,6 +245,63 @@ fn main() -> io::Result<()> {
 
                 return Ok(());
             }
+            "--realtime" => {
+                is_realtime_mode = true;
+                realtime_log_file_index = i + 1;
+                i += 1;
+            }
+            "--refresh-rate" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --refresh-rate option requires a value");
+                    print_usage(&args[0]);
+                    return Ok(());
+                }
+                
+                match args[i + 1].parse::<u64>() {
+                    Ok(rate) => {
+                        realtime_refresh_rate = rate;
+                        println!("Using custom refresh rate: {}ms", realtime_refresh_rate);
+                    }
+                    Err(_) => {
+                        eprintln!("Error: Invalid refresh rate value '{}'", args[i + 1]);
+                        print_usage(&args[0]);
+                        return Ok(());
+                    }
+                }
+                
+                i += 2;
+            }
+            "--compact" => {
+                realtime_compact_mode = true;
+                realtime_detailed_mode = false;
+                i += 1;
+            }
+            "--detailed" => {
+                realtime_detailed_mode = true;
+                realtime_compact_mode = false;
+                i += 1;
+            }
+            "--poll-interval" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --poll-interval option requires a value");
+                    print_usage(&args[0]);
+                    return Ok(());
+                }
+                
+                match args[i + 1].parse::<u64>() {
+                    Ok(interval) => {
+                        realtime_poll_interval = interval;
+                        println!("Using custom poll interval: {}ms", realtime_poll_interval);
+                    }
+                    Err(_) => {
+                        eprintln!("Error: Invalid poll interval value '{}'", args[i + 1]);
+                        print_usage(&args[0]);
+                        return Ok(());
+                    }
+                }
+                
+                i += 2;
+            }
             "--parquet" => {
                 is_parquet_mode = true;
                 parquet_type_index = i + 1;
@@ -248,7 +317,7 @@ fn main() -> io::Result<()> {
             }
             _ => {
                 // 일반 위치 인수 처리
-                if !is_parquet_mode && !is_streaming_mode {
+                if !is_parquet_mode && !is_streaming_mode && !is_realtime_mode {
                     if log_file_index == 0 {
                         log_file_index = i;
                     } else if output_prefix_index == 0 {
@@ -339,7 +408,25 @@ fn main() -> io::Result<()> {
     };
 
     // 명령줄 인수 처리
-    let result = if !is_parquet_mode
+    let result: io::Result<()> = if is_realtime_mode {
+        // 실시간 모드
+        if realtime_log_file_index == 0 || realtime_log_file_index >= args.len() {
+            eprintln!("Error: --realtime option requires a log file");
+            print_usage(&args[0]);
+            return Ok(());
+        }
+        
+        match process_realtime_log_file(
+            &args[realtime_log_file_index],
+            realtime_refresh_rate,
+            realtime_compact_mode,
+            realtime_detailed_mode,
+            realtime_poll_interval,
+        ) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("{}", e))),
+        }
+    } else if !is_parquet_mode
         && !is_streaming_mode
         && log_file_index > 0
         && output_prefix_index > 0
@@ -1259,6 +1346,68 @@ fn process_streaming_log_file(
     let _ = Logger::flush();
 
     Ok(())
+}
+
+// 실시간 로그 파일 처리 함수
+fn process_realtime_log_file(
+    log_file: &str,
+    refresh_rate: u64,
+    compact_mode: bool,
+    detailed_mode: bool,
+    poll_interval: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::time::Duration;
+    use trace::realtime::dashboard::{DisplayConfig, RealtimeDashboard};
+    
+    println!("Starting realtime log analysis for file: {}", log_file);
+    
+    // 전역 종료 플래그 생성
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let r = running.clone();
+    
+    // Ctrl+C 신호 처리 설정
+    ctrlc::set_handler(move || {
+        eprintln!("\n[CTRL+C] 종료 신호를 받았습니다...");
+        r.store(false, std::sync::atomic::Ordering::SeqCst);
+    }).map_err(|e| format!("CTRL+C 핸들러 설정 실패: {}", e))?;
+    
+    // 디스플레이 설정 구성
+    let display_config = if compact_mode {
+        DisplayConfig::compact()
+    } else if detailed_mode {
+        DisplayConfig::detailed()
+    } else {
+        DisplayConfig::default()
+    };
+    
+    // 새로운 설정으로 업데이트
+    let mut config = display_config;
+    config.refresh_rate = Duration::from_millis(refresh_rate);
+    
+    // 실시간 대시보드 생성 (종료 플래그 전달)
+    let mut dashboard = RealtimeDashboard::new(
+        log_file.to_string(),
+        Duration::from_millis(poll_interval),
+        config,
+    ).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+    
+    // 대시보드에 종료 플래그 설정
+    dashboard.set_shutdown_flag(running.clone());
+    
+    println!("Realtime dashboard started. Press Ctrl+C to stop.");
+    
+    // 대시보드를 메인 스레드에서 직접 실행
+    // 별도 스레드를 생성하지 않고 직접 실행하여 종료 신호를 즉시 처리
+    match dashboard.run() {
+        Ok(()) => {
+            println!("Realtime log analysis completed");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Dashboard error: {}", e);
+            Err(Box::new(e) as Box<dyn std::error::Error>)
+        }
+    }
 }
 
 // TraceData 열거형 정의 - 각 트레이스 타입에 대한 데이터를 담습니다

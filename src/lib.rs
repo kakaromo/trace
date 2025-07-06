@@ -4,6 +4,7 @@ pub mod processors;
 pub mod output;
 pub mod utils;
 pub mod migration;  // 마이그레이션 모듈 추가
+pub mod realtime;   // 실시간 분석 모듈 추가
 
 use std::sync::OnceLock;
 use utils::filter::FilterOptions;
@@ -20,6 +21,7 @@ pub use processors::{block_bottom_half_latency_process, ufs_bottom_half_latency_
 pub use utils::filter::{filter_block_data, filter_ufs_data, filter_ufscustom_data};
 pub use utils::latency::{get_user_latency_ranges, parse_latency_ranges, set_user_latency_ranges};
 pub use migration::*;  // 마이그레이션 모듈 사용
+pub use realtime::*;   // 실시간 분석 모듈 사용
 
 // 전역 필터 옵션 저장
 static FILTER_OPTIONS: OnceLock<FilterOptions> = OnceLock::new();
@@ -35,12 +37,12 @@ pub fn get_filter_options() -> Option<&'static FilterOptions> {
 }
 
 // 새로운 트레이스 타입을 추가할 때는 다음과 같이 구성하면 됩니다:
-// 1. models/ 디렉토리에 새 트레이스 타입 구조체 추가 (예: nvme.rs)
-// 2. processors/ 디렉토리에 새 트레이스 처리 모듈 추가 (예: nvme.rs)
+// 1. models/ 디렉토리에 새 트레이스 타입 구조체 추가 (예: scsi.rs)
+// 2. processors/ 디렉토리에 새 트레이스 처리 모듈 추가 (예: scsi.rs)
 // 3. output/ 디렉토리에 새 트레이스 통계 및 차트 함수 추가
 // 4. models/trace_type.rs에 TraceType 열거형에 새 트레이스 타입 추가
 //
 // 예시:
-// pub use models::NVMe;
-// pub use output::{print_nvme_statistics, read_nvme_from_parquet};
-// pub use processors::nvme_bottom_half_latency_process;
+// pub use models::SCSI;
+// pub use output::{print_scsi_statistics, read_scsi_from_parquet};
+// pub use processors::scsi_bottom_half_latency_process;
