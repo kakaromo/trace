@@ -68,6 +68,27 @@ cargo build --release
 ./target/release/trace -l 0.1,1,10,100,1000 --parquet block /output/trace_result_block.parquet /output/new_result
 ```
 
+### 마이그레이션 도구
+```bash
+# 단일 파일 마이그레이션
+./target/release/trace --migrate <파일_경로>
+
+# 디렉토리 내 모든 Parquet 파일 마이그레이션
+./target/release/trace --migrate <디렉토리_경로>
+
+# 백업 없이 재귀적 마이그레이션
+./target/release/trace --migrate <디렉토리_경로> --no-backup --recursive
+
+# 큰 청크 크기로 마이그레이션
+./target/release/trace --migrate <파일_경로> --chunk-size 50000
+```
+
+### 마이그레이션 옵션
+- **--migrate <경로>**: 기존 Parquet 파일을 새 스키마로 마이그레이션
+- **--chunk-size <크기>**: 마이그레이션 청크 크기 설정 (기본값: 10000)
+- **--no-backup**: 백업 파일 생성 안 함
+- **--recursive**: 서브디렉토리 포함 재귀적 마이그레이션
+
 ## 설치 방법
 
 ### Cargo를 통한 설치

@@ -62,6 +62,7 @@ fn print_usage(program: &str) {
     eprintln!("  {} [options] --parquet <type> <parquet_file> <output_prefix> - Read Parquet file and generate statistics", program);
     eprintln!("    where <type> is one of: 'ufs', 'block'");
     eprintln!("  {} [options] --streaming <log_file> <output_prefix>          - Force streaming mode for log file processing", program);
+    eprintln!("  {} --migrate <path> [migration_options]                      - Migrate existing Parquet files to new schema", program);
     eprintln!("\nOptions:");
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
     eprintln!("  -f           - Apply filters (time, sector/lba, latency, queue depth) with interactive input");
@@ -70,6 +71,10 @@ fn print_usage(program: &str) {
     eprintln!("                 Example: -y ufs_dtoc:0:100,block_dtoc:0:50");
     eprintln!("  -c <size>    - Set chunk size for Parquet file writing (default: 50000). Example: -c 100000");
     eprintln!("  --csv        - Export filtered data to CSV files (works with all modes including --parquet)");
+    eprintln!("\nMigration Options:");
+    eprintln!("  --chunk-size <size> - Set chunk size for migration (default: 10000)");
+    eprintln!("  --no-backup        - Don't create backup files before migration");
+    eprintln!("  --recursive        - Recursively migrate all Parquet files in subdirectories");
     eprintln!("\nNote: Files >= 1GB are automatically processed using high-performance mode.");
     // 새 트레이스 타입이나 옵션이 추가되면 여기에 업데이트
 }
@@ -177,6 +182,56 @@ fn main() -> io::Result<()> {
             "--csv" => {
                 export_csv = true;
                 i += 1;
+            }
+            "--migrate" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --migrate option requires input path");
+                    print_usage(&args[0]);
+                    return Ok(());
+                }
+
+                let input_path = &args[i + 1];
+                let mut migrate_chunk_size = None;
+                let mut backup_enabled = true;
+                let mut recursive = false;
+                let mut j = i + 2;
+
+                // 마이그레이션 옵션 파싱
+                while j < args.len() {
+                    match args[j].as_str() {
+                        "--chunk-size" => {
+                            if j + 1 < args.len() {
+                                if let Ok(size) = args[j + 1].parse::<usize>() {
+                                    migrate_chunk_size = Some(size);
+                                    j += 2;
+                                } else {
+                                    eprintln!("Error: Invalid chunk size value '{}'", args[j + 1]);
+                                    return Ok(());
+                                }
+                            } else {
+                                eprintln!("Error: --chunk-size requires a value");
+                                return Ok(());
+                            }
+                        }
+                        "--no-backup" => {
+                            backup_enabled = false;
+                            j += 1;
+                        }
+                        "--recursive" => {
+                            recursive = true;
+                            j += 1;
+                        }
+                        _ => break,
+                    }
+                }
+
+                // 마이그레이션 실행
+                match trace::migration::run_migration(input_path, migrate_chunk_size, backup_enabled, recursive) {
+                    Ok(_) => println!("Migration completed successfully"),
+                    Err(e) => eprintln!("Migration failed: {}", e),
+                }
+
+                return Ok(());
             }
             "--parquet" => {
                 is_parquet_mode = true;
