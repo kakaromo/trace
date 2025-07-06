@@ -2,6 +2,7 @@ use crate::log;
 use crate::models::Block;
 use crate::utils::constants::MILLISECONDS;
 use std::collections::{HashMap, HashSet};
+use rayon::prelude::*;
 
 // Block latency post-processing function
 pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
@@ -17,10 +18,10 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
         block_list.len()
     );
 
-    // 1. Sort by timestamp
+    // 1. Sort by timestamp - 병렬 정렬 사용
     log!("  Sorting Block data by timestamp...");
     let mut sorted_blocks = block_list;
-    sorted_blocks.sort_by(|a, b| {
+    sorted_blocks.par_sort_by(|a, b| {
         a.time
             .partial_cmp(&b.time)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -39,13 +40,13 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     let mut processed_issues = HashSet::with_capacity(estimated_capacity);
     let mut deduplicated_blocks = Vec::with_capacity(sorted_blocks.len());
 
-    // Progress counter - 보고 간격 조정 (5%)
+    // Progress counter - 보고 간격 조정 (10%)
     let total_blocks = sorted_blocks.len();
-    let report_interval = (total_blocks / 20).max(1000); // 5% 간격으로 보고 (최소 1000건마다)
+    let report_interval = (total_blocks / 10).max(5000); // 10% 간격으로 보고 (최소 5000건마다)
     let mut last_reported = 0;
 
-    // 배치 처리 도입 - 시스템 메모리에 따라 조정 가능
-    let batch_size = 10000; // 한 번에 처리할 항목 수
+    // 배치 처리 도입 - 더 큰 배치 크기로 변경
+    let batch_size = 50000; // 더 큰 배치 크기
 
     for batch_start in (0..sorted_blocks.len()).step_by(batch_size) {
         let batch_end = (batch_start + batch_size).min(sorted_blocks.len());
@@ -54,7 +55,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
         for (local_idx, block) in batch.iter().enumerate() {
             let idx = batch_start + local_idx;
 
-            // Report progress (5% intervals)
+            // Report progress (10% intervals)
             if idx >= last_reported + report_interval {
                 let progress = (idx * 100) / total_blocks;
                 log!(
@@ -144,9 +145,9 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
     let mut first_c: bool = false;
     let mut first_complete_time: f64 = 0.0;
 
-    // Progress counter - 보고 간격 조정 (5%)
+    // Progress counter - 보고 간격 조정 (10%)
     let total_dedup = deduplicated_blocks.len();
-    let report_interval_2 = (total_dedup / 20).max(1000);
+    let report_interval_2 = (total_dedup / 10).max(5000);
     let mut last_reported_2 = 0;
 
     // 배치 처리로 변경
@@ -164,7 +165,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             let idx = batch_start + local_idx; // 전체 인덱스 계산
             let mut block = block_orig.clone();
 
-            // Report progress (5% intervals)
+            // Report progress (10% intervals)
             if idx >= last_reported_2 + report_interval_2 {
                 let progress = (idx * 100) / total_dedup;
                 log!(

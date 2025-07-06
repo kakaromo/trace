@@ -650,8 +650,10 @@ pub fn generate_charts_with_config(
     // UFS 차트 생성
     if !processed_ufs.is_empty() {
         // UFS lba 차트
-        let mut config = PlottersConfig::default();
-        config.y_axis_range = get_y_range_for_metric("ufs_lba");
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufs_lba"),
+            ..Default::default()
+        };
         match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "lba") {
             Ok(_) => {
                 println!("UFS lba trend PNG chart generated.");
@@ -662,8 +664,10 @@ pub fn generate_charts_with_config(
         }
         
         // UFS DTOC (Dispatch to Complete) 차트
-        let mut config = PlottersConfig::default();
-        config.y_axis_range = get_y_range_for_metric("ufs_dtoc");
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufs_dtoc"),
+            ..Default::default()
+        };
         match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "dtoc") {
             Ok(_) => {
                 println!("UFS dtoc trend PNG chart generated.");
@@ -674,8 +678,10 @@ pub fn generate_charts_with_config(
         }
 
         // UFS CTOC (Complete to Complete) 차트
-        let mut config = PlottersConfig::default();
-        config.y_axis_range = get_y_range_for_metric("ufs_ctoc");
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufs_ctoc"),
+            ..Default::default()
+        };
         match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "ctoc") {
             Ok(_) => {
                 println!("UFS complete-to-complete trend PNG chart generated.");
@@ -686,8 +692,10 @@ pub fn generate_charts_with_config(
         }
 
         // UFS CTOD (Complete to Dispatch) 차트
-        let mut config = PlottersConfig::default();
-        config.y_axis_range = get_y_range_for_metric("ufs_ctod");
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufs_ctod"),
+            ..Default::default()
+        };
         match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "ctod") {
             Ok(_) => {
                 println!("UFS complete-to-dispatch trend PNG chart generated.");
@@ -698,8 +706,10 @@ pub fn generate_charts_with_config(
         }
 
         // UFS Queue Depth 차트
-        let mut config = PlottersConfig::default();
-        config.y_axis_range = get_y_range_for_metric("ufs_qd");
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufs_qd"),
+            ..Default::default()
+        };
         match create_ufs_metric_chart(processed_ufs, output_prefix, &config, "qd") {
             Ok(_) => {
                 println!("UFS queue depth trend PNG chart generated.");
@@ -713,8 +723,10 @@ pub fn generate_charts_with_config(
     // Block I/O 차트 생성
     if !processed_blocks.is_empty() {
         // Block I/O lba 차트
-        let mut config = PlottersConfig::default();
-        config.y_axis_range = get_y_range_for_metric("block_lba");
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("block_lba"),
+            ..Default::default()
+        };
         match create_block_metric_chart(processed_blocks, output_prefix, &config, "lba") {
             Ok(_) => {
                 println!("Block I/O lba trend PNG chart generated.");
@@ -725,8 +737,10 @@ pub fn generate_charts_with_config(
         }
         
         // Block I/O DTOC (Dispatch to Complete) 차트
-        let mut config = PlottersConfig::default();
-        config.y_axis_range = get_y_range_for_metric("block_dtoc");
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("block_dtoc"),
+            ..Default::default()
+        };
         match create_block_metric_chart(processed_blocks, output_prefix, &config, "dtoc") {
             Ok(_) => {
                 println!("Block I/O dtoc trend PNG chart generated.");
@@ -737,8 +751,10 @@ pub fn generate_charts_with_config(
         }
 
         // Block I/O CTOC (Complete to Complete) 차트
-        let mut config = PlottersConfig::default();
-        config.y_axis_range = get_y_range_for_metric("block_ctoc");
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("block_ctoc"),
+            ..Default::default()
+        };
         match create_block_metric_chart(processed_blocks, output_prefix, &config, "ctoc") {
             Ok(_) => {
                 println!("Block I/O complete-to-complete trend PNG chart generated.");
@@ -749,8 +765,10 @@ pub fn generate_charts_with_config(
         }
 
         // Block I/O CTOD (Complete to Dispatch) 차트
-        let mut config = PlottersConfig::default();
-        config.y_axis_range = get_y_range_for_metric("block_ctod");
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("block_ctod"),
+            ..Default::default()
+        };
         match create_block_metric_chart(processed_blocks, output_prefix, &config, "ctod") {
             Ok(_) => {
                 println!("Block I/O complete-to-dispatch trend PNG chart generated.");
@@ -761,8 +779,10 @@ pub fn generate_charts_with_config(
         }
 
         // Block I/O Queue Depth 차트
-        let mut config = PlottersConfig::default();
-        config.y_axis_range = get_y_range_for_metric("block_qd");
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("block_qd"),
+            ..Default::default()
+        };
         match create_block_metric_chart(processed_blocks, output_prefix, &config, "qd") {
             Ok(_) => {
                 println!("Block I/O queue depth trend PNG chart generated.");

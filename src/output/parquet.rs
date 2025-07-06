@@ -44,7 +44,7 @@ fn save_ufs_to_parquet_chunked(
         return Ok(());
     }
 
-    let total_chunks = (traces.len() + chunk_size - 1) / chunk_size; // 올림 계산
+    let total_chunks = traces.len().div_ceil(chunk_size); // 올림 계산
     eprintln!("Saving {} UFS traces to {} using chunk size {} ({} chunks)", 
               traces.len(), filepath, chunk_size, total_chunks);
 
@@ -134,7 +134,7 @@ fn save_block_to_parquet_chunked(
         return Ok(());
     }
 
-    let total_chunks = (traces.len() + chunk_size - 1) / chunk_size; // 올림 계산
+    let total_chunks = traces.len().div_ceil(chunk_size); // 올림 계산
     eprintln!("Saving {} Block traces to {} using chunk size {} ({} chunks)", 
               traces.len(), filepath, chunk_size, total_chunks);
 
@@ -235,7 +235,7 @@ fn save_ufscustom_to_parquet_chunked(
         return Ok(());
     }
 
-    let total_chunks = (traces.len() + chunk_size - 1) / chunk_size; // 올림 계산
+    let total_chunks = traces.len().div_ceil(chunk_size); // 올림 계산
     eprintln!("Saving {} UFSCUSTOM traces to {} using chunk size {} ({} chunks)", 
               traces.len(), filepath, chunk_size, total_chunks);
 

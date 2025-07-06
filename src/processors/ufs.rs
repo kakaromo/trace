@@ -2,6 +2,7 @@ use crate::log;
 use crate::models::UFS;
 use crate::utils::constants::MILLISECONDS;
 use std::collections::{HashMap, HashSet};
+use rayon::prelude::*;
 
 pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     // 이벤트가 없으면 빈 벡터 반환
@@ -16,9 +17,9 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
         ufs_list.len()
     );
 
-    // time 기준으로 오름차순 정렬
+    // time 기준으로 오름차순 정렬 - 병렬 정렬 사용
     log!("  Sorting UFS data by time...");
-    ufs_list.sort_by(|a, b| {
+    ufs_list.par_sort_by(|a, b| {
         a.time
             .partial_cmp(&b.time)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -48,46 +49,58 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     
     log!("  Calculating UFS Latency and continuity...");
 
-    // 첫 번째 패스: send_req와 complete_rsp의 쌍을 찾기
+    // 첫 번째 패스: send_req와 complete_rsp의 쌍을 찾기 - 병렬 처리
     log!("  Finding send_req and complete_rsp pairs...");
     
-    for (idx, ufs) in ufs_list.iter().enumerate() {
-        match ufs.action.as_str() {
-            "send_req" => {
-                let key = (ufs.tag, ufs.opcode.clone());
-                // 같은 키가 이미 존재하는 경우 덮어쓰기 (최신 send_req 사용)
-                paired_tags.insert(key, idx);
-                send_req_indices.insert(idx);
+    // 병렬로 send_req와 complete_rsp 인덱스 수집
+    let (send_reqs, complete_rsps): (Vec<_>, Vec<_>) = ufs_list
+        .par_iter()
+        .enumerate()
+        .filter_map(|(idx, ufs)| {
+            match ufs.action.as_str() {
+                "send_req" => Some((0, idx, ufs.tag, &ufs.opcode)),
+                "complete_rsp" => Some((1, idx, ufs.tag, &ufs.opcode)),
+                _ => None,
             }
-            "complete_rsp" => {
-                let key = (ufs.tag, ufs.opcode.clone());
-                if paired_tags.contains_key(&key) {
-                    // 쌍이 있는 경우
-                    complete_rsp_indices.insert(idx);
-                } else {
-                    // 쌍이 없는 complete_rsp는 제거 대상
-                    log!("  Warning: Found complete_rsp without matching send_req (tag: {}, opcode: {})", ufs.tag, ufs.opcode);
-                }
-            }
-            _ => {}
+        })
+        .partition(|(action_type, _, _, _)| *action_type == 0);
+    
+    // send_req 맵 생성
+    for (_, idx, tag, opcode) in send_reqs {
+        let key = (tag, opcode.clone());
+        paired_tags.insert(key, idx);
+        send_req_indices.insert(idx);
+    }
+    
+    // complete_rsp 처리 및 경고 출력
+    for (_, idx, tag, opcode) in complete_rsps {
+        let key = (tag, opcode.clone());
+        if paired_tags.contains_key(&key) {
+            complete_rsp_indices.insert(idx);
+        } else {
+            log!("  Warning: Found complete_rsp without matching send_req (tag: {}, opcode: {})", tag, opcode);
         }
     }
 
-    // 쌍이 없는 send_req 찾기
-    let mut unpaired_send_req: Vec<usize> = Vec::new();
-    for (key, send_idx) in &paired_tags {
-        let has_complete = ufs_list.iter().enumerate().any(|(idx, ufs)| {
-            ufs.action == "complete_rsp" && 
-            ufs.tag == key.0 && 
-            ufs.opcode == key.1 &&
-            complete_rsp_indices.contains(&idx)
-        });
-        
-        if !has_complete {
-            unpaired_send_req.push(*send_idx);
-            log!("  Warning: Found send_req without matching complete_rsp (tag: {}, opcode: {})", key.0, key.1);
-        }
-    }
+    // 쌍이 없는 send_req 찾기 - 병렬 처리
+    let unpaired_send_req: Vec<usize> = paired_tags
+        .par_iter()
+        .filter_map(|(key, send_idx)| {
+            let has_complete = complete_rsp_indices
+                .par_iter()
+                .any(|&idx| {
+                    let ufs = &ufs_list[idx];
+                    ufs.action == "complete_rsp" && ufs.tag == key.0 && ufs.opcode == key.1
+                });
+            
+            if !has_complete {
+                log!("  Warning: Found send_req without matching complete_rsp (tag: {}, opcode: {})", key.0, key.1);
+                Some(*send_idx)
+            } else {
+                None
+            }
+        })
+        .collect();
 
     // 유효한 인덱스만 유지 (쌍이 있는 것들만)
     let valid_indices: HashSet<usize> = send_req_indices.union(&complete_rsp_indices)
@@ -95,24 +108,27 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
         .copied()
         .collect();
 
-    // 쌍이 없는 이벤트들 제거
+    // 쌍이 없는 이벤트들 제거 - retain 사용으로 메모리 효율성 향상
     let original_len = ufs_list.len();
-    ufs_list.retain(|_| true); // 임시로 모두 유지
-    let mut filtered_ufs_list = Vec::new();
-    for (idx, ufs) in ufs_list.into_iter().enumerate() {
-        if valid_indices.contains(&idx) || (ufs.action != "send_req" && ufs.action != "complete_rsp") {
-            filtered_ufs_list.push(ufs);
-        }
-    }
-    ufs_list = filtered_ufs_list;
+    ufs_list = ufs_list
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, ufs)| {
+            if valid_indices.contains(&idx) || (ufs.action != "send_req" && ufs.action != "complete_rsp") {
+                Some(ufs)
+            } else {
+                None
+            }
+        })
+        .collect();
     
     let removed_count = original_len - ufs_list.len();
     if removed_count > 0 {
         log!("  Removed {} unpaired events", removed_count);
     }
 
-    // 다시 정렬 (필터링 후)
-    ufs_list.sort_by(|a, b| {
+    // 다시 정렬 (필터링 후) - 병렬 정렬
+    ufs_list.par_sort_by(|a, b| {
         a.time
             .partial_cmp(&b.time)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -124,12 +140,12 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     send_req_indices.clear();
     complete_rsp_indices.clear();
 
-    // 배치 처리로 변경하여 메모리 효율성 향상
-    let batch_size = 10000; // 한 번에 처리할 항목 수
+    // 배치 처리를 더 큰 단위로 변경하여 오버헤드 감소
+    let batch_size = 50000; // 더 큰 배치 크기로 변경
     
     // 프로그레스 카운터 업데이트 (필터링 후 새로운 크기 기준)
     let total_events = ufs_list.len();
-    let report_interval = (total_events / 20).max(1000);
+    let report_interval = (total_events / 10).max(5000); // 10% 간격으로 변경
     let mut last_reported = 0;
 
     for batch_start in (0..ufs_list.len()).step_by(batch_size) {
@@ -139,7 +155,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
         for (idx, ufs) in ufs_list[batch_start..batch_end].iter_mut().enumerate() {
             let idx = batch_start + idx; // 전체 인덱스 계산
 
-            // 진행 상황 보고 (5% 간격)
+            // 진행 상황 보고 (10% 간격)
             if idx >= last_reported + report_interval {
                 let progress = (idx * 100) / total_events;
                 log!(
@@ -150,17 +166,6 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
                 );
                 last_reported = idx;
             }
-
-            // opcode 캐싱 메커니즘 - 문자열 복제 최소화
-            let opcode_ref = match opcode_cache.get(&ufs.opcode) {
-                Some(cached) => cached.clone(),
-                None => {
-                    // 캐시에 없는 경우 새로 추가
-                    let opcode = ufs.opcode.clone();
-                    opcode_cache.insert(opcode.clone(), opcode.clone());
-                    opcode_cache.get(&ufs.opcode).unwrap().clone()
-                }
-            };
 
             match ufs.action.as_str() {
                 "send_req" => {
@@ -174,10 +179,10 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
                     }
 
                     // 현재 send_req 정보 저장
-                    prev_send_req = Some((ufs.lba, ufs.size, opcode_ref.clone()));
+                    prev_send_req = Some((ufs.lba, ufs.size, ufs.opcode.clone()));
 
                     // 해시맵에 삽입 (이제 쌍이 있는 것들만 처리되므로 안전)
-                    req_times.insert((ufs.tag, opcode_ref), ufs.time);
+                    req_times.insert((ufs.tag, ufs.opcode.clone()), ufs.time);
 
                     current_qd += 1;
                     if current_qd == 1 {

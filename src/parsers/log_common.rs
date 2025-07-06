@@ -16,7 +16,12 @@ use crate::utils::encoding::decode_bytes_auto;
 lazy_static! {
     pub static ref UFS_RE: Regex = Regex::new(r"^\s*(?P<process>.*?)\s+\[(?P<cpu>[0-9]+)\].*?(?P<time>[0-9]+\.[0-9]+):\s+ufshcd_command:\s+(?P<command>send_req|complete_rsp):.*?tag:\s*(?P<tag>\d+).*?size:\s*(?P<size>[-]?\d+).*?LBA:\s*(?P<lba>\d+).*?opcode:\s*(?P<opcode>0x[0-9a-f]+).*?group_id:\s*0x(?P<group_id>[0-9a-f]+).*?hwq_id:\s*(?P<hwq_id>[-]?\d+)").unwrap();    
     pub static ref BLOCK_RE: Regex = Regex::new(r"^\s*(?P<process>.*?)\s+\[(?P<cpu>\d+)\]\s+(?P<flags>.+?)\s+(?P<time>[\d\.]+):\s+(?P<action>\S+):\s+(?P<devmajor>\d+),(?P<devminor>\d+)\s+(?P<io_type>[A-Z]+)(?:\s+(?P<extra>\d+))?\s+\(\)\s+(?P<sector>\d+)\s+\+\s+(?P<size>\d+)(?:\s+\S+)?\s+\[(?P<comm>.*?)\]$").unwrap();
-    pub static ref UFSCUSTOM_RE: Regex = Regex::new(r"^(?P<opcode>0x[0-9a-f]+),(?P<lba>\d+),(?P<size>\d+),(?P<start_time>\d+\.\d+),(?P<end_time>\d+\.\d+)$").unwrap();    
+    pub static ref UFSCUSTOM_RE: Regex = Regex::new(r"^(?P<opcode>0x[0-9a-f]+),(?P<lba>\d+),(?P<size>\d+),(?P<start_time>\d+(?:\.\d+)?),(?P<end_time>\d+(?:\.\d+)?)$").unwrap();
+    
+    // Pre-compiled regex for performance optimizations
+    static ref UFS_QUICK_CHECK: Regex = Regex::new(r"ufshcd_command:").unwrap();
+    static ref BLOCK_QUICK_CHECK: Regex = Regex::new(r"(blk_|block_)").unwrap();
+    static ref UFSCUSTOM_QUICK_CHECK: Regex = Regex::new(r"^0x[0-9a-f]+,\d+,\d+,").unwrap();
 }
 
 // Create temporary file with given prefix
@@ -167,6 +172,67 @@ pub fn process_line(line: &str) -> Option<(Option<UFS>, Option<Block>, Option<UF
 
     // Return None if no pattern matches
     None
+}
+
+// Fast pattern matching for line categorization
+pub fn categorize_line_fast(line: &str) -> LineCategory {
+    if line.is_empty() {
+        return LineCategory::Empty;
+    }
+    
+    // Quick checks before expensive regex matching
+    if UFS_QUICK_CHECK.is_match(line) {
+        return LineCategory::UFS;
+    }
+    
+    if BLOCK_QUICK_CHECK.is_match(line) {
+        return LineCategory::Block;
+    }
+    
+    if UFSCUSTOM_QUICK_CHECK.is_match(line) {
+        return LineCategory::UFSCustom;
+    }
+    
+    LineCategory::Unknown
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LineCategory {
+    UFS,
+    Block,
+    UFSCustom,
+    Empty,
+    Unknown,
+}
+
+// Optimized line processing that returns all possible matches
+pub fn process_line_optimized(line: &str) -> Option<(Option<UFS>, Option<Block>, Option<UFSCUSTOM>)> {
+    let category = categorize_line_fast(line);
+    
+    match category {
+        LineCategory::UFS => {
+            if let Ok(ufs) = parse_ufs_event(line) {
+                Some((Some(ufs), None, None))
+            } else {
+                None
+            }
+        }
+        LineCategory::Block => {
+            if let Ok(block) = parse_block_io_event(line) {
+                Some((None, Some(block), None))
+            } else {
+                None
+            }
+        }
+        LineCategory::UFSCustom => {
+            if let Ok(ufscustom) = parse_ufscustom_event(line) {
+                Some((None, None, Some(ufscustom)))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 // Common deserialization functions

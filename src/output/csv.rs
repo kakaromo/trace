@@ -10,7 +10,7 @@ pub fn save_ufs_to_csv(traces: &[UFS], output_prefix: &str) -> Result<(), Box<dy
     let mut writer = Writer::from_writer(file);
 
     // Write CSV header
-    writer.write_record(&[
+    writer.write_record([
         "time",
         "process",
         "cpu",
@@ -60,7 +60,7 @@ pub fn save_block_to_csv(traces: &[Block], output_prefix: &str) -> Result<(), Bo
     let mut writer = Writer::from_writer(file);
 
     // Write CSV header
-    writer.write_record(&[
+    writer.write_record([
         "time",
         "process",
         "cpu",
@@ -114,7 +114,7 @@ pub fn save_ufscustom_to_csv(traces: &[UFSCUSTOM], output_prefix: &str) -> Resul
     let mut writer = Writer::from_writer(file);
 
     // Write CSV header
-    writer.write_record(&[
+    writer.write_record([
         "start_time",
         "end_time",
         "opcode",
