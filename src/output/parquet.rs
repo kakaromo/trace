@@ -3,7 +3,7 @@ use arrow::array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt32Arra
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::file::properties::{WriterProperties, EnabledStatistics};
-use parquet::basic::{Compression, Encoding};
+use parquet::basic::{Compression, Encoding, ZstdLevel};
 use rayon::prelude::*;
 use std::fs::File;
 use std::sync::Arc;
@@ -35,13 +35,27 @@ pub fn save_to_parquet(
     Ok(())
 }
 
-// 최적화된 WriterProperties 생성
-fn create_writer_properties() -> WriterProperties {
+// 압축 알고리즘 선택 (데이터 크기에 따라 동적 결정)
+fn select_compression(data_size: usize) -> Compression {
+    match data_size {
+        // 소형 데이터 (< 1MB): SNAPPY (빠른 속도)
+        n if n < 1024 * 1024 => Compression::SNAPPY,
+        // 중형 데이터 (1MB ~ 10MB): ZSTD 레벨 3 (균형)
+        n if n < 10 * 1024 * 1024 => Compression::ZSTD(ZstdLevel::try_new(3).unwrap()),
+        // 대형 데이터 (10MB ~ 100MB): ZSTD 레벨 6 (높은 압축률)
+        n if n < 100 * 1024 * 1024 => Compression::ZSTD(ZstdLevel::try_new(6).unwrap()),
+        // 초대형 데이터 (≥ 100MB): ZSTD 레벨 9 (최고 압축률)
+        _ => Compression::ZSTD(ZstdLevel::try_new(9).unwrap()),
+    }
+}
+
+// 최적화된 WriterProperties 생성 (동적 압축 설정)
+fn create_writer_properties_with_compression(compression: Compression) -> WriterProperties {
     WriterProperties::builder()
-        .set_compression(Compression::SNAPPY)  // 빠른 압축
+        .set_compression(compression)
         .set_encoding(Encoding::PLAIN)         // 빠른 인코딩
-        .set_dictionary_enabled(false)         // 딕셔너리 비활성화로 속도 향상
-        .set_statistics_enabled(EnabledStatistics::None)  // 통계 비활성화로 속도 향상
+        .set_dictionary_enabled(true)          // 딕셔너리 활성화로 압축률 향상
+        .set_statistics_enabled(EnabledStatistics::Chunk)  // 청크 단위 통계로 균형 유지
         .set_max_row_group_size(1_000_000)    // 큰 로우 그룹으로 I/O 최적화
         .build()
 }
@@ -58,8 +72,18 @@ fn save_ufs_to_parquet(
 
     let start_time = Instant::now();
     let total_chunks = traces.len().div_ceil(chunk_size);
-    println!("Saving {} UFS traces to {} using optimized method ({} chunks)", 
-              traces.len(), filepath, total_chunks);
+    
+    // 데이터 크기 추정 (각 UFS 레코드 약 200바이트)
+    let estimated_size = traces.len() * 200;
+    let compression = select_compression(estimated_size);
+    let compression_name = match compression {
+        Compression::SNAPPY => "SNAPPY",
+        Compression::ZSTD(_) => "ZSTD",
+        _ => "Other",
+    };
+    
+    println!("Saving {} UFS traces to {} using {} compression ({} chunks)", 
+              traces.len(), filepath, compression_name, total_chunks);
 
     let schema = Arc::new(arrow::datatypes::Schema::new(vec![
         arrow::datatypes::Field::new("time", arrow::datatypes::DataType::Float64, false),
@@ -80,7 +104,7 @@ fn save_ufs_to_parquet(
     ]));
 
     let file = File::create(filepath)?;
-    let props = create_writer_properties();
+    let props = create_writer_properties_with_compression(compression);
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
     // 병렬 처리로 배치 데이터 준비
@@ -174,8 +198,18 @@ fn save_block_to_parquet(
 
     let start_time = Instant::now();
     let total_chunks = traces.len().div_ceil(chunk_size);
-    println!("Saving {} Block traces to {} using optimized method ({} chunks)", 
-              traces.len(), filepath, total_chunks);
+    
+    // 데이터 크기 추정 (각 Block 레코드 약 250바이트)
+    let estimated_size = traces.len() * 250;
+    let compression = select_compression(estimated_size);
+    let compression_name = match compression {
+        Compression::SNAPPY => "SNAPPY",
+        Compression::ZSTD(_) => "ZSTD",
+        _ => "Other",
+    };
+    
+    println!("Saving {} Block traces to {} using {} compression ({} chunks)", 
+              traces.len(), filepath, compression_name, total_chunks);
 
     let schema = Arc::new(arrow::datatypes::Schema::new(vec![
         arrow::datatypes::Field::new("time", arrow::datatypes::DataType::Float64, false),
@@ -198,7 +232,7 @@ fn save_block_to_parquet(
     ]));
 
     let file = File::create(filepath)?;
-    let props = create_writer_properties();
+    let props = create_writer_properties_with_compression(compression);
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
     // 병렬 처리로 배치 데이터 준비
@@ -298,8 +332,18 @@ fn save_ufscustom_to_parquet(
 
     let start_time = Instant::now();
     let total_chunks = traces.len().div_ceil(chunk_size);
-    println!("Saving {} UFSCUSTOM traces to {} using optimized method ({} chunks)", 
-              traces.len(), filepath, total_chunks);
+    
+    // 데이터 크기 추정 (각 UFSCUSTOM 레코드 약 150바이트)
+    let estimated_size = traces.len() * 150;
+    let compression = select_compression(estimated_size);
+    let compression_name = match compression {
+        Compression::SNAPPY => "SNAPPY",
+        Compression::ZSTD(_) => "ZSTD",
+        _ => "Other",
+    };
+    
+    println!("Saving {} UFSCUSTOM traces to {} using {} compression ({} chunks)", 
+              traces.len(), filepath, compression_name, total_chunks);
 
     let schema = Arc::new(arrow::datatypes::Schema::new(vec![
         arrow::datatypes::Field::new("opcode", arrow::datatypes::DataType::Utf8, false),
@@ -311,7 +355,7 @@ fn save_ufscustom_to_parquet(
     ]));
 
     let file = File::create(filepath)?;
-    let props = create_writer_properties();
+    let props = create_writer_properties_with_compression(compression);
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
     // 병렬 처리로 배치 데이터 준비

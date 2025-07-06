@@ -3,7 +3,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
 use parquet::file::properties::WriterProperties;
-use parquet::basic::Compression;
+use parquet::basic::{Compression, ZstdLevel};
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -169,8 +169,19 @@ impl ParquetMigrator {
         // 임시 파일 생성
         let temp_path = format!("{}.tmp", file_path);
         let temp_file = File::create(&temp_path)?;
+        
+        // 파일 크기 추정 (평균적으로 Block 레코드 약 250바이트)
+        let estimated_size = std::fs::metadata(file_path)?.len() as usize;
+        let compression = self.select_compression(estimated_size);
+        let compression_name = match compression {
+            Compression::SNAPPY => "SNAPPY",
+            Compression::ZSTD(_) => "ZSTD",
+            _ => "Other",
+        };
+        println!("Using {} compression for migration", compression_name);
+        
         let props = WriterProperties::builder()
-            .set_compression(Compression::SNAPPY)
+            .set_compression(compression)
             .build();
         let mut writer = ArrowWriter::try_new(temp_file, target_schema.clone(), Some(props))?;
 
@@ -221,8 +232,19 @@ impl ParquetMigrator {
         
         let temp_path = format!("{}.tmp", file_path);
         let temp_file = File::create(&temp_path)?;
+        
+        // 파일 크기 추정
+        let estimated_size = std::fs::metadata(file_path)?.len() as usize;
+        let compression = self.select_compression(estimated_size);
+        let compression_name = match compression {
+            Compression::SNAPPY => "SNAPPY",
+            Compression::ZSTD(_) => "ZSTD",
+            _ => "Other",
+        };
+        println!("Using {} compression for UFS migration", compression_name);
+        
         let props = WriterProperties::builder()
-            .set_compression(Compression::SNAPPY)
+            .set_compression(compression)
             .build();
         let mut writer = ArrowWriter::try_new(temp_file, target_schema.clone(), Some(props))?;
 
@@ -398,6 +420,20 @@ impl ParquetMigrator {
                 Ok(Arc::new(BooleanArray::from(values)))
             },
             _ => Err(format!("Unsupported data type: {:?}", data_type).into())
+        }
+    }
+
+    /// 압축 알고리즘 선택 (데이터 크기에 따라 동적 결정)
+    fn select_compression(&self, estimated_size: usize) -> Compression {
+        match estimated_size {
+            // 소형 데이터 (< 1MB): SNAPPY (빠른 속도)
+            n if n < 1024 * 1024 => Compression::SNAPPY,
+            // 중형 데이터 (1MB ~ 10MB): ZSTD 레벨 3 (균형)
+            n if n < 10 * 1024 * 1024 => Compression::ZSTD(ZstdLevel::try_new(3).unwrap()),
+            // 대형 데이터 (10MB ~ 100MB): ZSTD 레벨 6 (높은 압축률)
+            n if n < 100 * 1024 * 1024 => Compression::ZSTD(ZstdLevel::try_new(6).unwrap()),
+            // 초대형 데이터 (≥ 100MB): ZSTD 레벨 9 (최고 압축률)
+            _ => Compression::ZSTD(ZstdLevel::try_new(9).unwrap()),
         }
     }
 }
