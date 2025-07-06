@@ -216,7 +216,7 @@ impl LatencyStats {
 
             result
         } else {
-            // 기본 레이턴시 범위 사용
+            // 기본 레이턴시 범위 사용 (ms 단위 먼저, 그 다음 s 단위)
             vec![
                 (0.0, 0.1, "≤ 0.1ms".to_string()),
                 (0.1, 0.5, "0.1ms < v ≤ 0.5ms".to_string()),
@@ -547,21 +547,28 @@ fn print_generic_latency_ranges_by_type<T: TraceItem>(
                 }
 
                 // 나머지 "X < v ≤ Y" 패턴: 하한값 X를 추출하여 비교
-                // "숫자ms" 또는 "숫자s" 패턴의 숫자 부분을 추출
-                fn extract_lower_bound(s: &str) -> f64 {
-                    let parts: Vec<&str> = s.split_whitespace().collect();
-                    if !parts.is_empty() {
-                        // 첫 번째 부분에서 숫자만 추출
-                        if let Ok(val) = parts[0].replace("ms", "").replace("s", "").parse::<f64>()
-                        {
-                            return val;
+                // "숫자ms" 또는 "숫자s" 패턴의 숫자 부분을 추출하고 단위를 고려
+                fn extract_lower_bound_ms(s: &str) -> f64 {
+                    // "X < v ≤ Y" 패턴에서 X 부분을 추출
+                    if let Some(start) = s.find(" < v ≤ ") {
+                        let left_part = &s[..start];
+                        
+                        // "숫자ms" 또는 "숫자s" 패턴에서 숫자 추출
+                        if left_part.ends_with("ms") {
+                            if let Ok(val) = left_part.replace("ms", "").parse::<f64>() {
+                                return val; // ms는 그대로
+                            }
+                        } else if left_part.ends_with("s") {
+                            if let Ok(val) = left_part.replace("s", "").parse::<f64>() {
+                                return val * 1000.0; // s를 ms로 변환
+                            }
                         }
                     }
                     0.0 // 기본값
                 }
 
-                let a_val = extract_lower_bound(a);
-                let b_val = extract_lower_bound(b);
+                let a_val = extract_lower_bound_ms(a);
+                let b_val = extract_lower_bound_ms(b);
 
                 a_val
                     .partial_cmp(&b_val)
