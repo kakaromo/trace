@@ -5,6 +5,7 @@ pub mod output;
 pub mod utils;
 pub mod migration;  // 마이그레이션 모듈 추가
 pub mod realtime;   // 실시간 분석 모듈 추가
+pub mod web;        // 웹 모듈 추가
 
 use std::sync::OnceLock;
 use utils::filter::FilterOptions;
@@ -21,7 +22,6 @@ pub use processors::{block_bottom_half_latency_process, ufs_bottom_half_latency_
 pub use utils::filter::{filter_block_data, filter_ufs_data, filter_ufscustom_data};
 pub use utils::latency::{get_user_latency_ranges, parse_latency_ranges, set_user_latency_ranges};
 pub use migration::*;  // 마이그레이션 모듈 사용
-pub use realtime::*;   // 실시간 분석 모듈 사용
 
 // 전역 필터 옵션 저장
 static FILTER_OPTIONS: OnceLock<FilterOptions> = OnceLock::new();

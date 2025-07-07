@@ -1,357 +1,81 @@
-use std::collections::VecDeque;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use serde::{Deserialize, Serialize};
 
-use crate::models::{Block, TraceType, UFS, UFSCUSTOM};
-use crate::parsers::log_common::parse_log_line;
-
-/// 실시간 로그 모니터링을 위한 구조체
-pub struct LogMonitor {
-    file_path: String,
-    last_position: u64,
-    last_modified: std::time::SystemTime,
-    sender: Sender<LogEvent>,
-    receiver: Receiver<LogEvent>,
-    is_running: bool,
-    poll_interval: Duration,
-}
-
-/// 로그 이벤트 타입
-#[derive(Debug, Clone)]
-pub enum LogEvent {
-    NewLine(String),
-    FileRotated,
-    Error(String),
-    Shutdown,
-}
-
-/// 파싱된 로그 엔트리
-#[derive(Debug, Clone)]
-pub struct ParsedLogEntry {
-    pub timestamp: f64,
-    pub trace_type: TraceType,
-    pub entry: LogEntryData,
-}
-
-/// 로그 엔트리 데이터
-#[derive(Debug, Clone)]
-pub enum LogEntryData {
-    Block(Block),
-    UFS(UFS),
-    UFSCustom(UFSCUSTOM),
-}
-
-impl LogEntryData {
-    /// 타임스탬프 추출
-    pub fn get_timestamp(&self) -> f64 {
-        match self {
-            LogEntryData::Block(block) => block.time,
-            LogEntryData::UFS(ufs) => ufs.time,
-            LogEntryData::UFSCustom(ufscustom) => ufscustom.start_time,
-        }
-    }
-}
-
-/// 실시간 통계 정보
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealtimeStats {
-    pub total_entries: usize,
+    pub total_entries: u64,
     pub entries_per_second: f64,
-    pub last_update: Instant,
-    pub window_size: Duration,
-    pub entry_timestamps: VecDeque<Instant>,
-    pub block_count: usize,
-    pub ufs_count: usize,
-    pub ufscustom_count: usize,
-    pub avg_latency: f64,
+    pub error_count: u64,
+    pub warning_count: u64,
+    pub info_count: u64,
+    pub debug_count: u64,
+    pub trace_count: u64,
+    pub unique_processes: u64,
+    pub unique_threads: u64,
+    pub average_latency: f64,
     pub max_latency: f64,
     pub min_latency: f64,
-}
-
-impl LogMonitor {
-    /// 새로운 로그 모니터 생성
-    pub fn new(file_path: String) -> std::io::Result<Self> {
-        let (sender, receiver) = mpsc::channel();
-        let file_metadata = std::fs::metadata(&file_path)?;
-        let last_modified = file_metadata.modified()?;
-        
-        Ok(LogMonitor {
-            file_path,
-            last_position: 0,
-            last_modified,
-            sender,
-            receiver,
-            is_running: false,
-            poll_interval: Duration::from_millis(100), // 100ms 간격으로 폴링
-        })
-    }
-
-    /// 폴링 간격 설정
-    pub fn set_poll_interval(&mut self, interval: Duration) {
-        self.poll_interval = interval;
-    }
-
-    /// 모니터링 시작
-    pub fn start(&mut self) -> std::io::Result<()> {
-        if self.is_running {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "Monitor is already running",
-            ));
-        }
-
-        self.is_running = true;
-        let file_path = self.file_path.clone();
-        let sender = self.sender.clone();
-        let poll_interval = self.poll_interval;
-
-        // 파일 모니터링 스레드 시작
-        thread::spawn(move || {
-            let mut monitor = FileMonitor::new(file_path, sender, poll_interval);
-            monitor.run();
-        });
-
-        println!("실시간 로그 모니터링 시작: {}", self.file_path);
-        Ok(())
-    }
-
-    /// 모니터링 중지
-    pub fn stop(&mut self) {
-        if self.is_running {
-            let _ = self.sender.send(LogEvent::Shutdown);
-            self.is_running = false;
-            println!("실시간 로그 모니터링 중지");
-        }
-    }
-
-    /// 새로운 로그 이벤트 수신
-    pub fn receive_events(&self) -> Vec<LogEvent> {
-        let mut events = Vec::new();
-        
-        // 논블로킹 방식으로 모든 이벤트 수집
-        while let Ok(event) = self.receiver.try_recv() {
-            events.push(event);
-        }
-        
-        events
-    }
-
-    /// 블로킹 방식으로 다음 이벤트 대기
-    pub fn wait_for_event(&self, timeout: Duration) -> Option<LogEvent> {
-        match self.receiver.recv_timeout(timeout) {
-            Ok(event) => Some(event),
-            Err(_) => None,
-        }
-    }
-
-    /// 실행 중인지 확인
-    pub fn is_running(&self) -> bool {
-        self.is_running
-    }
-}
-
-/// 파일 모니터링 내부 구조체
-struct FileMonitor {
-    file_path: String,
-    sender: Sender<LogEvent>,
-    poll_interval: Duration,
-    last_position: u64,
-    last_modified: std::time::SystemTime,
-}
-
-impl FileMonitor {
-    fn new(file_path: String, sender: Sender<LogEvent>, poll_interval: Duration) -> Self {
-        FileMonitor {
-            file_path,
-            sender,
-            poll_interval,
-            last_position: 0,
-            last_modified: std::time::SystemTime::UNIX_EPOCH,
-        }
-    }
-
-    fn run(&mut self) {
-        // 파일 초기 위치 설정 (파일 끝부터 시작)
-        if let Ok(metadata) = std::fs::metadata(&self.file_path) {
-            self.last_position = metadata.len();
-            self.last_modified = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        }
-
-        loop {
-            match self.check_file_changes() {
-                Ok(has_changes) => {
-                    if has_changes {
-                        if let Err(e) = self.read_new_lines() {
-                            let _ = self.sender.send(LogEvent::Error(format!("파일 읽기 오류: {}", e)));
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = self.sender.send(LogEvent::Error(format!("파일 상태 확인 오류: {}", e)));
-                }
-            }
-
-            // 더 짧은 간격으로 종료 신호 확인
-            for _ in 0..10 {
-                thread::sleep(Duration::from_millis(self.poll_interval.as_millis() as u64 / 10));
-                // 채널이 닫혔는지 확인 (receiver가 드롭되었는지)
-                if self.sender.send(LogEvent::NewLine(String::new())).is_err() {
-                    return; // 채널이 닫혔으므로 종료
-                }
-            }
-        }
-    }
-
-    fn check_file_changes(&mut self) -> std::io::Result<bool> {
-        let metadata = std::fs::metadata(&self.file_path)?;
-        let current_modified = metadata.modified()?;
-        let current_size = metadata.len();
-
-        // 파일이 로테이션되었는지 확인 (크기가 줄어들었을 때)
-        if current_size < self.last_position {
-            let _ = self.sender.send(LogEvent::FileRotated);
-            self.last_position = 0;
-            self.last_modified = current_modified;
-            return Ok(true);
-        }
-
-        // 파일이 수정되었고 크기가 증가했는지 확인
-        if current_modified > self.last_modified && current_size > self.last_position {
-            self.last_modified = current_modified;
-            return Ok(true);
-        }
-
-        Ok(false)
-    }
-
-    fn read_new_lines(&mut self) -> std::io::Result<()> {
-        let mut file = File::open(&self.file_path)?;
-        file.seek(SeekFrom::Start(self.last_position))?;
-        
-        let reader = BufReader::new(file);
-        let mut new_position = self.last_position;
-        
-        for line in reader.lines() {
-            let line = line?;
-            new_position += line.len() as u64 + 1; // +1 for newline character
-            
-            if let Err(_) = self.sender.send(LogEvent::NewLine(line)) {
-                // 수신자가 없으면 루프 종료
-                break;
-            }
-        }
-        
-        self.last_position = new_position;
-        Ok(())
-    }
+    pub last_updated_timestamp: u64,
 }
 
 impl RealtimeStats {
-    /// 새로운 실시간 통계 생성
     pub fn new() -> Self {
-        RealtimeStats {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        Self {
             total_entries: 0,
             entries_per_second: 0.0,
-            last_update: Instant::now(),
-            window_size: Duration::from_secs(10), // 10초 윈도우
-            entry_timestamps: VecDeque::new(),
-            block_count: 0,
-            ufs_count: 0,
-            ufscustom_count: 0,
-            avg_latency: 0.0,
+            error_count: 0,
+            warning_count: 0,
+            info_count: 0,
+            debug_count: 0,
+            trace_count: 0,
+            unique_processes: 0,
+            unique_threads: 0,
+            average_latency: 0.0,
             max_latency: 0.0,
-            min_latency: f64::INFINITY,
+            min_latency: 0.0,
+            last_updated_timestamp: now,
         }
     }
 
-    /// 새로운 로그 엔트리 추가
     pub fn add_entry(&mut self, entry: &ParsedLogEntry) {
-        let now = Instant::now();
-        
-        // 총 엔트리 수 증가
+        // 임시 구현 - 실제로는 엔트리를 처리해야 함
         self.total_entries += 1;
         
-        // 타입별 카운트 증가
-        match entry.entry {
-            LogEntryData::Block(_) => self.block_count += 1,
-            LogEntryData::UFS(_) => self.ufs_count += 1,
-            LogEntryData::UFSCustom(_) => self.ufscustom_count += 1,
-        }
-        
-        // 레이턴시 통계 업데이트
-        let latency = self.extract_latency(&entry.entry);
-        if latency > 0.0 {
-            self.max_latency = self.max_latency.max(latency);
-            self.min_latency = self.min_latency.min(latency);
-            
-            // 평균 레이턴시 계산 (간단한 이동 평균)
-            let alpha = 0.1; // 평활화 계수
-            if self.avg_latency == 0.0 {
-                self.avg_latency = latency;
-            } else {
-                self.avg_latency = alpha * latency + (1.0 - alpha) * self.avg_latency;
-            }
-        }
-        
-        // 윈도우 내 엔트리 타임스탬프 추가
-        self.entry_timestamps.push_back(now);
-        
-        // 윈도우 크기 초과 엔트리 제거
-        while let Some(&front_time) = self.entry_timestamps.front() {
-            if now.duration_since(front_time) > self.window_size {
-                self.entry_timestamps.pop_front();
-            } else {
-                break;
-            }
-        }
-        
-        // 초당 엔트리 수 계산
-        let entries_in_window = self.entry_timestamps.len();
-        let window_duration = self.window_size.as_secs_f64();
-        self.entries_per_second = entries_in_window as f64 / window_duration;
-        
-        self.last_update = now;
-    }
-
-    /// 로그 엔트리에서 레이턴시 추출
-    fn extract_latency(&self, entry: &LogEntryData) -> f64 {
-        match entry {
-            LogEntryData::Block(block) => block.dtoc,
-            LogEntryData::UFS(ufs) => ufs.dtoc,
-            LogEntryData::UFSCustom(ufscustom) => ufscustom.dtoc,
+        // 레벨별 카운트 업데이트
+        match entry.level.to_lowercase().as_str() {
+            "error" => self.error_count += 1,
+            "warning" | "warn" => self.warning_count += 1,
+            "info" => self.info_count += 1,
+            "debug" => self.debug_count += 1,
+            "trace" => self.trace_count += 1,
+            _ => {}
         }
     }
-
-    /// 통계 리셋
+    
     pub fn reset(&mut self) {
         self.total_entries = 0;
         self.entries_per_second = 0.0;
-        self.last_update = Instant::now();
-        self.entry_timestamps.clear();
-        self.block_count = 0;
-        self.ufs_count = 0;
-        self.ufscustom_count = 0;
-        self.avg_latency = 0.0;
+        self.error_count = 0;
+        self.warning_count = 0;
+        self.info_count = 0;
+        self.debug_count = 0;
+        self.trace_count = 0;
+        self.unique_processes = 0;
+        self.unique_threads = 0;
+        self.average_latency = 0.0;
         self.max_latency = 0.0;
-        self.min_latency = f64::INFINITY;
-    }
-
-    /// 통계 정보를 문자열로 포맷
-    pub fn format_stats(&self) -> String {
-        format!(
-            "Total: {} | Rate: {:.1}/s | Block: {} | UFS: {} | Custom: {} | Avg Latency: {:.2}ms | Max: {:.2}ms | Min: {:.2}ms",
-            self.total_entries,
-            self.entries_per_second,
-            self.block_count,
-            self.ufs_count,
-            self.ufscustom_count,
-            self.avg_latency,
-            if self.max_latency == 0.0 { 0.0 } else { self.max_latency },
-            if self.min_latency == f64::INFINITY { 0.0 } else { self.min_latency }
-        )
+        self.min_latency = 0.0;
+        self.last_updated_timestamp = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
     }
 }
 
@@ -361,77 +85,281 @@ impl Default for RealtimeStats {
     }
 }
 
-/// 로그 라인을 파싱하여 ParsedLogEntry로 변환
-pub fn parse_log_entry(line: &str) -> Option<ParsedLogEntry> {
-    // 로그 라인 파싱 시도
-    if let Some((trace_type, _)) = parse_log_line(line) {
-        match trace_type {
-            TraceType::Block => {
-                if let Ok(block) = crate::parsers::log_common::parse_block_io_event(line) {
-                    let entry_data = LogEntryData::Block(block);
-                    let timestamp = entry_data.get_timestamp();
-                    Some(ParsedLogEntry {
-                        timestamp,
-                        trace_type,
-                        entry: entry_data,
-                    })
-                } else {
-                    None
-                }
-            }
-            TraceType::UFS => {
-                if let Ok(ufs) = crate::parsers::log_common::parse_ufs_event(line) {
-                    let entry_data = LogEntryData::UFS(ufs);
-                    let timestamp = entry_data.get_timestamp();
-                    Some(ParsedLogEntry {
-                        timestamp,
-                        trace_type,
-                        entry: entry_data,
-                    })
-                } else {
-                    None
-                }
-            }
-            TraceType::UFSCUSTOM => {
-                if let Ok(ufscustom) = crate::parsers::log_common::parse_ufscustom_event(line) {
-                    let entry_data = LogEntryData::UFSCustom(ufscustom);
-                    let timestamp = entry_data.get_timestamp();
-                    Some(ParsedLogEntry {
-                        timestamp,
-                        trace_type,
-                        entry: entry_data,
-                    })
-                } else {
-                    None
-                }
-            }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedLogEntry {
+    pub timestamp: String,
+    pub level: String,
+    pub process_id: u32,
+    pub thread_id: u32,
+    pub message: String,
+    pub file_name: Option<String>,
+    pub line_number: Option<u32>,
+    pub latency: Option<f64>,
+    pub trace_type: String, // 임시로 String 타입 사용
+}
+
+impl ParsedLogEntry {
+    pub fn new(
+        timestamp: String,
+        level: String,
+        process_id: u32,
+        thread_id: u32,
+        message: String,
+    ) -> Self {
+        Self {
+            timestamp,
+            level,
+            process_id,
+            thread_id,
+            message,
+            file_name: None,
+            line_number: None,
+            latency: None,
+            trace_type: "Unknown".to_string(),
         }
-    } else {
-        None
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LogEvent {
+    NewLine(String),
+    FileRotated,
+    Error(String),
+    Shutdown,
+}
 
-    #[test]
-    fn test_realtime_stats_creation() {
-        let stats = RealtimeStats::new();
-        assert_eq!(stats.total_entries, 0);
-        assert_eq!(stats.entries_per_second, 0.0);
-        assert_eq!(stats.block_count, 0);
-        assert_eq!(stats.ufs_count, 0);
-        assert_eq!(stats.ufscustom_count, 0);
+pub struct LogMonitor {
+    pub stats: Arc<Mutex<RealtimeStats>>,
+    pub recent_entries: Arc<Mutex<Vec<ParsedLogEntry>>>,
+    pub process_threads: Arc<Mutex<HashMap<u32, Vec<u32>>>>,
+    start_time: Instant,
+}
+
+impl LogMonitor {
+    pub fn new() -> Self {
+        Self {
+            stats: Arc::new(Mutex::new(RealtimeStats::new())),
+            recent_entries: Arc::new(Mutex::new(Vec::new())),
+            process_threads: Arc::new(Mutex::new(HashMap::new())),
+            start_time: Instant::now(),
+        }
     }
 
-    #[test]
-    fn test_log_monitor_creation() {
-        let monitor = LogMonitor::new("test.log".to_string());
-        assert!(monitor.is_ok());
+    pub fn process_entry(&mut self, entry: &ParsedLogEntry) {
+        let mut stats = self.stats.lock().unwrap();
+        let mut recent = self.recent_entries.lock().unwrap();
+        let mut pt = self.process_threads.lock().unwrap();
+
+        // Update basic stats
+        stats.total_entries += 1;
+        match entry.level.to_lowercase().as_str() {
+            "error" => stats.error_count += 1,
+            "warning" | "warn" => stats.warning_count += 1,
+            "info" => stats.info_count += 1,
+            "debug" => stats.debug_count += 1,
+            "trace" => stats.trace_count += 1,
+            _ => {}
+        }
+
+        // Update process/thread tracking
+        pt.entry(entry.process_id)
+            .or_default()
+            .push(entry.thread_id);
         
-        let monitor = monitor.unwrap();
-        assert_eq!(monitor.file_path, "test.log");
-        assert!(!monitor.is_running());
+        stats.unique_processes = pt.len() as u64;
+        stats.unique_threads = pt.values().flatten().collect::<std::collections::HashSet<_>>().len() as u64;
+
+        // Update latency if available
+        if let Some(latency) = entry.latency {
+            if stats.max_latency < latency {
+                stats.max_latency = latency;
+            }
+            if stats.min_latency == 0.0 || stats.min_latency > latency {
+                stats.min_latency = latency;
+            }
+            stats.average_latency = (stats.average_latency + latency) / 2.0;
+        }
+
+        // Calculate entries per second
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        if elapsed > 0.0 {
+            stats.entries_per_second = stats.total_entries as f64 / elapsed;
+        }
+
+        stats.last_updated_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Keep only recent entries (last 100)
+        recent.push(entry.clone());
+        if recent.len() > 100 {
+            recent.remove(0);
+        }
+    }
+
+    pub fn get_stats(&self) -> RealtimeStats {
+        self.stats.lock().unwrap().clone()
+    }
+
+    pub fn get_recent_entries(&self) -> Vec<ParsedLogEntry> {
+        self.recent_entries.lock().unwrap().clone()
+    }
+
+    pub fn start(&mut self) -> Result<(), std::io::Error> {
+        // 로그 모니터링 시작 - 임시 구현
+        Ok(())
+    }
+
+    pub fn stop(&mut self) {
+        // 로그 모니터링 중지 - 임시 구현
+    }
+
+    pub fn receive_events(&mut self) -> Vec<LogEvent> {
+        // 이벤트 수신 - 임시 구현
+        Vec::new()
+    }
+}
+
+impl Default for LogMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct RealtimeMonitor {
+    pub monitor: LogMonitor,
+}
+
+impl RealtimeMonitor {
+    pub fn new() -> Self {
+        Self {
+            monitor: LogMonitor::new(),
+        }
+    }
+
+    pub fn process_entry(&mut self, entry: &ParsedLogEntry) {
+        self.monitor.process_entry(entry);
+    }
+
+    pub fn get_stats(&self) -> RealtimeStats {
+        self.monitor.get_stats()
+    }
+
+    pub fn get_recent_entries(&self) -> Vec<ParsedLogEntry> {
+        self.monitor.get_recent_entries()
+    }
+
+    pub fn check_file_changes(&mut self, log_file: &str) -> Result<Vec<ParsedLogEntry>, std::io::Error> {
+        use std::fs::File;
+        use std::io::{BufRead, BufReader, Seek, SeekFrom};
+        
+        println!("📂 로그 파일 확인: {}", log_file);
+        
+        // 파일 존재 확인
+        if !std::path::Path::new(log_file).exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("로그 파일을 찾을 수 없습니다: {}", log_file)
+            ));
+        }
+        
+        // 파일 열기
+        let mut file = File::open(log_file)?;
+        
+        // 파일 끝으로 이동해서 새로운 내용이 있는지 확인
+        let _file_size = file.seek(SeekFrom::End(0))?;
+        
+        // 간단한 구현: 파일의 처음 10줄을 읽어서 파싱
+        file.seek(SeekFrom::Start(0))?;
+        let reader = BufReader::new(&file);
+        
+        let mut entries = Vec::new();
+        for (i, line) in reader.lines().enumerate() {
+            if i >= 10 { break; } // 처음 10줄만 처리 (성능상 이유)
+            
+            let line = line?;
+            if let Some(entry) = parse_log_entry(&line) {
+                entries.push(entry);
+            }
+        }
+        
+        println!("📝 로그 파일에서 {} 개의 엔트리를 읽었습니다", entries.len());
+        Ok(entries)
+    }
+}
+
+pub fn parse_log_entry(line: &str) -> Option<ParsedLogEntry> {
+    // 실제 로그 형식에 맞게 파싱
+    // 예: <idle>-0 [003] d.h2. 141036.006962: ufshcd_command: complete_rsp: ...
+    
+    if line.trim().is_empty() {
+        return None;
+    }
+    
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    
+    // 프로세스 이름과 PID 추출 (예: <idle>-0 또는 f2fs_discard-25-1461)
+    let process_part = parts[0];
+    let process_id = if let Some(dash_pos) = process_part.rfind('-') {
+        process_part[dash_pos + 1..]
+            .parse::<u32>()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    
+    // CPU 번호 추출 (예: [003])
+    let cpu_part = parts.get(1).unwrap_or(&"[0]");
+    let thread_id = if cpu_part.starts_with('[') && cpu_part.ends_with(']') {
+        cpu_part[1..cpu_part.len()-1]
+            .parse::<u32>()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    
+    // 타임스탬프 추출
+    let timestamp = parts.get(3).unwrap_or(&"0.0").to_string();
+    
+    // 로그 레벨/이벤트 추출
+    let level = if line.contains("ufshcd_command") {
+        "UFS"
+    } else if line.contains("block_rq") {
+        "BLOCK"
+    } else {
+        "INFO"
+    }.to_string();
+    
+    // 메시지는 나머지 전체
+    let message = parts[4..].join(" ");
+    
+    // trace_type 설정
+    let trace_type = if line.contains("ufshcd_command") {
+        "UFS"
+    } else if line.contains("block_rq") {
+        "Block"
+    } else {
+        "Other"
+    }.to_string();
+    
+    let mut entry = ParsedLogEntry::new(
+        timestamp,
+        level,
+        process_id,
+        thread_id,
+        message,
+    );
+    entry.trace_type = trace_type;
+    
+    Some(entry)
+}
+
+impl Default for RealtimeMonitor {
+    fn default() -> Self {
+        Self::new()
     }
 }

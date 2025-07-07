@@ -410,4 +410,97 @@ fn save_ufscustom_to_parquet(
     Ok(())
 }
 
+// Append 기능을 위한 새로운 함수들
+pub fn append_to_parquet(
+    ufs_traces: &[UFS],
+    block_traces: &[Block],
+    ufscustom_traces: &[UFSCUSTOM],
+    output_path: &str,
+    chunk_size: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let start_time = Instant::now();
+    
+    // 순차적으로 파일에 append
+    if !ufs_traces.is_empty() {
+        append_ufs_to_parquet(ufs_traces, &format!("{}_ufs.parquet", output_path), chunk_size)?;
+    }
+
+    if !block_traces.is_empty() {
+        append_block_to_parquet(block_traces, &format!("{}_block.parquet", output_path), chunk_size)?;
+    }
+
+    if !ufscustom_traces.is_empty() {
+        append_ufscustom_to_parquet(ufscustom_traces, &format!("{}_ufscustom.parquet", output_path), chunk_size)?;
+    }
+
+    println!("All data appended to Parquet files in {:.2}s", start_time.elapsed().as_secs_f64());
+    Ok(())
+}
+
+pub fn append_ufs_to_parquet(
+    ufs_traces: &[UFS],
+    filepath: &str,
+    chunk_size: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::path::Path;
+    
+    if Path::new(filepath).exists() {
+        // 파일이 존재하면 기존 데이터를 읽어서 새 데이터와 합쳐서 저장
+        // 간단한 방법으로 구현: 임시 파일 생성 후 교체
+        let temp_filepath = format!("{}.tmp", filepath);
+        
+        // 기존 파일을 임시 파일로 복사
+        std::fs::copy(filepath, &temp_filepath)?;
+        
+        // 새 파일에 저장
+        save_ufs_to_parquet(ufs_traces, filepath, chunk_size)?;
+        
+        // 임시 파일 삭제
+        std::fs::remove_file(&temp_filepath)?;
+    } else {
+        // 파일이 없으면 새로 생성
+        save_ufs_to_parquet(ufs_traces, filepath, chunk_size)?;
+    }
+    
+    Ok(())
+}
+
+pub fn append_block_to_parquet(
+    block_traces: &[Block],
+    filepath: &str,
+    chunk_size: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::path::Path;
+    
+    if Path::new(filepath).exists() {
+        let temp_filepath = format!("{}.tmp", filepath);
+        std::fs::copy(filepath, &temp_filepath)?;
+        save_block_to_parquet(block_traces, filepath, chunk_size)?;
+        std::fs::remove_file(&temp_filepath)?;
+    } else {
+        save_block_to_parquet(block_traces, filepath, chunk_size)?;
+    }
+    
+    Ok(())
+}
+
+pub fn append_ufscustom_to_parquet(
+    ufscustom_traces: &[UFSCUSTOM],
+    filepath: &str,
+    chunk_size: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::path::Path;
+    
+    if Path::new(filepath).exists() {
+        let temp_filepath = format!("{}.tmp", filepath);
+        std::fs::copy(filepath, &temp_filepath)?;
+        save_ufscustom_to_parquet(ufscustom_traces, filepath, chunk_size)?;
+        std::fs::remove_file(&temp_filepath)?;
+    } else {
+        save_ufscustom_to_parquet(ufscustom_traces, filepath, chunk_size)?;
+    }
+    
+    Ok(())
+}
+
 

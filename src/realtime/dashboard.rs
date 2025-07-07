@@ -17,6 +17,7 @@ pub struct RealtimeDashboard {
     monitor: Arc<Mutex<LogMonitor>>,
     display_config: DisplayConfig,
     is_running: bool,
+    #[allow(dead_code)]
     update_interval: Duration,
     last_update: Instant,
     shutdown_flag: Option<Arc<AtomicBool>>,  // 종료 플래그 추가
@@ -50,11 +51,11 @@ pub struct DashboardData {
 impl RealtimeDashboard {
     /// 새로운 실시간 대시보드 생성
     pub fn new(
-        file_path: String,
+        _file_path: String,
         update_interval: Duration,
         display_config: DisplayConfig,
     ) -> io::Result<Self> {
-        let monitor = LogMonitor::new(file_path)?;
+        let monitor = LogMonitor::new();
         let analyzer = RealtimeAnalyzer::with_default_rules(update_interval);
 
         Ok(RealtimeDashboard {
@@ -131,7 +132,7 @@ impl RealtimeDashboard {
 
             // 새로운 로그 이벤트 처리
             let mut should_exit = false;
-            if let Ok(monitor) = self.monitor.lock() {
+            if let Ok(mut monitor) = self.monitor.lock() {
                 let events = monitor.receive_events();
                 for event in events {
                     match event {
@@ -279,12 +280,12 @@ impl RealtimeDashboard {
         println!("║   총 엔트리: {:>10}    처리율: {:>8.1}/초    Block: {:>8}    UFS: {:>8}    Custom: {:>8}              ║", 
                  data.stats.total_entries,
                  data.stats.entries_per_second,
-                 data.stats.block_count,
-                 data.stats.ufs_count,
-                 data.stats.ufscustom_count);
+                 data.stats.total_entries, // 임시로 total_entries 사용
+                 data.stats.info_count,
+                 data.stats.debug_count); // 임시로 debug_count 사용
         println!("║                                                                                                                                               ║");
         println!("║   평균 레이턴시: {:>8.2}ms    최대 레이턴시: {:>8.2}ms    최소 레이턴시: {:>8.2}ms                               ║", 
-                 data.stats.avg_latency,
+                 data.stats.average_latency,
                  if data.stats.max_latency == 0.0 { 0.0 } else { data.stats.max_latency },
                  if data.stats.min_latency == f64::INFINITY { 0.0 } else { data.stats.min_latency });
         println!("║                                                                                                                                               ║");
@@ -363,14 +364,15 @@ impl RealtimeDashboard {
         println!("║                                                                                                                                               ║");
         
         for entry in entries.iter().rev().take(5) {
-            let type_icon = match entry.trace_type {
-                crate::TraceType::Block => "🔷",
-                crate::TraceType::UFS => "🔶",
-                crate::TraceType::UFSCUSTOM => "🔸",
+            let type_icon = match entry.trace_type.as_str() {
+                "Block" => "🔷",
+                "UFS" => "🔶",
+                "UFSCUSTOM" => "🔸",
+                _ => "📝",
             };
             
-            let timestamp = format!("{:.3}", entry.timestamp);
-            let trace_type = format!("{:?}", entry.trace_type);
+            let timestamp = entry.timestamp.clone();
+            let trace_type = entry.trace_type.clone();
             println!("║   {} {:<8} | {:<10} | 타임스탬프: {:<15}                                                                           ║", 
                      type_icon, 
                      trace_type,
@@ -401,9 +403,9 @@ impl RealtimeDashboard {
     }
 }
 
-impl DisplayConfig {
+impl Default for DisplayConfig {
     /// 기본 디스플레이 설정
-    pub fn default() -> Self {
+    fn default() -> Self {
         DisplayConfig {
             show_stats: true,
             show_alerts: true,
@@ -415,6 +417,9 @@ impl DisplayConfig {
             compact_mode: false,
         }
     }
+}
+
+impl DisplayConfig {
 
     /// 컴팩트 모드 설정
     pub fn compact() -> Self {

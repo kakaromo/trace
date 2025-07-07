@@ -22,9 +22,9 @@ fn determine_processing_mode(file_size: u64) -> &'static str {
     const ONE_GB: u64 = 1024 * 1024 * 1024; // 1GB
     
     if file_size >= ONE_GB {
-        "highperf"
-    } else {
         "streaming"
+    } else {
+        "highperf"
     }
 }
 
@@ -64,6 +64,7 @@ fn print_usage(program: &str) {
     eprintln!("  {} [options] --streaming <log_file> <output_prefix>          - Force streaming mode for log file processing", program);
     eprintln!("  {} --migrate <path> [migration_options]                      - Migrate existing Parquet files to new schema", program);
     eprintln!("  {} --realtime <log_file> [realtime_options]                  - Start realtime log analysis dashboard", program);
+    eprintln!("  {} --web <log_file> [web_options]                            - Start web-based dashboard", program);
     eprintln!("\nOptions:");
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
     eprintln!("  -f           - Apply filters (time, sector/lba, latency, queue depth) with interactive input");
@@ -81,7 +82,9 @@ fn print_usage(program: &str) {
     eprintln!("  --compact           - Use compact dashboard mode");
     eprintln!("  --detailed          - Use detailed dashboard mode (default)");
     eprintln!("  --poll-interval <ms> - File polling interval in milliseconds (default: 100)");
-    eprintln!("\nNote: Files >= 1GB are automatically processed using high-performance mode.");
+    eprintln!("\nWeb Dashboard Options:");
+    eprintln!("  --port <port>       - Web server port (default: 3000)");
+    eprintln!("  --host <host>       - Web server host (default: localhost)");
     // 새 트레이스 타입이나 옵션이 추가되면 여기에 업데이트
 }
 
@@ -108,10 +111,15 @@ fn main() -> io::Result<()> {
     let mut streaming_output_prefix_index = 0;
     let mut is_realtime_mode = false;
     let mut realtime_log_file_index = 0;
-    let mut realtime_refresh_rate = 1000; // 기본 1초
-    let mut realtime_compact_mode = false;
-    let mut realtime_detailed_mode = true;
-    let mut realtime_poll_interval = 100; // 기본 100ms
+    let realtime_refresh_rate = 1000; // 기본 1초
+    let realtime_compact_mode = false;
+    let realtime_detailed_mode = true;
+    let realtime_poll_interval = 100; // 기본 100ms
+    let mut is_web_mode = false;
+    let mut web_log_file_index = 0;
+    let mut web_output_prefix_index = 0;
+    let mut web_port = 3000; // 기본 포트
+    let mut web_host = "localhost".to_string(); // 기본 호스트
     let mut use_filter = false;
     let mut y_axis_ranges: Option<HashMap<String, (f64, f64)>> = None;
     let mut chunk_size: usize = 50_000; // 기본 청크 크기
@@ -250,20 +258,43 @@ fn main() -> io::Result<()> {
                 realtime_log_file_index = i + 1;
                 i += 1;
             }
-            "--refresh-rate" => {
+            "--web" => {
+                is_web_mode = true;
+                web_log_file_index = i + 1;
+                
+                // --output 옵션 확인
+                let mut j = i + 2;
+                while j < args.len() {
+                    if args[j] == "--output" && j + 1 < args.len() {
+                        web_output_prefix_index = j + 1;
+                        j += 2;
+                    } else if args[j] == "--port" && j + 1 < args.len() {
+                        // 포트 옵션은 별도로 처리됨
+                        break;
+                    } else if args[j].starts_with('-') {
+                        // 다른 옵션 발견
+                        break;
+                    } else {
+                        j += 1;
+                    }
+                }
+                
+                i = j - 1; // 다음 반복에서 증가되므로 1을 빼줌
+            }
+            "--port" => {
                 if i + 1 >= args.len() {
-                    eprintln!("Error: --refresh-rate option requires a value");
+                    eprintln!("Error: --port option requires a value");
                     print_usage(&args[0]);
                     return Ok(());
                 }
                 
-                match args[i + 1].parse::<u64>() {
-                    Ok(rate) => {
-                        realtime_refresh_rate = rate;
-                        println!("Using custom refresh rate: {}ms", realtime_refresh_rate);
+                match args[i + 1].parse::<u16>() {
+                    Ok(port) => {
+                        web_port = port;
+                        println!("Using custom web port: {}", web_port);
                     }
                     Err(_) => {
-                        eprintln!("Error: Invalid refresh rate value '{}'", args[i + 1]);
+                        eprintln!("Error: Invalid port value '{}'", args[i + 1]);
                         print_usage(&args[0]);
                         return Ok(());
                     }
@@ -271,34 +302,15 @@ fn main() -> io::Result<()> {
                 
                 i += 2;
             }
-            "--compact" => {
-                realtime_compact_mode = true;
-                realtime_detailed_mode = false;
-                i += 1;
-            }
-            "--detailed" => {
-                realtime_detailed_mode = true;
-                realtime_compact_mode = false;
-                i += 1;
-            }
-            "--poll-interval" => {
+            "--host" => {
                 if i + 1 >= args.len() {
-                    eprintln!("Error: --poll-interval option requires a value");
+                    eprintln!("Error: --host option requires a value");
                     print_usage(&args[0]);
                     return Ok(());
                 }
                 
-                match args[i + 1].parse::<u64>() {
-                    Ok(interval) => {
-                        realtime_poll_interval = interval;
-                        println!("Using custom poll interval: {}ms", realtime_poll_interval);
-                    }
-                    Err(_) => {
-                        eprintln!("Error: Invalid poll interval value '{}'", args[i + 1]);
-                        print_usage(&args[0]);
-                        return Ok(());
-                    }
-                }
+                web_host = args[i + 1].clone();
+                println!("Using custom web host: {}", web_host);
                 
                 i += 2;
             }
@@ -423,6 +435,31 @@ fn main() -> io::Result<()> {
             realtime_detailed_mode,
             realtime_poll_interval,
         ) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("{}", e))),
+        }
+    } else if is_web_mode {
+        // 웹 대시보드 모드
+        if web_log_file_index >= args.len() {
+            eprintln!("Error: --web option requires a log file");
+            print_usage(&args[0]);
+            return Ok(());
+        }
+        
+        let output_prefix = if web_output_prefix_index > 0 && web_output_prefix_index < args.len() {
+            Some(args[web_output_prefix_index].as_str())
+        } else {
+            None
+        };
+        
+        match tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(process_web_dashboard(
+                &args[web_log_file_index],
+                output_prefix,
+                web_port,
+                &web_host,
+            )) {
             Ok(()) => Ok(()),
             Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("{}", e))),
         }
@@ -1539,4 +1576,33 @@ fn load_trace_data(
             Ok(TraceData::UFSCUSTOM(traces))
         } // 새 트레이스 타입 추가 시 여기에 추가
     }
+}
+
+// 웹 대시보드 시작
+async fn process_web_dashboard(
+    log_file: &str,
+    output_prefix: Option<&str>,
+    port: u16,
+    host: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use trace::web::WebDashboard;
+    
+    let dashboard = if output_prefix.is_some() {
+        WebDashboard::new_with_output(port, output_prefix)
+    } else {
+        WebDashboard::new(port)
+    };
+    
+    println!("🌐 웹 대시보드를 시작합니다...");
+    println!("📄 로그 파일: {}", log_file);
+    if let Some(prefix) = output_prefix {
+        println!("📁 출력 경로: {}", prefix);
+    }
+    println!("🌐 서버 주소: http://{}:{}", host, port);
+    println!("💡 브라우저에서 위 주소를 열어보세요!");
+    
+    // 웹 대시보드 시작 (비동기)
+    dashboard.start(log_file, output_prefix).await?;
+    
+    Ok(())
 }

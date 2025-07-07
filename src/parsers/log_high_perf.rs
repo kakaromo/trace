@@ -5,6 +5,7 @@ use crate::parsers::log_common::process_line_optimized;
 use crate::utils::{PerformanceMetrics, PerformanceProfiler, MemoryMonitor, calculate_optimal_chunk_size};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io;
 use std::sync::Arc;
@@ -208,6 +209,55 @@ pub fn parse_log_file_high_perf(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Blo
     
     profiler.checkpoint("Results merged");
     
+    // Sort traces by time to ensure proper ordering for QD calculation
+    println!("Sorting traces by time for accurate QD calculation...");
+    let sort_start = Instant::now();
+    
+    // 하이퍼프 모드에서도 안정적 정렬 적용 (stable sort)
+    ufs_traces.sort_by(|a, b| match a.time.partial_cmp(&b.time) {
+        Some(std::cmp::Ordering::Equal) => {
+            // 타임스탬프가 동일할 경우:
+            // 1. complete_rsp가 send_req보다 우선 (QD를 먼저 낮춤)
+            if a.action == "complete_rsp" && b.action == "send_req" {
+                std::cmp::Ordering::Less
+            } else if a.action == "send_req" && b.action == "complete_rsp" {
+                std::cmp::Ordering::Greater
+            } else {
+                // 동일 액션인 경우 태그로 정렬
+                a.tag.cmp(&b.tag)
+            }
+        },
+        Some(ordering) => ordering,
+        None => std::cmp::Ordering::Equal,
+    });
+    
+    block_traces.sort_by(|a, b| match a.time.partial_cmp(&b.time) {
+        Some(std::cmp::Ordering::Equal) => {
+            // 타임스탬프가 동일하면 섹터(sector)와 size로 정렬
+            match a.sector.cmp(&b.sector) {
+                std::cmp::Ordering::Equal => a.size.cmp(&b.size),
+                ordering => ordering
+            }
+        },
+        Some(ordering) => ordering,
+        None => std::cmp::Ordering::Equal,
+    });
+    
+    ufscustom_traces.sort_by(|a, b| match a.start_time.partial_cmp(&b.start_time) {
+        Some(std::cmp::Ordering::Equal) => {
+            // 타임스탬프가 동일하면 LBA와 size로 정렬
+            match a.lba.cmp(&b.lba) {
+                std::cmp::Ordering::Equal => a.size.cmp(&b.size),
+                ordering => ordering
+            }
+        },
+        Some(ordering) => ordering,
+        None => std::cmp::Ordering::Equal,
+    });
+    
+    println!("Sorting completed in {:.2}s", sort_start.elapsed().as_secs_f64());
+    profiler.checkpoint("Traces sorted by time");
+    
     // Update performance metrics
     let parse_time = profiler.get_total_time();
     let total_lines = chunk_boundaries.len() * 1000; // 추정값
@@ -309,7 +359,18 @@ pub fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Blo
         let sub_results: Vec<(Vec<UFS>, Vec<Block>, Vec<UFSCUSTOM>)> = (0..cpu_count)
             .into_par_iter()
             .map(|i| {
-                let start = i * sub_chunk_size;
+                let mut start = i * sub_chunk_size;
+                
+                // 첫 번째 청크가 아닌 경우, 시작 지점도 라인 경계에 맞춤
+                if i > 0 && start < chunk_data.len() {
+                    // 이전 라인의 끝을 찾아 그 다음부터 시작
+                    let mut boundary = start;
+                    while boundary > 0 && chunk_data[boundary - 1] != b'\n' {
+                        boundary -= 1;
+                    }
+                    start = boundary;
+                }
+                
                 let end = if i == cpu_count - 1 {
                     chunk_data.len()
                 } else {
@@ -359,6 +420,128 @@ pub fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Blo
     }
     
     profiler.checkpoint("Streaming parsing completed");
+    
+    // 중복 이벤트 제거 (청크 간 경계에서 발생할 수 있는 중복)
+    println!("Removing duplicate events...");
+    
+    // UFS 중복 제거 - f64를 문자열로 변환하여 hashable 하게 만듦
+    let ufs_dedup_start = Instant::now();
+    let mut ufs_unique = Vec::with_capacity(ufs_traces.len());
+    let mut ufs_dedup_map: HashSet<(String, u32, String, String)> = HashSet::new();
+    
+    for ufs in ufs_traces.iter() {
+        let time_str = format!("{:.6}", ufs.time); // 소수점 6자리까지 정밀도 유지
+        let key = (time_str, ufs.tag, ufs.action.clone(), ufs.opcode.clone());
+        if ufs_dedup_map.insert(key) {
+            ufs_unique.push(ufs.clone());
+        }
+    }
+    
+    let ufs_duplicates = ufs_traces.len() - ufs_unique.len();
+    ufs_traces = ufs_unique;
+    
+    println!(
+        "UFS duplicate events removed: {} (in {:.2}s)",
+        ufs_duplicates,
+        ufs_dedup_start.elapsed().as_secs_f64()
+    );
+    
+    // Block 중복 제거
+    let block_dedup_start = Instant::now();
+    let mut block_unique = Vec::with_capacity(block_traces.len());
+    let mut block_dedup_map: HashSet<(String, u64, u32, String)> = HashSet::new();
+    
+    for block in block_traces.iter() {
+        let time_str = format!("{:.6}", block.time);
+        let key = (time_str, block.sector, block.size, block.io_type.clone());
+        if block_dedup_map.insert(key) {
+            block_unique.push(block.clone());
+        }
+    }
+    
+    let block_duplicates = block_traces.len() - block_unique.len();
+    block_traces = block_unique;
+    
+    println!(
+        "Block duplicate events removed: {} (in {:.2}s)",
+        block_duplicates,
+        block_dedup_start.elapsed().as_secs_f64()
+    );
+    
+    // UFSCustom 중복 제거
+    if !ufscustom_traces.is_empty() {
+        let ufscustom_dedup_start = Instant::now();
+        let mut ufscustom_unique = Vec::with_capacity(ufscustom_traces.len());
+        let mut ufscustom_dedup_map: HashSet<(String, u64, u32)> = HashSet::new();
+        
+        for ufsc in ufscustom_traces.iter() {
+            let time_str = format!("{:.6}", ufsc.start_time);
+            let key = (time_str, ufsc.lba, ufsc.size);
+            if ufscustom_dedup_map.insert(key) {
+                ufscustom_unique.push(ufsc.clone());
+            }
+        }
+        
+        let ufscustom_duplicates = ufscustom_traces.len() - ufscustom_unique.len();
+        ufscustom_traces = ufscustom_unique;
+        
+        println!(
+            "UFSCustom duplicate events removed: {} (in {:.2}s)",
+            ufscustom_duplicates,
+            ufscustom_dedup_start.elapsed().as_secs_f64()
+        );
+    }
+    
+    profiler.checkpoint("Duplicate events removed");
+    
+    // Sort traces by time to ensure proper ordering for QD calculation
+    println!("Sorting traces by time for accurate QD calculation...");
+    let sort_start = Instant::now();
+    
+    // 스트리밍 모드에서 안정적 정렬 적용 (stable sort)
+    ufs_traces.sort_by(|a, b| match a.time.partial_cmp(&b.time) {
+        Some(std::cmp::Ordering::Equal) => {
+            // 타임스탬프가 동일할 경우:
+            // 1. complete_rsp가 send_req보다 우선 (QD를 먼저 낮춤)
+            if a.action == "complete_rsp" && b.action == "send_req" {
+                std::cmp::Ordering::Less
+            } else if a.action == "send_req" && b.action == "complete_rsp" {
+                std::cmp::Ordering::Greater
+            } else {
+                // 동일 액션인 경우 태그로 정렬
+                a.tag.cmp(&b.tag)
+            }
+        },
+        Some(ordering) => ordering,
+        None => std::cmp::Ordering::Equal,
+    });
+    
+    block_traces.sort_by(|a, b| match a.time.partial_cmp(&b.time) {
+        Some(std::cmp::Ordering::Equal) => {
+            // 타임스탬프가 동일하면 섹터(sector)와 size로 정렬
+            match a.sector.cmp(&b.sector) {
+                std::cmp::Ordering::Equal => a.size.cmp(&b.size),
+                ordering => ordering
+            }
+        },
+        Some(ordering) => ordering,
+        None => std::cmp::Ordering::Equal,
+    });
+    
+    ufscustom_traces.sort_by(|a, b| match a.start_time.partial_cmp(&b.start_time) {
+        Some(std::cmp::Ordering::Equal) => {
+            // 타임스탬프가 동일하면 LBA와 size로 정렬
+            match a.lba.cmp(&b.lba) {
+                std::cmp::Ordering::Equal => a.size.cmp(&b.size),
+                ordering => ordering
+            }
+        },
+        Some(ordering) => ordering,
+        None => std::cmp::Ordering::Equal,
+    });
+    
+    println!("Sorting completed in {:.2}s", sort_start.elapsed().as_secs_f64());
+    profiler.checkpoint("Traces sorted by time");
     
     // Update performance metrics
     let parse_time = profiler.get_total_time();

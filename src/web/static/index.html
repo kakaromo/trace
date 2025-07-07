@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실시간 로그 분석 대시보드</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🚀 실시간 로그 분석 대시보드</h1>
+            <div class="status-indicator">
+                <span id="connection-status" class="status-dot offline"></span>
+                <span id="connection-text">연결 중...</span>
+            </div>
+        </header>
+
+        <!-- 실시간 통계 섹션 -->
+        <section class="stats-section">
+            <h2>📊 실시간 통계</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-title">총 엔트리</div>
+                    <div class="stat-value" id="total-entries">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">처리율</div>
+                    <div class="stat-value" id="processing-rate">0.0/초</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">평균 레이턴시</div>
+                    <div class="stat-value" id="avg-latency">0.0ms</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">최대 레이턴시</div>
+                    <div class="stat-value" id="max-latency">0.0ms</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Block 트레이스</div>
+                    <div class="stat-value" id="block-count">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">UFS 트레이스</div>
+                    <div class="stat-value" id="ufs-count">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Custom 트레이스</div>
+                    <div class="stat-value" id="custom-count">0</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ECharts 차트 섹션 -->
+        <section class="charts-section">
+            <h2>📈 ECharts 성능 차트</h2>
+            <div class="chart-grid">
+                <div class="chart-container">
+                    <h3>Block I/O Scatter (Time vs LBA)</h3>
+                    <div id="block-scatter-chart" style="width: 100%; height: 400px;"></div>
+                </div>
+                <div class="chart-container">
+                    <h3>UFS I/O Scatter (Time vs LBA)</h3>
+                    <div id="ufs-scatter-chart" style="width: 100%; height: 400px;"></div>
+                </div>
+                <div class="chart-container">
+                    <h3>UFSCUSTOM I/O Scatter (Time vs LBA)</h3>
+                    <div id="ufscustom-scatter-chart" style="width: 100%; height: 400px;"></div>
+                </div>
+            </div>
+            
+            <div class="chart-grid">
+                <div class="chart-container">
+                    <h3>Block 주소 연속성 (Pie Chart)</h3>
+                    <div id="block-continuity-pie" style="width: 100%; height: 400px;"></div>
+                </div>
+                <div class="chart-container">
+                    <h3>UFS 주소 연속성 (Pie Chart)</h3>
+                    <div id="ufs-continuity-pie" style="width: 100%; height: 400px;"></div>
+                </div>
+                <div class="chart-container">
+                    <h3>UFSCUSTOM 주소 연속성 (Pie Chart)</h3>
+                    <div id="ufscustom-continuity-pie" style="width: 100%; height: 400px;"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 기존 Chart.js 차트 섹션 -->
+        <section class="charts-section">
+            <h2>📈 기본 성능 차트</h2>
+            <div class="chart-grid">
+                <div class="chart-container">
+                    <h3>처리율 추이</h3>
+                    <canvas id="processing-rate-chart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>레이턴시 분포</h3>
+                    <canvas id="latency-chart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>트레이스 타입 분포</h3>
+                    <canvas id="trace-type-chart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- 알림 섹션 -->
+        <section class="alerts-section">
+            <h2>🚨 알림</h2>
+            <div id="alerts-container" class="alerts-container">
+                <div class="no-alerts">현재 알림이 없습니다.</div>
+            </div>
+        </section>
+
+        <!-- 트렌드 섹션 -->
+        <section class="trends-section">
+            <h2>📈 트렌드 분석</h2>
+            <div id="trends-container" class="trends-container">
+                <div class="no-trends">트렌드 데이터를 수집 중입니다...</div>
+            </div>
+        </section>
+
+        <!-- 이상 징후 섹션 -->
+        <section class="anomalies-section">
+            <h2>⚠️ 이상 징후</h2>
+            <div id="anomalies-container" class="anomalies-container">
+                <div class="no-anomalies">이상 징후가 감지되지 않았습니다.</div>
+            </div>
+        </section>
+
+        <!-- 최근 엔트리 섹션 -->
+        <section class="recent-entries-section">
+            <h2>🔍 최근 로그 엔트리</h2>
+            <div id="recent-entries-container" class="recent-entries-container">
+                <div class="no-entries">최근 엔트리를 불러오는 중...</div>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>

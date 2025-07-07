@@ -41,104 +41,13 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
 
     // 이전 send_req의 정보를 저장할 변수들
     let mut prev_send_req: Option<(u64, u32, String)> = None; // (lba, size, opcode)
-
+    
     // send_req와 complete_rsp의 쌍을 추적하기 위한 집합
-    let mut send_req_indices: HashSet<usize> = HashSet::new();
-    let mut complete_rsp_indices: HashSet<usize> = HashSet::new();
-    let mut paired_tags: HashMap<(u32, String), usize> = HashMap::new(); // (tag, opcode) -> send_req index
+    let send_req_indices: HashSet<usize> = HashSet::new();
+    let complete_rsp_indices: HashSet<usize> = HashSet::new();
+    let paired_tags: HashMap<(u32, String), usize> = HashMap::new(); // (tag, opcode) -> send_req index
     
     log!("  Calculating UFS Latency and continuity...");
-
-    // 첫 번째 패스: send_req와 complete_rsp의 쌍을 찾기 - 병렬 처리
-    log!("  Finding send_req and complete_rsp pairs...");
-    
-    // 병렬로 send_req와 complete_rsp 인덱스 수집
-    let (send_reqs, complete_rsps): (Vec<_>, Vec<_>) = ufs_list
-        .par_iter()
-        .enumerate()
-        .filter_map(|(idx, ufs)| {
-            match ufs.action.as_str() {
-                "send_req" => Some((0, idx, ufs.tag, &ufs.opcode)),
-                "complete_rsp" => Some((1, idx, ufs.tag, &ufs.opcode)),
-                _ => None,
-            }
-        })
-        .partition(|(action_type, _, _, _)| *action_type == 0);
-    
-    // send_req 맵 생성
-    for (_, idx, tag, opcode) in send_reqs {
-        let key = (tag, opcode.clone());
-        paired_tags.insert(key, idx);
-        send_req_indices.insert(idx);
-    }
-    
-    // complete_rsp 처리 및 경고 출력
-    for (_, idx, tag, opcode) in complete_rsps {
-        let key = (tag, opcode.clone());
-        if paired_tags.contains_key(&key) {
-            complete_rsp_indices.insert(idx);
-        } else {
-            log!("  Warning: Found complete_rsp without matching send_req (tag: {}, opcode: {})", tag, opcode);
-        }
-    }
-
-    // 쌍이 없는 send_req 찾기 - 병렬 처리
-    let unpaired_send_req: Vec<usize> = paired_tags
-        .par_iter()
-        .filter_map(|(key, send_idx)| {
-            let has_complete = complete_rsp_indices
-                .par_iter()
-                .any(|&idx| {
-                    let ufs = &ufs_list[idx];
-                    ufs.action == "complete_rsp" && ufs.tag == key.0 && ufs.opcode == key.1
-                });
-            
-            if !has_complete {
-                log!("  Warning: Found send_req without matching complete_rsp (tag: {}, opcode: {})", key.0, key.1);
-                Some(*send_idx)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    // 유효한 인덱스만 유지 (쌍이 있는 것들만)
-    let valid_indices: HashSet<usize> = send_req_indices.union(&complete_rsp_indices)
-        .filter(|&&idx| !unpaired_send_req.contains(&idx))
-        .copied()
-        .collect();
-
-    // 쌍이 없는 이벤트들 제거 - retain 사용으로 메모리 효율성 향상
-    let original_len = ufs_list.len();
-    ufs_list = ufs_list
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, ufs)| {
-            if valid_indices.contains(&idx) || (ufs.action != "send_req" && ufs.action != "complete_rsp") {
-                Some(ufs)
-            } else {
-                None
-            }
-        })
-        .collect();
-    
-    let removed_count = original_len - ufs_list.len();
-    if removed_count > 0 {
-        log!("  Removed {} unpaired events", removed_count);
-    }
-
-    // 다시 정렬 (필터링 후) - 병렬 정렬
-    ufs_list.par_sort_by(|a, b| {
-        a.time
-            .partial_cmp(&b.time)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    // 해시맵 다시 초기화
-    req_times.clear();
-    paired_tags.clear();
-    send_req_indices.clear();
-    complete_rsp_indices.clear();
 
     // 배치 처리를 더 큰 단위로 변경하여 오버헤드 감소
     let batch_size = 50000; // 더 큰 배치 크기로 변경
@@ -183,7 +92,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
 
                     // 해시맵에 삽입 (이제 쌍이 있는 것들만 처리되므로 안전)
                     req_times.insert((ufs.tag, ufs.opcode.clone()), ufs.time);
-
+                    
                     current_qd += 1;
                     if current_qd == 1 {
                         if let Some(t) = last_complete_qd0_time {

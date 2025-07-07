@@ -11,6 +11,7 @@ use std::time::Instant;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
 use crate::utils::encoding::decode_bytes_auto;
+use crate::utils::constants::{MAX_VALID_UFS_LBA, UFS_DEBUG_LBA};
 
 // Common regex patterns for all three log types
 lazy_static! {
@@ -54,8 +55,15 @@ pub fn parse_ufs_event(line: &str) -> Result<UFS, &'static str> {
         let raw_lba: u64 = caps["lba"].parse().unwrap_or(0);
         let raw_size: i64 = caps["size"].parse::<i64>().unwrap_or(0).unsigned_abs() as i64;
 
+        // Debug 또는 비정상적으로 큰 LBA 값은 0으로 처리
+        let cleaned_lba = if raw_lba == UFS_DEBUG_LBA || raw_lba > MAX_VALID_UFS_LBA {
+            0
+        } else {
+            raw_lba
+        };
+
         // Convert bytes to 4KB units
-        let lba_in_4kb = raw_lba / 4096;
+        let lba_in_4kb = cleaned_lba / 4096;
         let size_in_4kb = (raw_size as f64 / 4096.0).ceil() as u32;
 
         let ufs = UFS {

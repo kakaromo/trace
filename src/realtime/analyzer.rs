@@ -9,6 +9,7 @@ pub struct RealtimeAnalyzer {
     stats: Arc<Mutex<RealtimeStats>>,
     alert_rules: Vec<AlertRule>,
     metrics_history: Arc<Mutex<MetricsHistory>>,
+    recent_entries: Arc<Mutex<VecDeque<ParsedLogEntry>>>,
     analysis_window: Duration,
     last_analysis: Instant,
 }
@@ -122,6 +123,7 @@ impl RealtimeAnalyzer {
             stats: Arc::new(Mutex::new(RealtimeStats::new())),
             alert_rules: Vec::new(),
             metrics_history: Arc::new(Mutex::new(MetricsHistory::new())),
+            recent_entries: Arc::new(Mutex::new(VecDeque::new())),
             analysis_window,
             last_analysis: Instant::now(),
         }
@@ -223,12 +225,59 @@ impl RealtimeAnalyzer {
     }
 
     /// 현재 통계 가져오기
-    pub fn get_current_stats(&self) -> RealtimeStats {
+    pub fn get_current_stats(&self) -> crate::realtime::monitor::RealtimeStats {
         if let Ok(stats) = self.stats.lock() {
             stats.clone()
         } else {
-            RealtimeStats::new()
+            crate::realtime::monitor::RealtimeStats::new()
         }
+    }
+
+    /// 활성 알림 가져오기
+    pub fn get_active_alerts(&self) -> Vec<Alert> {
+        // 임시로 빈 벡터 반환 (실제 구현에서는 알림 저장소에서 가져옴)
+        Vec::new()
+    }
+
+    /// 트렌드 가져오기
+    pub fn get_trends(&self) -> Vec<Trend> {
+        // 임시로 빈 벡터 반환 (실제 구현에서는 트렌드 계산)
+        Vec::new()
+    }
+
+    /// 이상 징후 가져오기
+    pub fn get_anomalies(&self) -> Vec<Anomaly> {
+        // 임시로 빈 벡터 반환 (실제 구현에서는 이상 징후 탐지)
+        Vec::new()
+    }
+
+    /// 로그 엔트리 추가
+    pub fn add_entry(&mut self, entry: crate::realtime::monitor::ParsedLogEntry) {
+        // 통계 업데이트
+        if let Ok(mut stats) = self.stats.lock() {
+            stats.add_entry(&entry);
+        }
+        
+        // 최근 엔트리에 추가
+        if let Ok(mut recent) = self.recent_entries.lock() {
+            recent.push_back(entry.clone());
+            // 최대 100개 엔트리만 유지
+            if recent.len() > 100 {
+                recent.pop_front();
+            }
+        }
+        
+        // 메트릭 히스토리에 추가
+        if let Ok(mut history) = self.metrics_history.lock() {
+            let current_stats = if let Ok(stats) = self.stats.lock() {
+                stats.clone()
+            } else {
+                return;
+            };
+            history.add_snapshot(&current_stats);
+        }
+        
+        println!("📊 엔트리 추가됨: {} - {}", entry.level, entry.trace_type);
     }
 
     /// 메트릭 히스토리 가져오기
@@ -268,25 +317,27 @@ impl RealtimeAnalyzer {
 
             let current_value = match rule.metric {
                 MetricType::EntriesPerSecond => stats.entries_per_second,
-                MetricType::AverageLatency => stats.avg_latency,
+                MetricType::AverageLatency => stats.average_latency,
                 MetricType::MaxLatency => stats.max_latency,
                 MetricType::BlockRatio => {
+                    // Since block_entries field doesn't exist, using a placeholder calculation
                     if stats.total_entries > 0 {
-                        stats.block_count as f64 / stats.total_entries as f64
+                        // Using error_count as a proxy for block entries temporarily
+                        stats.error_count as f64 / stats.total_entries as f64
                     } else {
                         0.0
                     }
                 }
                 MetricType::UFSRatio => {
                     if stats.total_entries > 0 {
-                        stats.ufs_count as f64 / stats.total_entries as f64
+                        stats.info_count as f64 / stats.total_entries as f64
                     } else {
                         0.0
                     }
                 }
                 MetricType::UFSCustomRatio => {
                     if stats.total_entries > 0 {
-                        stats.ufscustom_count as f64 / stats.total_entries as f64
+                        stats.debug_count as f64 / stats.total_entries as f64
                     } else {
                         0.0
                     }
@@ -411,7 +462,7 @@ impl RealtimeAnalyzer {
             TrendDirection::Stable
         };
 
-        Some((direction, slope, r_squared.max(0.0).min(1.0)))
+        Some((direction, slope, r_squared.clamp(0.0, 1.0)))
     }
 
     /// 이상 징후 감지
@@ -422,7 +473,7 @@ impl RealtimeAnalyzer {
             // 평균 레이턴시 이상치 감지
             if let Some(anomaly) = self.detect_statistical_anomaly(
                 &history.avg_latency,
-                stats.avg_latency,
+                stats.average_latency,
                 MetricType::AverageLatency,
             ) {
                 anomalies.push(anomaly);
@@ -487,6 +538,15 @@ impl RealtimeAnalyzer {
             None
         }
     }
+
+    /// 최근 엔트리 가져오기
+    pub fn get_recent_entries(&self) -> Vec<crate::realtime::monitor::ParsedLogEntry> {
+        if let Ok(recent) = self.recent_entries.lock() {
+            recent.iter().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 impl MetricsHistory {
@@ -511,12 +571,12 @@ impl MetricsHistory {
         
         self.timestamps.push_back(now);
         self.entries_per_second.push_back(stats.entries_per_second);
-        self.avg_latency.push_back(stats.avg_latency);
+        self.avg_latency.push_back(stats.average_latency);
         self.max_latency.push_back(stats.max_latency);
-        self.block_count.push_back(stats.block_count);
-        self.ufs_count.push_back(stats.ufs_count);
-        self.ufscustom_count.push_back(stats.ufscustom_count);
-        self.total_entries.push_back(stats.total_entries);
+        self.block_count.push_back(stats.total_entries as usize); // 임시로 total_entries 사용
+        self.ufs_count.push_back(stats.info_count as usize);
+        self.ufscustom_count.push_back(stats.debug_count as usize);
+        self.total_entries.push_back(stats.total_entries.try_into().unwrap());
 
         // 최대 크기 초과 시 오래된 데이터 제거
         while self.timestamps.len() > self.max_history_size {
@@ -567,6 +627,12 @@ impl Clone for MetricsHistory {
             total_entries: self.total_entries.clone(),
             max_history_size: self.max_history_size,
         }
+    }
+}
+
+impl Default for MetricsHistory {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

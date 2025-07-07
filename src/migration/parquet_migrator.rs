@@ -133,21 +133,21 @@ impl ParquetMigrator {
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
         
         // 최소 필수 필드 확인
-        let required_fields = vec!["time", "process", "action", "sector"];
+        let required_fields = ["time", "process", "action", "sector"];
         required_fields.iter().all(|&field| field_names.contains(&field))
     }
 
     /// UFS 스키마 검증
     fn is_ufs_schema(&self, schema: &Schema) -> bool {
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
-        let required_fields = vec!["time", "process", "action", "opcode", "lba"];
+        let required_fields = ["time", "process", "action", "opcode", "lba"];
         required_fields.iter().all(|&field| field_names.contains(&field))
     }
 
     /// UFSCustom 스키마 검증
     fn is_ufscustom_schema(&self, schema: &Schema) -> bool {
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
-        let required_fields = vec!["time", "process", "action", "opcode", "lba"];
+        let required_fields = ["time", "process", "action", "opcode", "lba"];
         required_fields.iter().all(|&field| field_names.contains(&field))
     }
 
@@ -186,10 +186,10 @@ impl ParquetMigrator {
         let mut writer = ArrowWriter::try_new(temp_file, target_schema.clone(), Some(props))?;
 
         // 배치 단위로 데이터 변환
-        let mut reader = reader_builder.build()?;
+        let reader = reader_builder.build()?;
         let mut total_records = 0;
 
-        while let Some(batch) = reader.next() {
+        for batch in reader {
             match batch {
                 Ok(batch) => {
                     let converted_batch = self.convert_block_batch(&batch, &current_schema, &target_schema)?;
@@ -248,10 +248,10 @@ impl ParquetMigrator {
             .build();
         let mut writer = ArrowWriter::try_new(temp_file, target_schema.clone(), Some(props))?;
 
-        let mut reader = reader_builder.build()?;
+        let reader = reader_builder.build()?;
         let mut total_records = 0;
 
-        while let Some(batch) = reader.next() {
+        for batch in reader {
             match batch {
                 Ok(batch) => {
                     let converted_batch = self.convert_ufs_batch(&batch, &current_schema, &target_schema)?;
@@ -437,7 +437,7 @@ impl ParquetMigrator {
         }
     }
 }
-
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone)]
 enum FileType {
     Block,
