@@ -40,11 +40,11 @@ impl Default for FilterOptions {
 impl FilterOptions {
     // 필터 옵션이 활성화되어 있는지 확인
     pub fn is_time_filter_active(&self) -> bool {
-        self.start_time > 0.0 && self.end_time > 0.0
+        self.start_time > 0.0 || self.end_time > 0.0
     }
 
     pub fn is_sector_filter_active(&self) -> bool {
-        self.start_sector > 0 && self.end_sector > 0
+        self.start_sector > 0 || self.end_sector > 0
     }
 
     // 레이턴시 필터가 활성화되어 있는지 확인
@@ -70,12 +70,12 @@ impl FilterOptions {
             start_time: self.start_time,
             end_time: self.end_time,
             start_sector: if self.start_sector > 0 {
-                self.start_sector / 8
+                self.start_sector
             } else {
                 0
             },
             end_sector: if self.end_sector > 0 {
-                self.end_sector / 8
+                self.end_sector
             } else {
                 0
             },
@@ -239,52 +239,147 @@ pub fn filter_block_data(
         .filter(|item| {
             // 시간 필터 적용
             let time_match = if filter.is_time_filter_active() {
-                item.time >= filter.start_time && item.time <= filter.end_time
+                let start_check = filter.start_time > 0.0;
+                let end_check = filter.end_time > 0.0;
+                
+                // start만 설정된 경우
+                if start_check && !end_check {
+                    item.time >= filter.start_time
+                }
+                // end만 설정된 경우: 0부터 end까지 허용
+                else if !start_check && end_check {
+                    item.time >= 0.0 && item.time <= filter.end_time
+                }
+                // 둘 다 설정된 경우
+                else if start_check && end_check {
+                    item.time >= filter.start_time && item.time <= filter.end_time
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // 섹터 필터 적용
             let sector_match = if filter.is_sector_filter_active() {
-                // 범위가 겹치는지 확인 (item.sector부터 item.sector + item.size까지)
-                let item_end_sector = item.sector + item.size as u64 / 512;
-                !(item_end_sector < filter.start_sector || item.sector > filter.end_sector)
+                let start_check = filter.start_sector > 0;
+                let end_check = filter.end_sector > 0;
+                let item_end_sector = item.sector + item.size as u64;
+                
+                // start만 설정된 경우
+                if start_check && !end_check {
+                    // item의 섹터 범위가 filter.start_sector와 겹치는지 확인
+                    item_end_sector >= filter.start_sector
+                }
+                // end만 설정된 경우: 0부터 end까지 허용
+                else if !start_check && end_check {
+                    // item의 섹터 범위가 0부터 filter.end_sector 사이에 있는지 확인
+                    item.sector <= filter.end_sector
+                }
+                // 둘 다 설정된 경우 - 범위가 겹치는지 확인
+                else if start_check && end_check {
+                    !(item_end_sector < filter.start_sector || item.sector > filter.end_sector)
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // DTOC 필터 적용
             let dtoc_match = if filter.is_dtoc_filter_active() {
-                let min_ok = filter.min_dtoc == 0.0 || item.dtoc >= filter.min_dtoc;
-                let max_ok = filter.max_dtoc == 0.0 || item.dtoc <= filter.max_dtoc;
-                min_ok && max_ok
+                let min_check = filter.min_dtoc > 0.0;
+                let max_check = filter.max_dtoc > 0.0;
+                
+                // min만 설정된 경우
+                if min_check && !max_check {
+                    item.dtoc >= filter.min_dtoc
+                }
+                // max만 설정된 경우: 0부터 max까지 허용
+                else if !min_check && max_check {
+                    item.dtoc >= 0.0 && item.dtoc <= filter.max_dtoc
+                }
+                // 둘 다 설정된 경우
+                else if min_check && max_check {
+                    item.dtoc >= filter.min_dtoc && item.dtoc <= filter.max_dtoc
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // CTOC 필터 적용
             let ctoc_match = if filter.is_ctoc_filter_active() {
-                let min_ok = filter.min_ctoc == 0.0 || item.ctoc >= filter.min_ctoc;
-                let max_ok = filter.max_ctoc == 0.0 || item.ctoc <= filter.max_ctoc;
-                min_ok && max_ok
+                let min_check = filter.min_ctoc > 0.0;
+                let max_check = filter.max_ctoc > 0.0;
+                
+                // min만 설정된 경우
+                if min_check && !max_check {
+                    item.ctoc >= filter.min_ctoc
+                }
+                // max만 설정된 경우: 0부터 max까지 허용
+                else if !min_check && max_check {
+                    item.ctoc >= 0.0 && item.ctoc <= filter.max_ctoc
+                }
+                // 둘 다 설정된 경우
+                else if min_check && max_check {
+                    item.ctoc >= filter.min_ctoc && item.ctoc <= filter.max_ctoc
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // CTOD 필터 적용
             let ctod_match = if filter.is_ctod_filter_active() {
-                let min_ok = filter.min_ctod == 0.0 || item.ctod >= filter.min_ctod;
-                let max_ok = filter.max_ctod == 0.0 || item.ctod <= filter.max_ctod;
-                min_ok && max_ok
+                let min_check = filter.min_ctod > 0.0;
+                let max_check = filter.max_ctod > 0.0;
+                
+                // min만 설정된 경우
+                if min_check && !max_check {
+                    item.ctod >= filter.min_ctod
+                }
+                // max만 설정된 경우: 0부터 max까지 허용
+                else if !min_check && max_check {
+                    item.ctod >= 0.0 && item.ctod <= filter.max_ctod
+                }
+                // 둘 다 설정된 경우
+                else if min_check && max_check {
+                    item.ctod >= filter.min_ctod && item.ctod <= filter.max_ctod
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // QD 필터 적용
             let qd_match = if filter.is_qd_filter_active() {
-                let min_ok = filter.min_qd == 0 || item.qd >= filter.min_qd;
-                let max_ok = filter.max_qd == 0 || item.qd <= filter.max_qd;
-                min_ok && max_ok
+                let min_check = filter.min_qd > 0;
+                let max_check = filter.max_qd > 0;
+                
+                // min만 설정된 경우
+                if min_check && !max_check {
+                    item.qd >= filter.min_qd
+                }
+                // max만 설정된 경우: 0부터 max까지 허용
+                else if !min_check && max_check {
+                    item.qd <= filter.max_qd
+                }
+                // 둘 다 설정된 경우
+                else if min_check && max_check {
+                    item.qd >= filter.min_qd && item.qd <= filter.max_qd
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
@@ -315,52 +410,147 @@ pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec
         .filter(|item| {
             // 시간 필터 적용
             let time_match = if filter.is_time_filter_active() {
-                item.time >= filter.start_time && item.time <= filter.end_time
+                let start_check = filter.start_time > 0.0;
+                let end_check = filter.end_time > 0.0;
+                
+                // start만 설정된 경우
+                if start_check && !end_check {
+                    item.time >= filter.start_time
+                }
+                // end만 설정된 경우: 0부터 end까지 허용
+                else if !start_check && end_check {
+                    item.time >= 0.0 && item.time <= filter.end_time
+                }
+                // 둘 다 설정된 경우
+                else if start_check && end_check {
+                    item.time >= filter.start_time && item.time <= filter.end_time
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // LBA 필터 적용
             let lba_match = if ufs_filter.is_sector_filter_active() {
-                // 범위가 겹치는지 확인 (item.lba부터 item.lba + item.size까지)
+                let start_check = ufs_filter.start_sector > 0;
+                let end_check = ufs_filter.end_sector > 0;
                 let item_end_lba = item.lba + item.size as u64 / 4096;
-                !(item_end_lba < ufs_filter.start_sector || item.lba > ufs_filter.end_sector)
+                
+                // start만 설정된 경우
+                if start_check && !end_check {
+                    // item의 LBA 범위가 filter.start_sector와 겹치는지 확인
+                    item_end_lba >= ufs_filter.start_sector
+                }
+                // end만 설정된 경우: 0부터 end까지 허용
+                else if !start_check && end_check {
+                    // item의 LBA 범위가 0부터 filter.end_sector 사이에 있는지 확인
+                    item.lba <= ufs_filter.end_sector
+                }
+                // 둘 다 설정된 경우 - 범위가 겹치는지 확인
+                else if start_check && end_check {
+                    !(item_end_lba < ufs_filter.start_sector || item.lba > ufs_filter.end_sector)
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // DTOC 필터 적용
             let dtoc_match = if filter.is_dtoc_filter_active() {
-                let min_ok = filter.min_dtoc == 0.0 || item.dtoc >= filter.min_dtoc;
-                let max_ok = filter.max_dtoc == 0.0 || item.dtoc <= filter.max_dtoc;
-                min_ok && max_ok
+                let min_check = filter.min_dtoc > 0.0;
+                let max_check = filter.max_dtoc > 0.0;
+                
+                // min만 설정된 경우
+                if min_check && !max_check {
+                    item.dtoc >= filter.min_dtoc
+                }
+                // max만 설정된 경우: 0부터 max까지 허용
+                else if !min_check && max_check {
+                    item.dtoc >= 0.0 && item.dtoc <= filter.max_dtoc
+                }
+                // 둘 다 설정된 경우
+                else if min_check && max_check {
+                    item.dtoc >= filter.min_dtoc && item.dtoc <= filter.max_dtoc
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // CTOC 필터 적용
             let ctoc_match = if filter.is_ctoc_filter_active() {
-                let min_ok = filter.min_ctoc == 0.0 || item.ctoc >= filter.min_ctoc;
-                let max_ok = filter.max_ctoc == 0.0 || item.ctoc <= filter.max_ctoc;
-                min_ok && max_ok
+                let min_check = filter.min_ctoc > 0.0;
+                let max_check = filter.max_ctoc > 0.0;
+                
+                // min만 설정된 경우
+                if min_check && !max_check {
+                    item.ctoc >= filter.min_ctoc
+                }
+                // max만 설정된 경우: 0부터 max까지 허용
+                else if !min_check && max_check {
+                    item.ctoc >= 0.0 && item.ctoc <= filter.max_ctoc
+                }
+                // 둘 다 설정된 경우
+                else if min_check && max_check {
+                    item.ctoc >= filter.min_ctoc && item.ctoc <= filter.max_ctoc
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // CTOD 필터 적용
             let ctod_match = if filter.is_ctod_filter_active() {
-                let min_ok = filter.min_ctod == 0.0 || item.ctod >= filter.min_ctod;
-                let max_ok = filter.max_ctod == 0.0 || item.ctod <= filter.max_ctod;
-                min_ok && max_ok
+                let min_check = filter.min_ctod > 0.0;
+                let max_check = filter.max_ctod > 0.0;
+                
+                // min만 설정된 경우
+                if min_check && !max_check {
+                    item.ctod >= filter.min_ctod
+                }
+                // max만 설정된 경우: 0부터 max까지 허용
+                else if !min_check && max_check {
+                    item.ctod >= 0.0 && item.ctod <= filter.max_ctod
+                }
+                // 둘 다 설정된 경우
+                else if min_check && max_check {
+                    item.ctod >= filter.min_ctod && item.ctod <= filter.max_ctod
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // QD 필터 적용
             let qd_match = if filter.is_qd_filter_active() {
-                let min_ok = filter.min_qd == 0 || item.qd >= filter.min_qd;
-                let max_ok = filter.max_qd == 0 || item.qd <= filter.max_qd;
-                min_ok && max_ok
+                let min_check = filter.min_qd > 0;
+                let max_check = filter.max_qd > 0;
+                
+                // min만 설정된 경우
+                if min_check && !max_check {
+                    item.qd >= filter.min_qd
+                }
+                // max만 설정된 경우: 0부터 max까지 허용
+                else if !min_check && max_check {
+                    item.qd <= filter.max_qd
+                }
+                // 둘 다 설정된 경우
+                else if min_check && max_check {
+                    item.qd >= filter.min_qd && item.qd <= filter.max_qd
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
@@ -391,26 +581,77 @@ pub fn filter_ufscustom_data(
         .filter(|item| {
             // 시간 필터 적용 (start_time과 end_time 사용)
             let time_match = if filter.is_time_filter_active() {
-                // 시간 범위가 겹치는지 확인
-                !(item.end_time < filter.start_time || item.start_time > filter.end_time)
+                let start_check = filter.start_time > 0.0;
+                let end_check = filter.end_time > 0.0;
+                
+                // start만 설정된 경우
+                if start_check && !end_check {
+                    // item.end_time이 filter.start_time보다 크거나 같아야 함
+                    item.end_time >= filter.start_time
+                }
+                // end만 설정된 경우: 0부터 end까지 허용
+                else if !start_check && end_check {
+                    // item.start_time이 filter.end_time보다 작거나 같아야 함
+                    item.start_time <= filter.end_time
+                }
+                // 둘 다 설정된 경우 - 범위가 겹치는지 확인
+                else if start_check && end_check {
+                    !(item.end_time < filter.start_time || item.start_time > filter.end_time)
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // LBA 필터 적용 (start_lba 기준)
             let lba_match = if ufs_filter.is_sector_filter_active() {
-                // 범위가 겹치는지 확인 (item.lba부터 item.lba + item.size까지)
+                let start_check = ufs_filter.start_sector > 0;
+                let end_check = ufs_filter.end_sector > 0;
                 let item_end_lba = item.lba + item.size as u64 / 4096;
-                !(item_end_lba < ufs_filter.start_sector || item.lba > ufs_filter.end_sector)
+                
+                // start만 설정된 경우
+                if start_check && !end_check {
+                    // item의 LBA 범위가 filter.start_sector와 겹치는지 확인
+                    item_end_lba >= ufs_filter.start_sector
+                }
+                // end만 설정된 경우: 0부터 end까지 허용
+                else if !start_check && end_check {
+                    // item의 LBA 범위가 0부터 filter.end_sector 사이에 있는지 확인
+                    item.lba <= ufs_filter.end_sector
+                }
+                // 둘 다 설정된 경우 - 범위가 겹치는지 확인
+                else if start_check && end_check {
+                    !(item_end_lba < ufs_filter.start_sector || item.lba > ufs_filter.end_sector)
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
 
             // DTOC 필터 적용 (UFSCUSTOM은 dtoc만 가지고 있음)
             let dtoc_match = if filter.is_dtoc_filter_active() {
-                let min_ok = filter.min_dtoc == 0.0 || item.dtoc >= filter.min_dtoc;
-                let max_ok = filter.max_dtoc == 0.0 || item.dtoc <= filter.max_dtoc;
-                min_ok && max_ok
+                let min_check = filter.min_dtoc > 0.0;
+                let max_check = filter.max_dtoc > 0.0;
+                
+                // min만 설정된 경우
+                if min_check && !max_check {
+                    item.dtoc >= filter.min_dtoc
+                }
+                // max만 설정된 경우: 0부터 max까지 허용
+                else if !min_check && max_check {
+                    item.dtoc >= 0.0 && item.dtoc <= filter.max_dtoc
+                }
+                // 둘 다 설정된 경우
+                else if min_check && max_check {
+                    item.dtoc >= filter.min_dtoc && item.dtoc <= filter.max_dtoc
+                }
+                else {
+                    true
+                }
             } else {
                 true
             };
