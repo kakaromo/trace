@@ -4,8 +4,6 @@ pub mod processors;
 pub mod output;
 pub mod utils;
 pub mod migration;  // 마이그레이션 모듈 추가
-pub mod realtime;   // 실시간 분석 모듈 추가
-pub mod web;        // 웹 모듈 추가
 
 use std::sync::OnceLock;
 use utils::filter::FilterOptions;

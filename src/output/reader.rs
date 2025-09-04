@@ -5,7 +5,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::fs::File;
 
 /// UFS Parquet 파일에서 데이터를 읽어 UFS 구조체 벡터로 반환
-pub fn read_ufs_from_parquet(filepath: &str) -> Result<Vec<UFS>, Box<dyn std::error::Error>> {
+pub fn read_ufs_from_parquet(filepath: &str) -> Result<Vec<UFS>, Box<dyn std::error::Error + Send + Sync>> {
     // 파일 열기
     let file = File::open(filepath)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
@@ -28,7 +28,7 @@ pub fn read_ufs_from_parquet(filepath: &str) -> Result<Vec<UFS>, Box<dyn std::er
 }
 
 /// Block Parquet 파일에서 데이터를 읽어 Block 구조체 벡터로 반환
-pub fn read_block_from_parquet(filepath: &str) -> Result<Vec<Block>, Box<dyn std::error::Error>> {
+pub fn read_block_from_parquet(filepath: &str) -> Result<Vec<Block>, Box<dyn std::error::Error + Send + Sync>> {
     // 파일 열기
     let file = File::open(filepath)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
@@ -53,7 +53,7 @@ pub fn read_block_from_parquet(filepath: &str) -> Result<Vec<Block>, Box<dyn std
 /// UFSCUSTOM Parquet 파일에서 데이터를 읽어 UFSCUSTOM 구조체 벡터로 반환
 pub fn read_ufscustom_from_parquet(
     filepath: &str,
-) -> Result<Vec<UFSCUSTOM>, Box<dyn std::error::Error>> {
+) -> Result<Vec<UFSCUSTOM>, Box<dyn std::error::Error + Send + Sync>> {
     // 파일 열기
     let file = File::open(filepath)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
@@ -79,7 +79,7 @@ pub fn read_ufscustom_from_parquet(
 fn convert_batch_to_ufs(
     batch: &arrow::record_batch::RecordBatch,
     schema: &Schema,
-) -> Result<Vec<UFS>, Box<dyn std::error::Error>> {
+) -> Result<Vec<UFS>, Box<dyn std::error::Error + Send + Sync>> {
     let num_rows = batch.num_rows();
     let mut result = Vec::with_capacity(num_rows);
 
@@ -151,7 +151,7 @@ fn convert_batch_to_ufs(
 fn convert_batch_to_block(
     batch: &arrow::record_batch::RecordBatch,
     schema: &Schema,
-) -> Result<Vec<Block>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Block>, Box<dyn std::error::Error + Send + Sync>> {
     let num_rows = batch.num_rows();
     let mut result = Vec::with_capacity(num_rows);
 
@@ -227,7 +227,7 @@ fn convert_batch_to_block(
 fn convert_batch_to_ufscustom(
     batch: &arrow::record_batch::RecordBatch,
     schema: &Schema,
-) -> Result<Vec<UFSCUSTOM>, Box<dyn std::error::Error>> {
+) -> Result<Vec<UFSCUSTOM>, Box<dyn std::error::Error + Send + Sync>> {
     let num_rows = batch.num_rows();
     let mut result = Vec::with_capacity(num_rows);
 

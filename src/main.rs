@@ -63,8 +63,6 @@ fn print_usage(program: &str) {
     eprintln!("    where <type> is one of: 'ufs', 'block'");
     eprintln!("  {} [options] --streaming <log_file> <output_prefix>          - Force streaming mode for log file processing", program);
     eprintln!("  {} --migrate <path> [migration_options]                      - Migrate existing Parquet files to new schema", program);
-    eprintln!("  {} --realtime <log_file> [realtime_options]                  - Start realtime log analysis dashboard", program);
-    eprintln!("  {} --web <log_file> [web_options]                            - Start web-based dashboard", program);
     eprintln!("\nOptions:");
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
     eprintln!("  -f           - Apply filters (time, sector/lba, latency, queue depth) with interactive input");
@@ -77,15 +75,6 @@ fn print_usage(program: &str) {
     eprintln!("  --chunk-size <size> - Set chunk size for migration (default: 10000)");
     eprintln!("  --no-backup        - Don't create backup files before migration");
     eprintln!("  --recursive        - Recursively migrate all Parquet files in subdirectories");
-    eprintln!("\nRealtime Options:");
-    eprintln!("  --refresh-rate <ms> - Dashboard refresh rate in milliseconds (default: 1000)");
-    eprintln!("  --compact           - Use compact dashboard mode");
-    eprintln!("  --detailed          - Use detailed dashboard mode (default)");
-    eprintln!("  --poll-interval <ms> - File polling interval in milliseconds (default: 100)");
-    eprintln!("\nWeb Dashboard Options:");
-    eprintln!("  --port <port>       - Web server port (default: 3000)");
-    eprintln!("  --host <host>       - Web server host (default: localhost)");
-    // 새 트레이스 타입이나 옵션이 추가되면 여기에 업데이트
 }
 
 fn main() -> io::Result<()> {
@@ -109,17 +98,6 @@ fn main() -> io::Result<()> {
     let mut is_streaming_mode = false;
     let mut streaming_log_file_index = 0;
     let mut streaming_output_prefix_index = 0;
-    let mut is_realtime_mode = false;
-    let mut realtime_log_file_index = 0;
-    let realtime_refresh_rate = 1000; // 기본 1초
-    let realtime_compact_mode = false;
-    let realtime_detailed_mode = true;
-    let realtime_poll_interval = 100; // 기본 100ms
-    let mut is_web_mode = false;
-    let mut web_log_file_index = 0;
-    let mut web_output_prefix_index = 0;
-    let mut web_port = 3000; // 기본 포트
-    let mut web_host = "localhost".to_string(); // 기본 호스트
     let mut use_filter = false;
     let mut y_axis_ranges: Option<HashMap<String, (f64, f64)>> = None;
     let mut chunk_size: usize = 50_000; // 기본 청크 크기
@@ -253,67 +231,6 @@ fn main() -> io::Result<()> {
 
                 return Ok(());
             }
-            "--realtime" => {
-                is_realtime_mode = true;
-                realtime_log_file_index = i + 1;
-                i += 1;
-            }
-            "--web" => {
-                is_web_mode = true;
-                web_log_file_index = i + 1;
-                
-                // --output 옵션 확인
-                let mut j = i + 2;
-                while j < args.len() {
-                    if args[j] == "--output" && j + 1 < args.len() {
-                        web_output_prefix_index = j + 1;
-                        j += 2;
-                    } else if args[j] == "--port" && j + 1 < args.len() {
-                        // 포트 옵션은 별도로 처리됨
-                        break;
-                    } else if args[j].starts_with('-') {
-                        // 다른 옵션 발견
-                        break;
-                    } else {
-                        j += 1;
-                    }
-                }
-                
-                i = j - 1; // 다음 반복에서 증가되므로 1을 빼줌
-            }
-            "--port" => {
-                if i + 1 >= args.len() {
-                    eprintln!("Error: --port option requires a value");
-                    print_usage(&args[0]);
-                    return Ok(());
-                }
-                
-                match args[i + 1].parse::<u16>() {
-                    Ok(port) => {
-                        web_port = port;
-                        println!("Using custom web port: {}", web_port);
-                    }
-                    Err(_) => {
-                        eprintln!("Error: Invalid port value '{}'", args[i + 1]);
-                        print_usage(&args[0]);
-                        return Ok(());
-                    }
-                }
-                
-                i += 2;
-            }
-            "--host" => {
-                if i + 1 >= args.len() {
-                    eprintln!("Error: --host option requires a value");
-                    print_usage(&args[0]);
-                    return Ok(());
-                }
-                
-                web_host = args[i + 1].clone();
-                println!("Using custom web host: {}", web_host);
-                
-                i += 2;
-            }
             "--parquet" => {
                 is_parquet_mode = true;
                 parquet_type_index = i + 1;
@@ -329,7 +246,7 @@ fn main() -> io::Result<()> {
             }
             _ => {
                 // 일반 위치 인수 처리
-                if !is_parquet_mode && !is_streaming_mode && !is_realtime_mode {
+                if !is_parquet_mode && !is_streaming_mode {
                     if log_file_index == 0 {
                         log_file_index = i;
                     } else if output_prefix_index == 0 {
@@ -420,50 +337,7 @@ fn main() -> io::Result<()> {
     };
 
     // 명령줄 인수 처리
-    let result: io::Result<()> = if is_realtime_mode {
-        // 실시간 모드
-        if realtime_log_file_index == 0 || realtime_log_file_index >= args.len() {
-            eprintln!("Error: --realtime option requires a log file");
-            print_usage(&args[0]);
-            return Ok(());
-        }
-        
-        match process_realtime_log_file(
-            &args[realtime_log_file_index],
-            realtime_refresh_rate,
-            realtime_compact_mode,
-            realtime_detailed_mode,
-            realtime_poll_interval,
-        ) {
-            Ok(()) => Ok(()),
-            Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("{}", e))),
-        }
-    } else if is_web_mode {
-        // 웹 대시보드 모드
-        if web_log_file_index >= args.len() {
-            eprintln!("Error: --web option requires a log file");
-            print_usage(&args[0]);
-            return Ok(());
-        }
-        
-        let output_prefix = if web_output_prefix_index > 0 && web_output_prefix_index < args.len() {
-            Some(args[web_output_prefix_index].as_str())
-        } else {
-            None
-        };
-        
-        match tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(process_web_dashboard(
-                &args[web_log_file_index],
-                output_prefix,
-                web_port,
-                &web_host,
-            )) {
-            Ok(()) => Ok(()),
-            Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("{}", e))),
-        }
-    } else if !is_parquet_mode
+    let result: io::Result<()> = if !is_parquet_mode
         && !is_streaming_mode
         && log_file_index > 0
         && output_prefix_index > 0
@@ -1385,68 +1259,6 @@ fn process_streaming_log_file(
     Ok(())
 }
 
-// 실시간 로그 파일 처리 함수
-fn process_realtime_log_file(
-    log_file: &str,
-    refresh_rate: u64,
-    compact_mode: bool,
-    detailed_mode: bool,
-    poll_interval: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use std::time::Duration;
-    use trace::realtime::dashboard::{DisplayConfig, RealtimeDashboard};
-    
-    println!("Starting realtime log analysis for file: {}", log_file);
-    
-    // 전역 종료 플래그 생성
-    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let r = running.clone();
-    
-    // Ctrl+C 신호 처리 설정
-    ctrlc::set_handler(move || {
-        eprintln!("\n[CTRL+C] 종료 신호를 받았습니다...");
-        r.store(false, std::sync::atomic::Ordering::SeqCst);
-    }).map_err(|e| format!("CTRL+C 핸들러 설정 실패: {}", e))?;
-    
-    // 디스플레이 설정 구성
-    let display_config = if compact_mode {
-        DisplayConfig::compact()
-    } else if detailed_mode {
-        DisplayConfig::detailed()
-    } else {
-        DisplayConfig::default()
-    };
-    
-    // 새로운 설정으로 업데이트
-    let mut config = display_config;
-    config.refresh_rate = Duration::from_millis(refresh_rate);
-    
-    // 실시간 대시보드 생성 (종료 플래그 전달)
-    let mut dashboard = RealtimeDashboard::new(
-        log_file.to_string(),
-        Duration::from_millis(poll_interval),
-        config,
-    ).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-    
-    // 대시보드에 종료 플래그 설정
-    dashboard.set_shutdown_flag(running.clone());
-    
-    println!("Realtime dashboard started. Press Ctrl+C to stop.");
-    
-    // 대시보드를 메인 스레드에서 직접 실행
-    // 별도 스레드를 생성하지 않고 직접 실행하여 종료 신호를 즉시 처리
-    match dashboard.run() {
-        Ok(()) => {
-            println!("Realtime log analysis completed");
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("Dashboard error: {}", e);
-            Err(Box::new(e) as Box<dyn std::error::Error>)
-        }
-    }
-}
-
 // TraceData 열거형 정의 - 각 트레이스 타입에 대한 데이터를 담습니다
 #[allow(clippy::upper_case_acronyms)]
 enum TraceData {
@@ -1561,7 +1373,7 @@ impl TraceData {
 fn load_trace_data(
     trace_type: &TraceType,
     parquet_path: &str,
-) -> Result<TraceData, Box<dyn std::error::Error>> {
+) -> Result<TraceData, Box<dyn std::error::Error + Send + Sync>> {
     match trace_type {
         TraceType::UFS => {
             let traces = read_ufs_from_parquet(parquet_path)?;
@@ -1576,33 +1388,4 @@ fn load_trace_data(
             Ok(TraceData::UFSCUSTOM(traces))
         } // 새 트레이스 타입 추가 시 여기에 추가
     }
-}
-
-// 웹 대시보드 시작
-async fn process_web_dashboard(
-    log_file: &str,
-    output_prefix: Option<&str>,
-    port: u16,
-    host: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use trace::web::WebDashboard;
-    
-    let dashboard = if output_prefix.is_some() {
-        WebDashboard::new_with_output(port, output_prefix)
-    } else {
-        WebDashboard::new(port)
-    };
-    
-    println!("🌐 웹 대시보드를 시작합니다...");
-    println!("📄 로그 파일: {}", log_file);
-    if let Some(prefix) = output_prefix {
-        println!("📁 출력 경로: {}", prefix);
-    }
-    println!("🌐 서버 주소: http://{}:{}", host, port);
-    println!("💡 브라우저에서 위 주소를 열어보세요!");
-    
-    // 웹 대시보드 시작 (비동기)
-    dashboard.start(log_file, output_prefix).await?;
-    
-    Ok(())
 }

@@ -1,7 +1,8 @@
 use std::io::{self, BufRead};
+use serde::{Serialize, Deserialize};
 
 // 필터링 옵션을 저장할 구조체 정의
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterOptions {
     pub start_time: f64,   // 시작 시간 (ms)
     pub end_time: f64,     // 종료 시간 (ms)
