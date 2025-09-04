@@ -249,6 +249,18 @@ fn convert_batch_to_ufscustom(
         .column(schema.index_of("dtoc")?)
         .as_primitive::<Float64Type>();
 
+    // 새 필드들 (옵션으로 처리하여 기존 파일과 호환)
+    let start_qd_array = schema.index_of("start_qd").ok()
+        .map(|idx| batch.column(idx).as_primitive::<UInt32Type>());
+    let end_qd_array = schema.index_of("end_qd").ok()
+        .map(|idx| batch.column(idx).as_primitive::<UInt32Type>());
+    let ctoc_array = schema.index_of("ctoc").ok()
+        .map(|idx| batch.column(idx).as_primitive::<Float64Type>());
+    let ctod_array = schema.index_of("ctod").ok()
+        .map(|idx| batch.column(idx).as_primitive::<Float64Type>());
+    let continuous_array = schema.index_of("continuous").ok()
+        .map(|idx| batch.column(idx).as_boolean());
+
     // 각 행을 UFSCUSTOM 구조체로 변환
     for i in 0..num_rows {
         let ufscustom = UFSCUSTOM {
@@ -258,6 +270,12 @@ fn convert_batch_to_ufscustom(
             start_time: start_time_array.value(i),
             end_time: end_time_array.value(i),
             dtoc: dtoc_array.value(i),
+            start_qd: start_qd_array.as_ref().map_or(0, |arr| arr.value(i)),
+            end_qd: end_qd_array.as_ref().map_or(0, |arr| arr.value(i)),
+            ctoc: ctoc_array.as_ref().map_or(0.0, |arr| arr.value(i)),
+            ctod: ctod_array.as_ref().map_or(0.0, |arr| arr.value(i)),
+            #[allow(clippy::unnecessary_map_or)]
+            continuous: continuous_array.as_ref().map_or(false, |arr| arr.value(i)),
         };
         result.push(ufscustom);
     }

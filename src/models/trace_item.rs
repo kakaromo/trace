@@ -19,4 +19,13 @@ pub trait TraceItem {
 
     // Queue Depth
     fn get_qd(&self) -> u32;
+    
+    // Queue Depth at start and end (UFSCUSTOM 전용, 다른 타입은 기본값 반환)
+    fn get_start_qd(&self) -> u32 {
+        self.get_qd() // 기본적으로 qd와 동일
+    }
+    
+    fn get_end_qd(&self) -> u32 {
+        self.get_qd() // 기본적으로 qd와 동일
+    }
 }

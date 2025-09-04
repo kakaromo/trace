@@ -155,6 +155,12 @@ pub fn parse_ufscustom_event(line: &str) -> Result<UFSCUSTOM, &'static str> {
             start_time,
             end_time,
             dtoc,
+            // 새 필드들 초기값으로 설정 (후처리에서 계산됨)
+            start_qd: 0,       // 요청 시작 시점의 QD
+            end_qd: 0,         // 요청 완료 시점의 QD
+            ctoc: 0.0,
+            ctod: 0.0,
+            continuous: false,
         };
 
         Ok(ufscustom)

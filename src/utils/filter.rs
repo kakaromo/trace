@@ -570,7 +570,10 @@ pub fn filter_ufscustom_data(
     // 필터가 활성화되지 않은 경우 원본 데이터 반환
     if !filter.is_time_filter_active() 
         && !filter.is_sector_filter_active()
-        && !filter.is_dtoc_filter_active() {
+        && !filter.is_dtoc_filter_active()
+        && !filter.is_ctoc_filter_active()
+        && !filter.is_ctod_filter_active()
+        && !filter.is_qd_filter_active() {
         return ufscustom_data;
     }
 
@@ -633,7 +636,7 @@ pub fn filter_ufscustom_data(
                 true
             };
 
-            // DTOC 필터 적용 (UFSCUSTOM은 dtoc만 가지고 있음)
+            // DTOC 필터 적용
             let dtoc_match = if filter.is_dtoc_filter_active() {
                 let min_check = filter.min_dtoc > 0.0;
                 let max_check = filter.max_dtoc > 0.0;
@@ -657,8 +660,62 @@ pub fn filter_ufscustom_data(
                 true
             };
 
-            // 모든 필터 조건을 만족해야 함 (ctoc, ctod, qd는 UFSCUSTOM에 없으므로 제외)
-            time_match && lba_match && dtoc_match
+            // CTOC 필터 적용 (새로 추가된 필드)
+            let ctoc_match = if filter.is_ctoc_filter_active() {
+                let min_check = filter.min_ctoc > 0.0;
+                let max_check = filter.max_ctoc > 0.0;
+                
+                if min_check && !max_check {
+                    item.ctoc >= filter.min_ctoc
+                } else if !min_check && max_check {
+                    item.ctoc >= 0.0 && item.ctoc <= filter.max_ctoc
+                } else if min_check && max_check {
+                    item.ctoc >= filter.min_ctoc && item.ctoc <= filter.max_ctoc
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+
+            // CTOD 필터 적용 (새로 추가된 필드)
+            let ctod_match = if filter.is_ctod_filter_active() {
+                let min_check = filter.min_ctod > 0.0;
+                let max_check = filter.max_ctod > 0.0;
+                
+                if min_check && !max_check {
+                    item.ctod >= filter.min_ctod
+                } else if !min_check && max_check {
+                    item.ctod >= 0.0 && item.ctod <= filter.max_ctod
+                } else if min_check && max_check {
+                    item.ctod >= filter.min_ctod && item.ctod <= filter.max_ctod
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+
+            // QD 필터 적용 (새로 추가된 필드)
+            let qd_match = if filter.is_qd_filter_active() {
+                let min_check = filter.min_qd > 0;
+                let max_check = filter.max_qd > 0;
+                
+                if min_check && !max_check {
+                    item.start_qd >= filter.min_qd
+                } else if !min_check && max_check {
+                    item.start_qd <= filter.max_qd
+                } else if min_check && max_check {
+                    item.start_qd >= filter.min_qd && item.start_qd <= filter.max_qd
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+
+            // 모든 필터 조건을 만족해야 함
+            time_match && lba_match && dtoc_match && ctoc_match && ctod_match && qd_match
         })
         .collect()
 }

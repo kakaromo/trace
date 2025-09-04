@@ -19,7 +19,7 @@ pub struct PlottersConfig {
 impl Default for PlottersConfig {
     fn default() -> Self {
         Self {
-            width: 1400,
+            width: 1800,
             height: 800,
             font_family: "D2Coding", // D2Coding 폰트 (크로스플랫폼 개발자용 폰트)
             title_font_size: 24,      // 30 -> 24로 줄임
@@ -240,7 +240,7 @@ where
             chart_config.config.tick_label_font_size,
             FontStyle::Normal,  // Bold 제거, Normal 스타일 명시적 지정
         ))
-        .disable_mesh()  // 격자 비활성화
+        // .disable_mesh()  // 격자 비활성화
         .draw()
         .map_err(|e| e.to_string())?;
 
@@ -557,6 +557,118 @@ fn create_block_io_charts(
     Ok(())
 }
 
+/// UFSCUSTOM 메트릭 정보를 담는 구조체
+struct UfscustomMetricInfo<'a> {
+    metric_name: &'a str,
+    metric_label: &'a str,
+    metric_extractor: fn(&UFSCUSTOM) -> f64,
+    file_suffix: &'a str,
+    require_positive: bool,
+}
+
+/// 통합된 UFSCUSTOM 지표 차트 생성 함수
+/// 매개변수로 받은 metric에 따라 다양한 UFSCUSTOM 차트를 생성합니다
+fn create_ufscustom_metric_chart(
+    data: &[UFSCUSTOM],
+    output_prefix: &str,
+    config: &PlottersConfig,
+    metric: &str,
+) -> Result<(), String> {
+    if data.is_empty() {
+        return Err("No UFSCUSTOM data available for generating charts".to_string());
+    }
+
+    // 메트릭 이름과 값 추출기를 매핑
+    let metric_info = match metric {
+        "dtoc" => UfscustomMetricInfo {
+            metric_name: "Latency",
+            metric_label: "Latency (ms)",
+            metric_extractor: |ufscustom| ufscustom.dtoc,
+            file_suffix: "dtoc",
+            require_positive: true,
+        },
+        "ctoc" => UfscustomMetricInfo {
+            metric_name: "Complete to Complete Time",
+            metric_label: "Complete to Complete (ms)",
+            metric_extractor: |ufscustom| ufscustom.ctoc,
+            file_suffix: "ctoc",
+            require_positive: true,
+        },
+        "ctod" => UfscustomMetricInfo {
+            metric_name: "Complete to Dispatch Time",
+            metric_label: "Complete to Dispatch (ms)",
+            metric_extractor: |ufscustom| ufscustom.ctod,
+            file_suffix: "ctod",
+            require_positive: true,
+        },
+        "start_qd" => UfscustomMetricInfo {
+            metric_name: "Start Queue Depth",
+            metric_label: "Start Queue Depth",
+            metric_extractor: |ufscustom| ufscustom.start_qd as f64,
+            file_suffix: "start_qd",
+            require_positive: false,
+        },
+        "end_qd" => UfscustomMetricInfo {
+            metric_name: "End Queue Depth",
+            metric_label: "End Queue Depth",
+            metric_extractor: |ufscustom| ufscustom.end_qd as f64,
+            file_suffix: "end_qd",
+            require_positive: false,
+        },
+        "lba" => UfscustomMetricInfo {
+            metric_name: "LBA",
+            metric_label: "LBA",
+            metric_extractor: |ufscustom| ufscustom.lba as f64,
+            file_suffix: "lba",
+            require_positive: false,
+        },
+        _ => return Err(format!("Unknown metric: {}", metric)),
+    };
+
+    // 명령어별로 데이터 그룹화 (opcode 값 그대로 사용)
+    let mut opcode_groups: HashMap<String, Vec<&UFSCUSTOM>> = HashMap::new();
+    for item in data {
+        // 양수 값이 필요한 메트릭은 필터링
+        if !metric_info.require_positive || (metric_info.metric_extractor)(item) > 0.0 {
+            opcode_groups
+                .entry(item.opcode.clone())  // opcode 값 그대로 사용
+                .or_default()
+                .push(item);
+        }
+    }
+
+    if opcode_groups.is_empty() {
+        return Err(format!("No valid data for UFSCUSTOM {} chart", metric_info.metric_name));
+    }
+
+    // PNG 파일 경로 생성
+    let png_path = format!("{}_ufscustom_{}_plotters.png", output_prefix, metric_info.file_suffix);
+
+    // 필터 조건 생성
+    let filter_condition = if metric_info.require_positive {
+        Some(move |ufscustom: &&UFSCUSTOM| (metric_info.metric_extractor)(ufscustom) > 0.0)
+    } else {
+        None
+    };
+
+    create_xy_scatter_chart(
+        &opcode_groups,
+        &png_path,
+        config,
+        &format!("UFSCUSTOM {} by Operation Code", metric_info.metric_name),
+        "Time (s)",
+        metric_info.metric_label,
+        |ufscustom| ufscustom.start_time,
+        metric_info.metric_extractor,
+        ufs_opcode_color_mapper,  // 주요 opcode 색상 고정
+        filter_condition,
+    )?;
+
+    println!("UFSCUSTOM {} PNG chart saved to: {}", metric_info.metric_name, png_path);
+
+    Ok(())
+}
+
 /// Create UFSCUSTOM charts
 fn create_ufscustom_charts(
     data: &[UFSCUSTOM],
@@ -806,13 +918,98 @@ pub fn generate_charts_with_config(
 
     // UFSCUSTOM 차트 생성
     if !processed_ufscustom.is_empty() {
+        // UFSCUSTOM lba 차트
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufscustom_lba"),
+            ..Default::default()
+        };
+        match create_ufscustom_metric_chart(processed_ufscustom, output_prefix, &config, "lba") {
+            Ok(_) => {
+                println!("UFSCUSTOM lba trend PNG chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFSCUSTOM lba trend PNG chart: {}", e);
+            }
+        }
+
+        // UFSCUSTOM DTOC (Dispatch to Complete) 차트
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufscustom_dtoc"),
+            ..Default::default()
+        };
+        match create_ufscustom_metric_chart(processed_ufscustom, output_prefix, &config, "dtoc") {
+            Ok(_) => {
+                println!("UFSCUSTOM dtoc trend PNG chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFSCUSTOM dtoc trend PNG chart: {}", e);
+            }
+        }
+
+        // UFSCUSTOM CTOC (Complete to Complete) 차트
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufscustom_ctoc"),
+            ..Default::default()
+        };
+        match create_ufscustom_metric_chart(processed_ufscustom, output_prefix, &config, "ctoc") {
+            Ok(_) => {
+                println!("UFSCUSTOM complete-to-complete trend PNG chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFSCUSTOM complete-to-complete trend PNG chart: {}", e);
+            }
+        }
+
+        // UFSCUSTOM CTOD (Complete to Dispatch) 차트
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufscustom_ctod"),
+            ..Default::default()
+        };
+        match create_ufscustom_metric_chart(processed_ufscustom, output_prefix, &config, "ctod") {
+            Ok(_) => {
+                println!("UFSCUSTOM complete-to-dispatch trend PNG chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFSCUSTOM complete-to-dispatch trend PNG chart: {}", e);
+            }
+        }
+
+        // UFSCUSTOM Start Queue Depth 차트
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufscustom_start_qd"),
+            ..Default::default()
+        };
+        match create_ufscustom_metric_chart(processed_ufscustom, output_prefix, &config, "start_qd") {
+            Ok(_) => {
+                println!("UFSCUSTOM start queue depth trend PNG chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFSCUSTOM start queue depth trend PNG chart: {}", e);
+            }
+        }
+
+        // UFSCUSTOM End Queue Depth 차트
+        let config = PlottersConfig {
+            y_axis_range: get_y_range_for_metric("ufscustom_end_qd"),
+            ..Default::default()
+        };
+        match create_ufscustom_metric_chart(processed_ufscustom, output_prefix, &config, "end_qd") {
+            Ok(_) => {
+                println!("UFSCUSTOM end queue depth trend PNG chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFSCUSTOM end queue depth trend PNG chart: {}", e);
+            }
+        }
+
+        // 기존 UFSCUSTOM 차트도 유지 (하위 호환성)
         let config = PlottersConfig::default();
         match create_ufscustom_charts(processed_ufscustom, output_prefix, &config) {
             Ok(_) => {
-                println!("UFSCUSTOM PNG charts generated.");
+                println!("Legacy UFSCUSTOM PNG charts generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFSCUSTOM PNG charts: {}", e);
+                eprintln!("Error generating legacy UFSCUSTOM PNG charts: {}", e);
             }
         }
     }

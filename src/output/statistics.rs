@@ -86,11 +86,11 @@ impl TraceItem for UFSCUSTOM {
     }
 
     fn get_ctoc(&self) -> f64 {
-        0.0 // UFSCUSTOM 모델에는 ctoc 필드가 없음
+        self.ctoc // 이제 실제 값 반환
     }
 
     fn get_ctod(&self) -> f64 {
-        0.0 // UFSCUSTOM 모델에는 ctod 필드가 없음
+        self.ctod // 이제 실제 값 반환
     }
 
     fn get_size(&self) -> u32 {
@@ -102,11 +102,19 @@ impl TraceItem for UFSCUSTOM {
     }
 
     fn is_continuous(&self) -> bool {
-        false // UFSCUSTOM 모델에는 continuous 필드가 없음
+        self.continuous // 이제 실제 값 반환
     }
 
     fn get_qd(&self) -> u32 {
-        0 // UFSCUSTOM 모델에는 qd 필드가 없음
+        self.start_qd // start_qd를 기본 qd로 사용
+    }
+    
+    fn get_start_qd(&self) -> u32 {
+        self.start_qd
+    }
+    
+    fn get_end_qd(&self) -> u32 {
+        self.end_qd
     }
 }
 
@@ -269,6 +277,11 @@ fn count_sizes<T>(traces: &[&T], size_fn: impl Fn(&&T) -> u32) -> HashMap<u32, u
 
 // 제네릭 통계 출력 함수
 pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str) {
+    if traces.is_empty() {
+        log!("{} 트레이스가 비어 있습니다.", trace_type_name);
+        return;
+    }
+    
     log!("Total {} requests: {}", trace_type_name, traces.len());
     log!(
         "Maximum queue depth: {}",
@@ -407,6 +420,27 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
         );
         print_generic_latency_ranges_by_type(
             &request_type_groups,
+            "Complete to Dispatch (ctod)",
+            |trace| trace.get_ctod(),
+        );
+
+        log!(
+            "\n[{} Complete to Complete (ctoc) Distribution by Range]",
+            trace_type_name
+        );
+        print_generic_latency_ranges_by_type(
+            &complete_type_groups,
+            "Complete to Complete (ctoc)",
+            |trace| trace.get_ctoc(),
+        );
+    } else {
+        // UFSCUSTOM의 경우에도 CTOC, CTOD 분포 출력
+        log!(
+            "\n[{} Complete to Dispatch (ctod) Distribution by Range]",
+            trace_type_name
+        );
+        print_generic_latency_ranges_by_type(
+            &complete_type_groups, // UFSCUSTOM은 모두 complete이므로
             "Complete to Dispatch (ctod)",
             |trace| trace.get_ctod(),
         );
@@ -595,20 +629,91 @@ fn print_generic_latency_ranges_by_type<T: TraceItem>(
 
 // 기존 개별 타입 통계 함수를 제네릭 함수를 사용하는 간단한 래퍼로 변경
 pub fn print_ufs_statistics(ufs_traces: &[UFS]) {
+    if ufs_traces.is_empty() {
+        log!("UFS 트레이스가 비어 있습니다.");
+        return;
+    }
     print_trace_statistics(ufs_traces, "UFS");
 }
 
 pub fn print_block_statistics(block_traces: &[Block]) {
+    if block_traces.is_empty() {
+        log!("Block 트레이스가 비어 있습니다.");
+        return;
+    }
     print_trace_statistics(block_traces, "Block");
 }
 
 pub fn print_ufscustom_statistics(ufscustom_traces: &[UFSCUSTOM]) {
-    // UFSCustom 데이터는 단순한 구조이므로 비어 있으면 바로 리턴
+    // UFSCustom 데이터가 비어 있으면 바로 리턴
     if ufscustom_traces.is_empty() {
         log!("UFSCustom 트레이스가 비어 있습니다.");
         return;
     }
 
-    // 모든 통계 처리는 이제 print_trace_statistics 함수에서 수행
+    // 기본 통계는 기존 함수 사용
+    print_ufscustom_specific_statistics(ufscustom_traces);
+
+    // 상세 통계는 generic 함수 사용 (UFS, Block와 동일한 형태)
     print_trace_statistics(ufscustom_traces, "UFSCustom");
+}
+
+/// UFSCUSTOM 전용 통계 함수
+fn print_ufscustom_specific_statistics(traces: &[UFSCUSTOM]) {
+    log!("Total UFSCustom requests: {}", traces.len());
+    
+    // Queue Depth 통계
+    let max_qd = traces.iter().map(|t| t.start_qd).max().unwrap_or(0);
+    log!("Maximum queue depth: {}", max_qd);
+    
+    // 평균 Queue Depth 계산
+    let avg_qd = traces.iter().map(|t| t.start_qd as f64).sum::<f64>() / traces.len() as f64;
+    log!("Average queue depth: {:.2}", avg_qd);
+
+    // DTOC (Dispatch to Complete) 통계
+    if !traces.is_empty() {
+        let avg_dtoc = traces.iter().map(|t| t.dtoc).sum::<f64>() / traces.len() as f64;
+        log!("Average Dispatch to Complete latency: {:.3} ms", avg_dtoc);
+    }
+
+    // CTOC (Complete to Complete) 통계
+    let ctoc_traces: Vec<_> = traces.iter().filter(|t| t.ctoc > 0.0).collect();
+    if !ctoc_traces.is_empty() {
+        let avg_ctoc = ctoc_traces.iter().map(|t| t.ctoc).sum::<f64>() / ctoc_traces.len() as f64;
+        log!("Average Complete to Complete latency: {:.3} ms", avg_ctoc);
+    } else {
+        log!("Average Complete to Complete latency: N/A ms");
+    }
+
+    // CTOD (Complete to Dispatch) 통계
+    let ctod_traces: Vec<_> = traces.iter().filter(|t| t.ctod > 0.0).collect();
+    if !ctod_traces.is_empty() {
+        let avg_ctod = ctod_traces.iter().map(|t| t.ctod).sum::<f64>() / ctod_traces.len() as f64;
+        log!("Average Complete to Dispatch latency: {:.3} ms", avg_ctod);
+    } else {
+        log!("Average Complete to Dispatch latency: N/A ms");
+    }
+
+    // Continuous 요청 비율
+    let continuous_reqs = traces.iter().filter(|t| t.continuous).count();
+    log!(
+        "Continuous request ratio: {:.1}%",
+        (continuous_reqs as f64 / traces.len() as f64) * 100.0
+    );
+
+    // 타입별 요청 수 집계
+    let mut type_groups: HashMap<String, usize> = HashMap::new();
+    for trace in traces {
+        *type_groups.entry(trace.opcode.clone()).or_insert(0) += 1;
+    }
+
+    // 타입별 비율 출력
+    for (type_name, count) in type_groups.iter() {
+        log!(
+            "{} requests: {} ({:.1}%)",
+            type_name,
+            count,
+            (*count as f64 / traces.len() as f64) * 100.0
+        );
+    }
 }

@@ -118,9 +118,14 @@ pub fn save_ufscustom_to_csv(traces: &[UFSCUSTOM], output_prefix: &str) -> Resul
         "start_time",
         "end_time",
         "opcode",
-        "lba",
+        "lba", 
         "size",
+        "start_qd",
+        "end_qd",
         "dtoc",
+        "ctoc", 
+        "ctod",
+        "continuous",
     ])?;
 
     // Write data rows
@@ -130,12 +135,15 @@ pub fn save_ufscustom_to_csv(traces: &[UFSCUSTOM], output_prefix: &str) -> Resul
             trace.end_time.to_string(),
             trace.opcode.clone(),
             trace.lba.to_string(),
-            trace.size.to_string(),            
+            trace.size.to_string(),
+            trace.start_qd.to_string(),
+            trace.end_qd.to_string(),
             trace.dtoc.to_string(),
+            trace.ctoc.to_string(),
+            trace.ctod.to_string(),
+            trace.continuous.to_string(),
         ])?;
-    }
-
-    writer.flush()?;
+    }    writer.flush()?;
     Ok(())
 }
 

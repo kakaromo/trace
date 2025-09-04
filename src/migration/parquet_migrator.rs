@@ -147,7 +147,7 @@ impl ParquetMigrator {
     /// UFSCustom 스키마 검증
     fn is_ufscustom_schema(&self, schema: &Schema) -> bool {
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
-        let required_fields = ["time", "process", "action", "opcode", "lba"];
+        let required_fields = ["opcode", "lba", "size", "start_time", "end_time", "dtoc"];
         required_fields.iter().all(|&field| field_names.contains(&field))
     }
 
@@ -277,9 +277,65 @@ impl ParquetMigrator {
     }
 
     /// UFSCustom 파일 마이그레이션
-    fn migrate_ufscustom_file(&self, _file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        // UFSCustom은 UFS와 유사한 구조이므로 비슷한 로직 적용
-        println!("UFSCustom migration not implemented yet");
+    fn migrate_ufscustom_file(&self, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let file = File::open(file_path)?;
+        let reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+        let current_schema = reader_builder.schema().clone();
+        let target_schema = self.get_ufscustom_target_schema();
+
+        // 스키마 호환성 확인
+        if self.schemas_compatible(&current_schema, &target_schema) {
+            println!("UFSCUSTOM schema is already up to date");
+            return Ok(());
+        }
+
+        println!("Migrating UFSCUSTOM file schema...");
+        
+        // 임시 파일 생성
+        let temp_path = format!("{}.tmp", file_path);
+        let temp_file = File::create(&temp_path)?;
+        
+        // 파일 크기 추정 (평균적으로 UFSCUSTOM 레코드 약 200바이트)
+        let estimated_size = std::fs::metadata(file_path)?.len() as usize;
+        let compression = self.select_compression(estimated_size);
+        let compression_name = match compression {
+            Compression::SNAPPY => "SNAPPY",
+            Compression::ZSTD(_) => "ZSTD",
+            _ => "Other",
+        };
+        println!("Using {} compression for UFSCUSTOM migration", compression_name);
+        
+        let props = WriterProperties::builder()
+            .set_compression(compression)
+            .build();
+        let mut writer = ArrowWriter::try_new(temp_file, target_schema.clone(), Some(props))?;
+
+        // 배치 단위로 데이터 변환
+        let reader = reader_builder.build()?;
+        let mut total_records = 0;
+
+        for batch in reader {
+            match batch {
+                Ok(batch) => {
+                    let converted_batch = self.convert_ufscustom_batch(&batch, &current_schema, &target_schema)?;
+                    writer.write(&converted_batch)?;
+                    total_records += converted_batch.num_rows();
+                    
+                    if total_records % 50000 == 0 {
+                        println!("Processed {} UFSCUSTOM records", total_records);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Error reading batch: {}", e);
+                    continue;
+                }
+            }
+        }
+
+        writer.close()?;
+        std::fs::rename(&temp_path, file_path)?;
+        println!("Successfully migrated {} UFSCUSTOM records", total_records);
+        
         Ok(())
     }
 
@@ -321,6 +377,22 @@ impl ParquetMigrator {
             Field::new("hwqid", DataType::UInt32, false),
             Field::new("qd", DataType::UInt32, false),
             Field::new("dtoc", DataType::Float64, false),
+            Field::new("ctoc", DataType::Float64, false),
+            Field::new("ctod", DataType::Float64, false),
+            Field::new("continuous", DataType::Boolean, false),
+        ]))
+    }
+
+    /// UFSCUSTOM 타겟 스키마 생성
+    fn get_ufscustom_target_schema(&self) -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("opcode", DataType::Utf8, false),
+            Field::new("lba", DataType::UInt64, false),
+            Field::new("size", DataType::UInt32, false),
+            Field::new("start_time", DataType::Float64, false),
+            Field::new("end_time", DataType::Float64, false),
+            Field::new("dtoc", DataType::Float64, false),
+            Field::new("qd", DataType::UInt32, false),
             Field::new("ctoc", DataType::Float64, false),
             Field::new("ctod", DataType::Float64, false),
             Field::new("continuous", DataType::Boolean, false),
@@ -499,4 +571,32 @@ fn migrate_directory_recursive(
         }
     }
     Ok(())
+}
+
+impl ParquetMigrator {
+    /// UFSCUSTOM 배치 변환
+    fn convert_ufscustom_batch(
+        &self,
+        batch: &RecordBatch,
+        current_schema: &Schema,
+        target_schema: &Schema,
+    ) -> Result<RecordBatch, Box<dyn std::error::Error>> {
+        let mut columns: Vec<ArrayRef> = Vec::new();
+        
+        for target_field in target_schema.fields() {
+            let field_name = target_field.name();
+            
+            if let Some(column_index) = current_schema.fields()
+                .iter()
+                .position(|f| f.name() == field_name) {
+                columns.push(batch.column(column_index).clone());
+            } else {
+                // 새로운 필드인 경우 기본값으로 채움
+                let array = self.create_default_array(target_field.data_type(), batch.num_rows())?;
+                columns.push(array);
+            }
+        }
+
+        Ok(RecordBatch::try_new(Arc::new(target_schema.clone()), columns)?)
+    }
 }

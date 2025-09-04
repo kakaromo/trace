@@ -677,7 +677,7 @@ fn process_highperf_log_file(
     );
     
     // Block I/O 데이터 처리 (Latency 계산 등)
-    log!("\n[1.3/3] Processing Block I/O data for latency calculations...");
+    log!("\n[1.3/4] Processing Block I/O data for latency calculations...");
     let block_process_start = Instant::now();
     
     let processed_block = if !block_data.is_empty() {
@@ -692,9 +692,26 @@ fn process_highperf_log_file(
         processed_block.len(),
         block_process_start.elapsed().as_secs_f64()
     );
+
+    // UFSCUSTOM 데이터 처리 (Latency 계산 등)
+    log!("\n[1.4/4] Processing UFSCUSTOM data for latency calculations...");
+    let ufscustom_process_start = Instant::now();
+    
+    let processed_ufscustom = if !ufscustom_data.is_empty() {
+        log!("Applying latency analysis to UFSCUSTOM data...");
+        crate::processors::ufscustom_bottom_half_latency_process(ufscustom_data)
+    } else {
+        ufscustom_data
+    };
+    
+    log!(
+        "UFSCUSTOM data processing complete: {} events (Time taken: {:.2}s)",
+        processed_ufscustom.len(),
+        ufscustom_process_start.elapsed().as_secs_f64()
+    );
     
     // 처리된 데이터로 업데이트
-    traces = (processed_ufs, processed_block, ufscustom_data);
+    traces = (processed_ufs, processed_block, processed_ufscustom);
 
     // 필터 옵션이 있다면 로그에 기록
     if let Some(f) = filter {
@@ -1007,9 +1024,26 @@ fn process_streaming_log_file(
         processed_block.len(),
         block_process_start.elapsed().as_secs_f64()
     );
+
+    // UFSCUSTOM 데이터 처리 (Latency 계산 등)
+    log!("\n[1.4/6] Processing UFSCUSTOM data for latency calculations...");
+    let ufscustom_process_start = Instant::now();
+    
+    let processed_ufscustom = if !ufscustom_data.is_empty() {
+        log!("Applying latency analysis to UFSCUSTOM data...");
+        crate::processors::ufscustom_bottom_half_latency_process(ufscustom_data)
+    } else {
+        ufscustom_data
+    };
+    
+    log!(
+        "UFSCUSTOM data processing complete: {} events (Time taken: {:.2}s)",
+        processed_ufscustom.len(),
+        ufscustom_process_start.elapsed().as_secs_f64()
+    );
     
     // 처리된 데이터로 업데이트
-    traces = (processed_ufs, processed_block, ufscustom_data);
+    traces = (processed_ufs, processed_block, processed_ufscustom);
 
     // 필터 옵션이 있다면 로그에 기록
     if let Some(f) = filter {

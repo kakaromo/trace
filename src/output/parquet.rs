@@ -352,6 +352,12 @@ fn save_ufscustom_to_parquet(
         arrow::datatypes::Field::new("start_time", arrow::datatypes::DataType::Float64, false),
         arrow::datatypes::Field::new("end_time", arrow::datatypes::DataType::Float64, false),
         arrow::datatypes::Field::new("dtoc", arrow::datatypes::DataType::Float64, false),
+        // 새로 추가된 필드들
+        arrow::datatypes::Field::new("start_qd", arrow::datatypes::DataType::UInt32, false),    // 시작 QD
+        arrow::datatypes::Field::new("end_qd", arrow::datatypes::DataType::UInt32, false),      // 종료 QD
+        arrow::datatypes::Field::new("ctoc", arrow::datatypes::DataType::Float64, false),
+        arrow::datatypes::Field::new("ctod", arrow::datatypes::DataType::Float64, false),
+        arrow::datatypes::Field::new("continuous", arrow::datatypes::DataType::Boolean, false),
     ]));
 
     let file = File::create(filepath)?;
@@ -375,6 +381,11 @@ fn save_ufscustom_to_parquet(
             let mut start_time_vec = Vec::with_capacity(len);
             let mut end_time_vec = Vec::with_capacity(len);
             let mut dtoc_vec = Vec::with_capacity(len);
+            let mut start_qd_vec = Vec::with_capacity(len);
+            let mut end_qd_vec = Vec::with_capacity(len);
+            let mut ctoc_vec = Vec::with_capacity(len);
+            let mut ctod_vec = Vec::with_capacity(len);
+            let mut continuous_vec = Vec::with_capacity(len);
 
             // 단일 루프로 모든 데이터 추출
             for t in chunk {
@@ -384,6 +395,11 @@ fn save_ufscustom_to_parquet(
                 start_time_vec.push(t.start_time);
                 end_time_vec.push(t.end_time);
                 dtoc_vec.push(t.dtoc);
+                start_qd_vec.push(t.start_qd);
+                end_qd_vec.push(t.end_qd);
+                ctoc_vec.push(t.ctoc);
+                ctod_vec.push(t.ctod);
+                continuous_vec.push(t.continuous);
             }
 
             let columns: Vec<ArrayRef> = vec![
@@ -393,6 +409,11 @@ fn save_ufscustom_to_parquet(
                 Arc::new(Float64Array::from(start_time_vec)),
                 Arc::new(Float64Array::from(end_time_vec)),
                 Arc::new(Float64Array::from(dtoc_vec)),
+                Arc::new(UInt32Array::from(start_qd_vec)),   // 시작 QD
+                Arc::new(UInt32Array::from(end_qd_vec)),     // 종료 QD
+                Arc::new(Float64Array::from(ctoc_vec)),
+                Arc::new(Float64Array::from(ctod_vec)),
+                Arc::new(BooleanArray::from(continuous_vec)),
             ];
 
             RecordBatch::try_new(schema.clone(), columns)

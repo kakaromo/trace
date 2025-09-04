@@ -624,6 +624,12 @@ fn process_ufscustom_content(content: &str) -> io::Result<Vec<UFSCUSTOM>> {
                         start_time,
                         end_time,
                         dtoc,
+                        // 새 필드들 초기값으로 설정 (후처리에서 계산됨)
+                        start_qd: 0,
+                        end_qd: 0,
+                        ctoc: 0.0,
+                        ctod: 0.0,
+                        continuous: false,
                     };
 
                     chunk_results.push(ufscustom);
