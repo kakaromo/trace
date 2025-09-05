@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::time::Instant;
-use trace::parsers::{parse_log_file_high_perf, parse_log_file_streaming};
+use trace::parsers::{parse_log_file_high_perf};
 use trace::utils::{
     parse_latency_ranges, read_filter_options, set_user_latency_ranges, FilterOptions, Logger,
 };
@@ -17,16 +17,7 @@ fn get_file_size(file_path: &str) -> io::Result<u64> {
     Ok(metadata.len())
 }
 
-/// 파일 크기에 따라 적절한 처리 방식을 결정하는 함수
-fn determine_processing_mode(file_size: u64) -> &'static str {
-    const ONE_GB: u64 = 1024 * 1024 * 1024; // 1GB
-    
-    if file_size >= ONE_GB {
-        "streaming"
-    } else {
-        "highperf"
-    }
-}
+
 
 /// Parse y-axis ranges from command line argument
 /// Format: "metric:min:max,metric:min:max"
@@ -61,7 +52,7 @@ fn print_usage(program: &str) {
     eprintln!("  {} [options] <log_file> <output_prefix>                      - Parse log file and generate statistics", program);
     eprintln!("  {} [options] --parquet <type> <parquet_file> <output_prefix> - Read Parquet file and generate statistics", program);
     eprintln!("    where <type> is one of: 'ufs', 'block'");
-    eprintln!("  {} [options] --streaming <log_file> <output_prefix>          - Force streaming mode for log file processing", program);
+
     eprintln!("  {} --migrate <path> [migration_options]                      - Migrate existing Parquet files to new schema", program);
     eprintln!("\nOptions:");
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
@@ -95,9 +86,6 @@ fn main() -> io::Result<()> {
     let mut is_parquet_mode = false;
     let mut parquet_type_index = 0;
     let mut parquet_path_index = 0;
-    let mut is_streaming_mode = false;
-    let mut streaming_log_file_index = 0;
-    let mut streaming_output_prefix_index = 0;
     let mut use_filter = false;
     let mut y_axis_ranges: Option<HashMap<String, (f64, f64)>> = None;
     let mut chunk_size: usize = 50_000; // 기본 청크 크기
@@ -238,15 +226,10 @@ fn main() -> io::Result<()> {
                 output_prefix_index = i + 3;
                 i += 1;
             }
-            "--streaming" => {
-                is_streaming_mode = true;
-                streaming_log_file_index = i + 1;
-                streaming_output_prefix_index = i + 2;
-                i += 1;
-            }
+
             _ => {
                 // 일반 위치 인수 처리
-                if !is_parquet_mode && !is_streaming_mode {
+                if !is_parquet_mode {
                     if log_file_index == 0 {
                         log_file_index = i;
                     } else if output_prefix_index == 0 {
@@ -338,40 +321,24 @@ fn main() -> io::Result<()> {
 
     // 명령줄 인수 처리
     let result: io::Result<()> = if !is_parquet_mode
-        && !is_streaming_mode
         && log_file_index > 0
         && output_prefix_index > 0
     {
-        // 자동 선택 모드: 파일 크기에 따라 처리 방식 결정
+        // 항상 highperf 모드 사용
         match get_file_size(&args[log_file_index]) {
             Ok(file_size) => {
-                let processing_mode = determine_processing_mode(file_size);
                 let file_size_mb = file_size as f64 / (1024.0 * 1024.0);
                 
-                match processing_mode {
-                    "highperf" => {
-                        println!("File size: {:.2} MB (>= 1GB) - Using high-performance mode", file_size_mb);
-                        process_highperf_log_file(
-                            &args[log_file_index],
-                            &args[output_prefix_index],
-                            filter_options.as_ref(),
-                            y_axis_ranges.as_ref(),
-                            chunk_size,
-                            export_csv,
-                        )
-                    }
-                    _ => {
-                        println!("File size: {:.2} MB (< 1GB) - Using streaming mode", file_size_mb);
-                        process_streaming_log_file(
-                            &args[log_file_index],
-                            &args[output_prefix_index],
-                            filter_options.as_ref(),
-                            y_axis_ranges.as_ref(),
-                            chunk_size,
-                            export_csv,
-                        )
-                    }
-                }
+                // 항상 highperf 모드 사용
+                println!("File size: {:.2} MB - Using high-performance mode", file_size_mb);
+                process_highperf_log_file(
+                    &args[log_file_index],
+                    &args[output_prefix_index],
+                    filter_options.as_ref(),
+                    y_axis_ranges.as_ref(),
+                    chunk_size,
+                    export_csv,
+                )
             }
             Err(e) => {
                 eprintln!("Error reading file size: {}", e);
@@ -400,21 +367,6 @@ fn main() -> io::Result<()> {
             trace_type,
             &args[parquet_path_index],
             &args[output_prefix_index],
-            filter_options.as_ref(),
-            y_axis_ranges.as_ref(),
-            chunk_size,
-            export_csv,
-        )
-    } else if is_streaming_mode
-        && streaming_log_file_index > 0
-        && streaming_log_file_index < args.len()
-        && streaming_output_prefix_index > 0
-        && streaming_output_prefix_index < args.len()
-    {
-        // 강제 스트리밍 모드
-        process_streaming_log_file(
-            &args[streaming_log_file_index],
-            &args[streaming_output_prefix_index],
             filter_options.as_ref(),
             y_axis_ranges.as_ref(),
             chunk_size,
@@ -945,7 +897,8 @@ fn process_highperf_log_file(
     let _ = Logger::flush();
 
     Ok(())
-}    // 스트리밍 로그 파일 처리 로직
+}/*
+// 스트리밍 로그 파일 처리 로직 (더 이상 사용되지 않음)
 fn process_streaming_log_file(
     log_file_path: &str,
     output_prefix: &str,
@@ -1292,6 +1245,7 @@ fn process_streaming_log_file(
 
     Ok(())
 }
+*/
 
 // TraceData 열거형 정의 - 각 트레이스 타입에 대한 데이터를 담습니다
 #[allow(clippy::upper_case_acronyms)]
