@@ -495,68 +495,6 @@ fn create_block_metric_chart(
     Ok(())
 }
 
-/// Creates legacy Block I/O charts using Plotters library (보존용)
-fn create_block_io_charts(
-    data: &[Block],
-    output_prefix: &str,
-    config: &PlottersConfig,
-) -> Result<(), String> {
-    if data.is_empty() {
-        return Err("Block I/O data is empty.".to_string());
-    }
-
-    // I/O 타입별로 데이터 그룹화
-    let mut io_type_groups: HashMap<String, Vec<&Block>> = HashMap::new();
-    for block in data {
-        io_type_groups
-            .entry(block.io_type.clone())
-            .or_default()
-            .push(block);
-    }
-
-    // Block I/O Latency over Time 차트
-    {
-        let png_path = format!("{}_block_io_analysis_plotters.png", output_prefix);
-
-        create_xy_scatter_chart(
-            &io_type_groups,
-            &png_path,
-            config,
-            "Block I/O Latency over Time by I/O Type",
-            "Time (s)",
-            "Latency (ms)",
-            |block| block.time,
-            |block| block.dtoc,
-            get_color_for_io_type,
-            Some(|block: &&Block| block.dtoc > 0.0),
-        )?;
-
-        println!("Block I/O analysis PNG chart saved to: {}", png_path);
-    }
-
-    // LBA vs Latency 스캐터 플롯
-    {
-        let png_path = format!("{}_block_lba_latency_plotters.png", output_prefix);
-
-        create_xy_scatter_chart(
-            &io_type_groups,
-            &png_path,
-            config,
-            "Block I/O Sector/LBA vs Latency by I/O Type",
-            "Sector/LBA",
-            "Latency (ms)",
-            |block| block.sector as f64,
-            |block| block.dtoc,
-            get_color_for_io_type,
-            Some(|block: &&Block| block.dtoc > 0.0),
-        )?;
-
-        println!("Block I/O LBA vs Latency PNG chart saved to: {}", png_path);
-    }
-
-    Ok(())
-}
-
 /// UFSCUSTOM 메트릭 정보를 담는 구조체
 struct UfscustomMetricInfo<'a> {
     metric_name: &'a str,
@@ -665,71 +603,6 @@ fn create_ufscustom_metric_chart(
     )?;
 
     println!("UFSCUSTOM {} PNG chart saved to: {}", metric_info.metric_name, png_path);
-
-    Ok(())
-}
-
-/// Create UFSCUSTOM charts
-fn create_ufscustom_charts(
-    data: &[UFSCUSTOM],
-    output_prefix: &str,
-    config: &PlottersConfig,
-) -> Result<(), String> {
-    if data.is_empty() {
-        return Err("UFSCUSTOM data is empty.".to_string());
-    }
-
-    // 명령어별로 데이터 그룹화
-    let mut command_groups: HashMap<String, Vec<&UFSCUSTOM>> = HashMap::new();
-    for event in data {
-        command_groups
-            .entry(event.opcode.clone())
-            .or_default()
-            .push(event);
-    }
-
-    // LBA vs Time 스캐터 플롯 생성
-    {
-        let png_path = format!("{}_ufscustom_lba_time_plotters.png", output_prefix);
-
-        create_xy_scatter_chart(
-            &command_groups,
-            &png_path,
-            config,
-            "UFSCUSTOM LBA over Time by Opcode",
-            "Time (s)",
-            "LBA",
-            |event| event.start_time,
-            |event| event.lba as f64,
-            ufs_opcode_color_mapper,  // 주요 opcode 색상 고정
-            Option::<fn(&&UFSCUSTOM) -> bool>::None,
-        )?;
-
-        println!("UFSCUSTOM LBA over Time PNG chart saved to: {}", png_path);
-    }
-
-    // DTOC vs Time 스캐터 플롯 생성
-    {
-        let png_path = format!("{}_ufscustom_dtoc_time_plotters.png", output_prefix);
-
-        create_xy_scatter_chart(
-            &command_groups,
-            &png_path,
-            config,
-            "UFSCUSTOM Latency over Time by Command",
-            "Time (s)",
-            "Latency (ms)",
-            |event| event.start_time,
-            |event| event.dtoc,
-            ufs_opcode_color_mapper,  // 주요 opcode 색상 고정
-            Some(|event: &&UFSCUSTOM| event.dtoc > 0.0),
-        )?;
-
-        println!(
-            "UFSCUSTOM Latency over Time PNG chart saved to: {}",
-            png_path
-        );
-    }
 
     Ok(())
 }
@@ -903,17 +776,6 @@ pub fn generate_charts_with_config(
                 eprintln!("Error generating Block I/O queue depth trend PNG chart: {}", e);
             }
         }
-
-        // 기존 차트도 유지 (하위 호환성)
-        let config = PlottersConfig::default();
-        match create_block_io_charts(processed_blocks, output_prefix, &config) {
-            Ok(_) => {
-                println!("Legacy Block I/O PNG charts generated.");
-            }
-            Err(e) => {
-                eprintln!("Error generating legacy Block I/O PNG charts: {}", e);
-            }
-        }
     }
 
     // UFSCUSTOM 차트 생성
@@ -999,17 +861,6 @@ pub fn generate_charts_with_config(
             }
             Err(e) => {
                 eprintln!("Error generating UFSCUSTOM end queue depth trend PNG chart: {}", e);
-            }
-        }
-
-        // 기존 UFSCUSTOM 차트도 유지 (하위 호환성)
-        let config = PlottersConfig::default();
-        match create_ufscustom_charts(processed_ufscustom, output_prefix, &config) {
-            Ok(_) => {
-                println!("Legacy UFSCUSTOM PNG charts generated.");
-            }
-            Err(e) => {
-                eprintln!("Error generating legacy UFSCUSTOM PNG charts: {}", e);
             }
         }
     }
