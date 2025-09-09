@@ -188,9 +188,6 @@ fn convert_batch_to_block(
     let dtoc_array = batch
         .column(schema.index_of("dtoc")?)
         .as_primitive::<Float64Type>();
-    let qtoc_array = batch
-        .column(schema.index_of("qtoc")?)
-        .as_primitive::<Float64Type>();
     let ctoc_array = batch
         .column(schema.index_of("ctoc")?)
         .as_primitive::<Float64Type>();
@@ -216,7 +213,6 @@ fn convert_batch_to_block(
             comm: comm_array.value(i).to_string(),
             qd: qd_array.value(i),
             dtoc: dtoc_array.value(i),
-            qtoc: qtoc_array.value(i),
             ctoc: ctoc_array.value(i),
             ctod: ctod_array.value(i),
             continuous: continuous_array.value(i),

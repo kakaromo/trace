@@ -116,7 +116,6 @@ pub fn parse_block_io_event(line: &str) -> Result<Block, &'static str> {
             comm: caps["comm"].to_string(),
             qd: 0,
             dtoc: 0.0,
-            qtoc: 0.0,
             ctoc: 0.0,
             ctod: 0.0,
             continuous: false,
@@ -144,7 +143,7 @@ pub fn parse_blktrace_csv_event(line: &str) -> Result<Block, &'static str> {
     if let Some(caps) = BLKTRACE_CSV_RE.captures(line) {
         let block = Block {
             time: caps["time"].parse().unwrap_or(0.0),
-            process: format!("pid-{}", caps["pid"].to_string()), // PID as process identifier
+            process: format!("{}", caps["pid"].to_string()), // PID as process identifier
             cpu: caps["cpu"].parse().unwrap_or(0),
             flags: String::new(), // Not available in CSV format
             action: caps["action"].to_string(),
@@ -157,7 +156,6 @@ pub fn parse_blktrace_csv_event(line: &str) -> Result<Block, &'static str> {
             comm: caps["comm"].to_string(),
             qd: 0,
             dtoc: 0.0,
-            qtoc: 0.0,
             ctoc: 0.0,
             ctod: 0.0,
             continuous: false,
@@ -654,60 +652,113 @@ pub fn parse_log_line(line: &str) -> Option<(crate::TraceType, String)> {
     None
 }
 
-// Calculate Queue-to-Complete (QtoC) latency for block events
-// This function matches Q (Queue) actions with their corresponding C (Complete) actions
-pub fn calculate_qtoc_latency(blocks: &mut Vec<Block>) {
+// Calculate dispatch-to-complete (dtoc) latency for block events
+// Q (Queue) is treated as dispatch, C (Complete) is treated as complete
+// This matches Q with C events similar to block_rq_issue -> block_rq_complete
+pub fn calculate_block_latency_advanced(blocks: &mut Vec<Block>) {
     use std::collections::HashMap;
     
-    // HashMap to store Q events by (sector, size) for matching with C events
-    let mut queue_map: HashMap<(u64, u32), f64> = HashMap::new();
+    // Map Q (dispatch) events to C (complete) events with merge support
+    // Key: (devmajor, devminor, sector_start, sector_end, comm) for merged requests
+    // Value: (first_q_time, latest_q_time) to track dispatch sequence
+    let mut dispatch_map: HashMap<(u32, u32, u64, u64, String), (f64, f64)> = HashMap::new();
     
     for block in blocks.iter_mut() {
         match block.action.as_str() {
             "Q" => {
-                // Store queue time for this sector+size combination
-                let key = (block.sector, block.size);
-                queue_map.insert(key, block.time);
+                // Q acts as dispatch (issue) - handle potential merges
+                let sector_start = block.sector;
+                let sector_end = block.sector + (block.size as u64 / 512).max(1) - 1; // Convert to sectors
+                let key = (block.devmajor, block.devminor, sector_start, sector_end, block.comm.clone());
+                
+                // Check for merge candidates - look for existing Q with adjacent sectors
+                let mut merged = false;
+                let mut keys_to_update = Vec::new();
+                
+                for (existing_key, (first_time, _)) in dispatch_map.iter() {
+                    if existing_key.0 == block.devmajor && existing_key.1 == block.devminor && existing_key.4 == block.comm {
+                        let existing_start = existing_key.2;
+                        let existing_end = existing_key.3;
+                        
+                        // Check if sectors are adjacent or overlapping (merge candidate)
+                        if sector_start <= existing_end + 1 && sector_end >= existing_start.saturating_sub(1) {
+                            // This Q can be merged with existing Q
+                            let new_start = existing_start.min(sector_start);
+                            let new_end = existing_end.max(sector_end);
+                            let new_key = (block.devmajor, block.devminor, new_start, new_end, block.comm.clone());
+                            
+                            keys_to_update.push((existing_key.clone(), new_key, *first_time, block.time));
+                            merged = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if merged {
+                    // Update the merged entry
+                    for (old_key, new_key, first_time, latest_time) in keys_to_update {
+                        dispatch_map.remove(&old_key);
+                        dispatch_map.insert(new_key, (first_time, latest_time));
+                    }
+                } else {
+                    // No merge, insert as new entry
+                    dispatch_map.insert(key, (block.time, block.time));
+                }
+                
+                // Set dtoc = 0 for dispatch events (no completion yet)
+                block.dtoc = 0.0;
+            },
+            "M" => {
+                // M (Merge) - indicates that requests are being merged
+                // The merge logic is handled in Q events, so just set dtoc = 0
+                block.dtoc = 0.0;
             },
             "C" => {
-                // Find corresponding Q event and calculate QtoC latency
-                let key = (block.sector, block.size);
-                if let Some(queue_time) = queue_map.remove(&key) {
-                    block.qtoc = (block.time - queue_time) * 1000.0; // Convert to milliseconds
+                // C acts as complete - find the best matching Q (considering merges)
+                let sector_start = block.sector;
+                let sector_end = block.sector + (block.size as u64 / 512).max(1) - 1;
+                
+                let mut best_match: Option<((u32, u32, u64, u64, String), (f64, f64))> = None;
+                
+                // Find the dispatch entry that best matches this completion
+                for (key, times) in dispatch_map.iter() {
+                    if key.0 == block.devmajor && key.1 == block.devminor && key.4 == block.comm {
+                        let dispatch_start = key.2;
+                        let dispatch_end = key.3;
+                        
+                        // Check if completion covers the dispatched range
+                        if sector_start <= dispatch_start && sector_end >= dispatch_end {
+                            best_match = Some((key.clone(), *times));
+                            break;
+                        }
+                        // Also check if there's significant overlap
+                        else if sector_start <= dispatch_end && sector_end >= dispatch_start {
+                            let overlap_start = sector_start.max(dispatch_start);
+                            let overlap_end = sector_end.min(dispatch_end);
+                            let overlap_size = overlap_end.saturating_sub(overlap_start) + 1;
+                            let dispatch_size = dispatch_end - dispatch_start + 1;
+                            
+                            // If overlap is significant (>= 50%), consider it a match
+                            if overlap_size * 2 >= dispatch_size {
+                                best_match = Some((key.clone(), *times));
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if let Some((matched_key, (_first_q_time, latest_q_time))) = best_match {
+                    // Use the latest Q time as the dispatch time for merged requests
+                    block.dtoc = (block.time - latest_q_time) * 1000.0;
+                    dispatch_map.remove(&matched_key);
+                } else {
+                    // No matching Q found, set to 0
+                    block.dtoc = 0.0;
                 }
             },
             _ => {
-                // Other actions (D, I, etc.) don't affect QtoC calculation
-            }
-        }
-    }
-}
-
-// Calculate Queue-to-Complete (QtoC) latency for block events with improved matching
-// This version uses a more sophisticated matching algorithm considering device and process info
-pub fn calculate_qtoc_latency_advanced(blocks: &mut Vec<Block>) {
-    use std::collections::HashMap;
-    
-    // More sophisticated key: (devmajor, devminor, sector, size, comm)
-    // This helps match Q and C events more accurately
-    let mut queue_map: HashMap<(u32, u32, u64, u32, String), f64> = HashMap::new();
-    
-    for block in blocks.iter_mut() {
-        match block.action.as_str() {
-            "Q" => {
-                // Store queue time for this device+sector+size+command combination
-                let key = (block.devmajor, block.devminor, block.sector, block.size, block.comm.clone());
-                queue_map.insert(key, block.time);
-            },
-            "C" => {
-                // Find corresponding Q event and calculate QtoC latency
-                let key = (block.devmajor, block.devminor, block.sector, block.size, block.comm.clone());
-                if let Some(queue_time) = queue_map.remove(&key) {
-                    block.qtoc = (block.time - queue_time) * 1000.0; // Convert to milliseconds
-                }
-            },
-            _ => {
-                // Other actions don't affect QtoC calculation
+                // Other actions don't affect dtoc calculation
+                block.dtoc = 0.0;
             }
         }
     }

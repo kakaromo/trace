@@ -14,10 +14,6 @@ impl TraceItem for UFS {
         self.dtoc
     }
 
-    fn get_qtoc(&self) -> f64 {
-        0.0 // UFS는 Queue to Complete 개념이 없으므로 0.0 반환
-    }
-
     fn get_ctoc(&self) -> f64 {
         self.ctoc
     }
@@ -54,10 +50,6 @@ impl TraceItem for Block {
         self.dtoc
     }
 
-    fn get_qtoc(&self) -> f64 {
-        self.qtoc
-    }
-
     fn get_ctoc(&self) -> f64 {
         self.ctoc
     }
@@ -91,10 +83,6 @@ impl TraceItem for UFSCUSTOM {
 
     fn get_dtoc(&self) -> f64 {
         self.dtoc
-    }
-
-    fn get_qtoc(&self) -> f64 {
-        0.0 // UFSCUSTOM은 Queue to Complete 개념이 없으므로 0.0 반환
     }
 
     fn get_ctoc(&self) -> f64 {
@@ -305,15 +293,34 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
         "complete_rsp"
     } else if trace_type_name == "UFSCustom" {
         "complete" // UFSCustom는 항상 complete
+    } else if trace_type_name == "Block" {
+        // Block I/O는 두 가지 형태를 지원:
+        // 1. ftrace 형태: block_rq_complete
+        // 2. blktrace CSV 형태: C
+        // 실제 데이터에서 어떤 액션이 사용되는지 확인
+        if traces.iter().any(|t| t.get_action() == "block_rq_complete") {
+            "block_rq_complete" // ftrace 형태
+        } else {
+            "C" // blktrace CSV 형태
+        }
     } else {
-        "block_rq_complete"
+        "block_rq_complete" // 기본값
     };
 
     // Request 액션 타입 결정
     let request_action = if trace_type_name == "UFS" {
         "send_req"
+    } else if trace_type_name == "Block" {
+        // Block I/O는 두 가지 형태를 지원:
+        // 1. ftrace 형태: block_rq_issue
+        // 2. blktrace CSV 형태: Q
+        if traces.iter().any(|t| t.get_action() == "block_rq_issue") {
+            "block_rq_issue" // ftrace 형태
+        } else {
+            "Q" // blktrace CSV 형태
+        }
     } else {
-        "block_rq_issue"
+        "block_rq_issue" // 기본값
     };
 
     let complete_traces: Vec<_> = traces
@@ -402,15 +409,6 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
         |trace| trace.get_dtoc(),
     );
     
-    // QtoC는 Block I/O에서만 의미가 있음
-    if trace_type_name == "Block" {
-        print_generic_latency_stats_by_type(
-            &complete_type_groups,
-            "Queue to Complete (qtoc)",
-            |trace| trace.get_qtoc(),
-        );
-    }
-    
     if trace_type_name != "UFSCustom" {
         print_generic_latency_stats_by_type(
             &request_type_groups,
@@ -435,19 +433,6 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
         "Dispatch to Complete (dtoc)",
         |trace| trace.get_dtoc(),
     );
-    
-    // QtoC는 Block I/O에서만 의미가 있음
-    if trace_type_name == "Block" {
-        log!(
-            "\n[{} Queue to Complete (qtoc) Distribution by Range]",
-            trace_type_name
-        );
-        print_generic_latency_ranges_by_type(
-            &complete_type_groups,
-            "Queue to Complete (qtoc)",
-            |trace| trace.get_qtoc(),
-        );
-    }
     
     if trace_type_name != "UFSCustom" {
         log!(

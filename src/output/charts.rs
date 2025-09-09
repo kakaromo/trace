@@ -420,13 +420,6 @@ fn create_block_metric_chart(
             file_suffix: "dtoc",
             require_positive: true,
         },
-        "qtoc" => BlockMetricInfo {
-            metric_name: "Queue to Complete Time",
-            metric_label: "Queue to Complete (ms)",
-            metric_extractor: |block| block.qtoc,
-            file_suffix: "qtoc",
-            require_positive: true,
-        },
         "ctoc" => BlockMetricInfo {
             metric_name: "Complete to Complete Time",
             metric_label: "Complete to Complete (ms)",
@@ -739,20 +732,6 @@ pub fn generate_charts_with_config(
             }
             Err(e) => {
                 eprintln!("Error generating Block I/O dtoc trend PNG chart: {}", e);
-            }
-        }
-
-        // Block I/O QTOC (Queue to Complete) 차트
-        let config = PlottersConfig {
-            y_axis_range: get_y_range_for_metric("block_qtoc"),
-            ..Default::default()
-        };
-        match create_block_metric_chart(processed_blocks, output_prefix, &config, "qtoc") {
-            Ok(_) => {
-                println!("Block I/O qtoc trend PNG chart generated.");
-            }
-            Err(e) => {
-                eprintln!("Error generating Block I/O qtoc trend PNG chart: {}", e);
             }
         }
 

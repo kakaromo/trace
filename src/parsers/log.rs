@@ -209,12 +209,12 @@ fn parse_log_file_in_memory(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
         start_time.elapsed().as_secs_f64()
     );
 
-    // Calculate QtoC latency for block events
+    // Calculate block latency (Q->C mapping to dtoc) for block events
     if !block_traces.is_empty() {
-        println!("Calculating Queue-to-Complete (QtoC) latency for {} block events...", block_traces.len());
-        let qtoc_start = Instant::now();
-        crate::parsers::log_common::calculate_qtoc_latency_advanced(&mut block_traces);
-        println!("QtoC calculation completed in {:.2}s", qtoc_start.elapsed().as_secs_f64());
+        println!("Calculating Dispatch-to-Complete (dtoc) latency for {} block events...", block_traces.len());
+        let dtoc_start = Instant::now();
+        crate::parsers::log_common::calculate_block_latency_advanced(&mut block_traces);
+        println!("dtoc calculation completed in {:.2}s", dtoc_start.elapsed().as_secs_f64());
     }
 
     Ok((ufs_traces, block_traces, ufscustom_traces))
@@ -529,12 +529,12 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
         start_time.elapsed().as_secs_f64()
     );
 
-    // Calculate QtoC latency for block events
+    // Calculate block latency (Q->C mapping to dtoc) for block events  
     if !block_traces.is_empty() {
-        println!("Calculating Queue-to-Complete (QtoC) latency for {} block events...", block_traces.len());
-        let qtoc_start = Instant::now();
-        crate::parsers::log_common::calculate_qtoc_latency_advanced(&mut block_traces);
-        println!("QtoC calculation completed in {:.2}s", qtoc_start.elapsed().as_secs_f64());
+        println!("Calculating Dispatch-to-Complete (dtoc) latency for {} block events...", block_traces.len());
+        let dtoc_start = Instant::now();
+        crate::parsers::log_common::calculate_block_latency_advanced(&mut block_traces);
+        println!("dtoc calculation completed in {:.2}s", dtoc_start.elapsed().as_secs_f64());
     }
 
     Ok((ufs_traces, block_traces, ufscustom_traces))

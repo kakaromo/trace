@@ -194,7 +194,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
             let key = (block.sector, io_operation.clone());
 
             match block.action.as_str() {
-                "block_rq_issue" => {
+                "block_rq_issue" | "Q" => {
                     // Check continuity
                     if io_operation != &other_str {
                         if let (Some(end_sector), Some(prev_type)) =
@@ -224,7 +224,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                         first_complete_time = block.time;
                     }
                 }
-                "block_rq_complete" => {
+                "block_rq_complete" | "C" => {
                     // complete is always continuous = false
                     if let Some(first_issue_time) = req_times.remove(&key) {
                         block.dtoc = (block.time - first_issue_time) * MILLISECONDS as f64;
