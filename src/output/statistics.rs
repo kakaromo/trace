@@ -14,6 +14,10 @@ impl TraceItem for UFS {
         self.dtoc
     }
 
+    fn get_qtoc(&self) -> f64 {
+        0.0 // UFS는 Queue to Complete 개념이 없으므로 0.0 반환
+    }
+
     fn get_ctoc(&self) -> f64 {
         self.ctoc
     }
@@ -50,6 +54,10 @@ impl TraceItem for Block {
         self.dtoc
     }
 
+    fn get_qtoc(&self) -> f64 {
+        self.qtoc
+    }
+
     fn get_ctoc(&self) -> f64 {
         self.ctoc
     }
@@ -83,6 +91,10 @@ impl TraceItem for UFSCUSTOM {
 
     fn get_dtoc(&self) -> f64 {
         self.dtoc
+    }
+
+    fn get_qtoc(&self) -> f64 {
+        0.0 // UFSCUSTOM은 Queue to Complete 개념이 없으므로 0.0 반환
     }
 
     fn get_ctoc(&self) -> f64 {
@@ -389,6 +401,16 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
         "Dispatch to Complete (dtoc)",
         |trace| trace.get_dtoc(),
     );
+    
+    // QtoC는 Block I/O에서만 의미가 있음
+    if trace_type_name == "Block" {
+        print_generic_latency_stats_by_type(
+            &complete_type_groups,
+            "Queue to Complete (qtoc)",
+            |trace| trace.get_qtoc(),
+        );
+    }
+    
     if trace_type_name != "UFSCustom" {
         print_generic_latency_stats_by_type(
             &request_type_groups,
@@ -413,6 +435,20 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
         "Dispatch to Complete (dtoc)",
         |trace| trace.get_dtoc(),
     );
+    
+    // QtoC는 Block I/O에서만 의미가 있음
+    if trace_type_name == "Block" {
+        log!(
+            "\n[{} Queue to Complete (qtoc) Distribution by Range]",
+            trace_type_name
+        );
+        print_generic_latency_ranges_by_type(
+            &complete_type_groups,
+            "Queue to Complete (qtoc)",
+            |trace| trace.get_qtoc(),
+        );
+    }
+    
     if trace_type_name != "UFSCustom" {
         log!(
             "\n[{} Complete to Dispatch (ctod) Distribution by Range]",

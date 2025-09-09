@@ -17,11 +17,13 @@ use crate::utils::constants::{MAX_VALID_UFS_LBA, UFS_DEBUG_LBA};
 lazy_static! {
     pub static ref UFS_RE: Regex = Regex::new(r"^\s*(?P<process>.*?)\s+\[(?P<cpu>[0-9]+)\].*?(?P<time>[0-9]+\.[0-9]+):\s+ufshcd_command:\s+(?P<command>send_req|complete_rsp):.*?tag:\s*(?P<tag>\d+).*?size:\s*(?P<size>[-]?\d+).*?LBA:\s*(?P<lba>\d+).*?opcode:\s*(?P<opcode>0x[0-9a-f]+).*?group_id:\s*0x(?P<group_id>[0-9a-f]+).*?hwq_id:\s*(?P<hwq_id>[-]?\d+)").unwrap();    
     pub static ref BLOCK_RE: Regex = Regex::new(r"^\s*(?P<process>.*?)\s+\[(?P<cpu>\d+)\]\s+(?P<flags>.+?)\s+(?P<time>[\d\.]+):\s+(?P<action>\S+):\s+(?P<devmajor>\d+),(?P<devminor>\d+)\s+(?P<io_type>[A-Z]+)(?:\s+(?P<extra>\d+))?\s+\(\)\s+(?P<sector>\d+)\s+\+\s+(?P<size>\d+)(?:\s+\S+)?\s+\[(?P<comm>.*?)\]$").unwrap();
+    pub static ref BLKTRACE_CSV_RE: Regex = Regex::new(r"^(?P<time>[\d\.]+),(?P<cpu>\d+),(?P<major>\d+),(?P<minor>\d+),(?P<pid>\d+),(?P<action>[A-Z]),(?P<rwds>[A-Z]*),(?P<sector>\d+),(?P<size>\d+),(?P<comm>.*)$").unwrap();
     pub static ref UFSCUSTOM_RE: Regex = Regex::new(r"^(?P<opcode>0x[0-9a-f]+),(?P<lba>\d+),(?P<size>\d+),(?P<start_time>\d+(?:\.\d+)?),(?P<end_time>\d+(?:\.\d+)?)$").unwrap();
     
     // Pre-compiled regex for performance optimizations
     static ref UFS_QUICK_CHECK: Regex = Regex::new(r"ufshcd_command:").unwrap();
     static ref BLOCK_QUICK_CHECK: Regex = Regex::new(r"(blk_|block_)").unwrap();
+    static ref BLKTRACE_CSV_QUICK_CHECK: Regex = Regex::new(r"^\d+\.\d+,\d+,\d+,\d+,\d+,[A-Z],[A-Z]*,\d+,\d+,").unwrap();
     static ref UFSCUSTOM_QUICK_CHECK: Regex = Regex::new(r"^0x[0-9a-f]+,\d+,\d+,").unwrap();
 }
 
@@ -114,6 +116,7 @@ pub fn parse_block_io_event(line: &str) -> Result<Block, &'static str> {
             comm: caps["comm"].to_string(),
             qd: 0,
             dtoc: 0.0,
+            qtoc: 0.0,
             ctoc: 0.0,
             ctod: 0.0,
             continuous: false,
@@ -122,6 +125,47 @@ pub fn parse_block_io_event(line: &str) -> Result<Block, &'static str> {
         Ok(block)
     } else {
         Err("Line does not match Block IO pattern")
+    }
+}
+
+// Parse blktrace CSV format block event from a line
+// Format: time,cpu,major,minor,pid,action,rwds,sector,size,comm
+pub fn parse_blktrace_csv_event(line: &str) -> Result<Block, &'static str> {
+    // Skip header line
+    if line.starts_with("time,cpu,major,minor,pid,action,rwds,sector,size,comm") {
+        return Err("Header line");
+    }
+
+    // Skip comments or empty lines
+    if line.trim().is_empty() || line.starts_with("//") || line.starts_with('#') {
+        return Err("Comment or empty line");
+    }
+
+    if let Some(caps) = BLKTRACE_CSV_RE.captures(line) {
+        let block = Block {
+            time: caps["time"].parse().unwrap_or(0.0),
+            process: format!("pid-{}", caps["pid"].to_string()), // PID as process identifier
+            cpu: caps["cpu"].parse().unwrap_or(0),
+            flags: String::new(), // Not available in CSV format
+            action: caps["action"].to_string(),
+            devmajor: caps["major"].parse().unwrap_or(0),
+            devminor: caps["minor"].parse().unwrap_or(0),
+            io_type: caps["rwds"].to_string(), // Read/Write/Discard/Sync flags
+            extra: 0, // Not available in CSV format
+            sector: caps["sector"].parse().unwrap_or(0),
+            size: caps["size"].parse().unwrap_or(0),
+            comm: caps["comm"].to_string(),
+            qd: 0,
+            dtoc: 0.0,
+            qtoc: 0.0,
+            ctoc: 0.0,
+            ctod: 0.0,
+            continuous: false,
+        };
+
+        Ok(block)
+    } else {
+        Err("Line does not match blktrace CSV pattern")
     }
 }
 
@@ -175,6 +219,10 @@ pub fn process_line(line: &str) -> Option<(Option<UFS>, Option<Block>, Option<UF
     if let Ok(ufs) = parse_ufs_event(line) {
         return Some((Some(ufs), None, None));
     }
+    // Try blktrace CSV pattern
+    else if let Ok(block) = parse_blktrace_csv_event(line) {
+        return Some((None, Some(block), None));
+    }
     // Then try Block IO pattern
     else if let Ok(block) = parse_block_io_event(line) {
         return Some((None, Some(block), None));
@@ -197,6 +245,10 @@ pub fn categorize_line_fast(line: &str) -> LineCategory {
     // Quick checks before expensive regex matching
     if UFS_QUICK_CHECK.is_match(line) {
         return LineCategory::UFS;
+    }
+    
+    if BLKTRACE_CSV_QUICK_CHECK.is_match(line) {
+        return LineCategory::Block;
     }
     
     if BLOCK_QUICK_CHECK.is_match(line) {
@@ -232,7 +284,10 @@ pub fn process_line_optimized(line: &str) -> Option<(Option<UFS>, Option<Block>,
             }
         }
         LineCategory::Block => {
-            if let Ok(block) = parse_block_io_event(line) {
+            // Try blktrace CSV format first, then regular block format
+            if let Ok(block) = parse_blktrace_csv_event(line) {
+                Some((None, Some(block), None))
+            } else if let Ok(block) = parse_block_io_event(line) {
                 Some((None, Some(block), None))
             } else {
                 None
@@ -597,4 +652,63 @@ pub fn parse_log_line(line: &str) -> Option<(crate::TraceType, String)> {
     }
     
     None
+}
+
+// Calculate Queue-to-Complete (QtoC) latency for block events
+// This function matches Q (Queue) actions with their corresponding C (Complete) actions
+pub fn calculate_qtoc_latency(blocks: &mut Vec<Block>) {
+    use std::collections::HashMap;
+    
+    // HashMap to store Q events by (sector, size) for matching with C events
+    let mut queue_map: HashMap<(u64, u32), f64> = HashMap::new();
+    
+    for block in blocks.iter_mut() {
+        match block.action.as_str() {
+            "Q" => {
+                // Store queue time for this sector+size combination
+                let key = (block.sector, block.size);
+                queue_map.insert(key, block.time);
+            },
+            "C" => {
+                // Find corresponding Q event and calculate QtoC latency
+                let key = (block.sector, block.size);
+                if let Some(queue_time) = queue_map.remove(&key) {
+                    block.qtoc = (block.time - queue_time) * 1000.0; // Convert to milliseconds
+                }
+            },
+            _ => {
+                // Other actions (D, I, etc.) don't affect QtoC calculation
+            }
+        }
+    }
+}
+
+// Calculate Queue-to-Complete (QtoC) latency for block events with improved matching
+// This version uses a more sophisticated matching algorithm considering device and process info
+pub fn calculate_qtoc_latency_advanced(blocks: &mut Vec<Block>) {
+    use std::collections::HashMap;
+    
+    // More sophisticated key: (devmajor, devminor, sector, size, comm)
+    // This helps match Q and C events more accurately
+    let mut queue_map: HashMap<(u32, u32, u64, u32, String), f64> = HashMap::new();
+    
+    for block in blocks.iter_mut() {
+        match block.action.as_str() {
+            "Q" => {
+                // Store queue time for this device+sector+size+command combination
+                let key = (block.devmajor, block.devminor, block.sector, block.size, block.comm.clone());
+                queue_map.insert(key, block.time);
+            },
+            "C" => {
+                // Find corresponding Q event and calculate QtoC latency
+                let key = (block.devmajor, block.devminor, block.sector, block.size, block.comm.clone());
+                if let Some(queue_time) = queue_map.remove(&key) {
+                    block.qtoc = (block.time - queue_time) * 1000.0; // Convert to milliseconds
+                }
+            },
+            _ => {
+                // Other actions don't affect QtoC calculation
+            }
+        }
+    }
 }

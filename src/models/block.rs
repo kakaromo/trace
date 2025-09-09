@@ -17,6 +17,7 @@ pub struct Block {
     pub comm: String,
     pub qd: u32,   // Queue Depth
     pub dtoc: f64, // Device to Complete latency
+    pub qtoc: f64, // Queue to Complete latency
     pub ctoc: f64, // Complete to Complete latency
     pub ctod: f64, // Complete to Device latency
     pub continuous: bool,

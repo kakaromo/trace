@@ -209,6 +209,14 @@ fn parse_log_file_in_memory(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
         start_time.elapsed().as_secs_f64()
     );
 
+    // Calculate QtoC latency for block events
+    if !block_traces.is_empty() {
+        println!("Calculating Queue-to-Complete (QtoC) latency for {} block events...", block_traces.len());
+        let qtoc_start = Instant::now();
+        crate::parsers::log_common::calculate_qtoc_latency_advanced(&mut block_traces);
+        println!("QtoC calculation completed in {:.2}s", qtoc_start.elapsed().as_secs_f64());
+    }
+
     Ok((ufs_traces, block_traces, ufscustom_traces))
 }
 
@@ -426,7 +434,7 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
 
     // Load data from temporary files
     let ufs_traces;
-    let block_traces;
+    let mut block_traces;
     let ufscustom_traces;
 
     // Configure parallel processing
@@ -520,6 +528,14 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
         ufscustom_traces.len(),
         start_time.elapsed().as_secs_f64()
     );
+
+    // Calculate QtoC latency for block events
+    if !block_traces.is_empty() {
+        println!("Calculating Queue-to-Complete (QtoC) latency for {} block events...", block_traces.len());
+        let qtoc_start = Instant::now();
+        crate::parsers::log_common::calculate_qtoc_latency_advanced(&mut block_traces);
+        println!("QtoC calculation completed in {:.2}s", qtoc_start.elapsed().as_secs_f64());
+    }
 
     Ok((ufs_traces, block_traces, ufscustom_traces))
 }

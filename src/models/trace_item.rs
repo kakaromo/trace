@@ -5,6 +5,7 @@ pub trait TraceItem {
 
     // 지연 시간 관련 메서드들
     fn get_dtoc(&self) -> f64; // Dispatch to Complete 지연 시간
+    fn get_qtoc(&self) -> f64; // Queue to Complete 지연 시간
     fn get_ctoc(&self) -> f64; // Complete to Complete 지연 시간
     fn get_ctod(&self) -> f64; // Complete to Dispatch 지연 시간
 

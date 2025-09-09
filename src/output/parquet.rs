@@ -226,6 +226,7 @@ fn save_block_to_parquet(
         arrow::datatypes::Field::new("comm", arrow::datatypes::DataType::Utf8, false),
         arrow::datatypes::Field::new("qd", arrow::datatypes::DataType::UInt32, false),
         arrow::datatypes::Field::new("dtoc", arrow::datatypes::DataType::Float64, false),
+        arrow::datatypes::Field::new("qtoc", arrow::datatypes::DataType::Float64, false),
         arrow::datatypes::Field::new("ctoc", arrow::datatypes::DataType::Float64, false),
         arrow::datatypes::Field::new("ctod", arrow::datatypes::DataType::Float64, false),
         arrow::datatypes::Field::new("continuous", arrow::datatypes::DataType::Boolean, false),
@@ -260,6 +261,7 @@ fn save_block_to_parquet(
             let mut comm_vec = Vec::with_capacity(len);
             let mut qd_vec = Vec::with_capacity(len);
             let mut dtoc_vec = Vec::with_capacity(len);
+            let mut qtoc_vec: Vec<f64> = Vec::with_capacity(len);
             let mut ctoc_vec = Vec::with_capacity(len);
             let mut ctod_vec = Vec::with_capacity(len);
             let mut continuous_vec = Vec::with_capacity(len);
@@ -280,6 +282,7 @@ fn save_block_to_parquet(
                 comm_vec.push(t.comm.as_str());
                 qd_vec.push(t.qd);
                 dtoc_vec.push(t.dtoc);
+                qtoc_vec.push(t.qtoc);
                 ctoc_vec.push(t.ctoc);
                 ctod_vec.push(t.ctod);
                 continuous_vec.push(t.continuous);
@@ -300,6 +303,7 @@ fn save_block_to_parquet(
                 Arc::new(StringArray::from(comm_vec)),
                 Arc::new(UInt32Array::from(qd_vec)),
                 Arc::new(Float64Array::from(dtoc_vec)),
+                Arc::new(Float64Array::from(qtoc_vec)),
                 Arc::new(Float64Array::from(ctoc_vec)),
                 Arc::new(Float64Array::from(ctod_vec)),
                 Arc::new(BooleanArray::from(continuous_vec)),

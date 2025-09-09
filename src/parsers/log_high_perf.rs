@@ -277,6 +277,15 @@ pub fn parse_log_file_high_perf(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Blo
     // Cleanup memory tracking
     memory_monitor.record_deallocation(file_size as usize);
     
+    // Calculate QtoC latency for block events
+    if !block_traces.is_empty() {
+        println!("Calculating Queue-to-Complete (QtoC) latency for {} block events...", block_traces.len());
+        let qtoc_start = Instant::now();
+        crate::parsers::log_common::calculate_qtoc_latency_advanced(&mut block_traces);
+        println!("QtoC calculation completed in {:.2}s", qtoc_start.elapsed().as_secs_f64());
+        profiler.checkpoint("QtoC latency calculated");
+    }
+    
     println!(
         "High-performance parsing completed: {} UFS, {} Block, {} UFSCUSTOM items in {:.2}s",
         ufs_traces.len(),
@@ -569,6 +578,14 @@ pub fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Blo
         ufscustom_traces.len(),
         start_time.elapsed().as_secs_f64()
     );
+    
+    // Calculate QtoC latency for block events
+    if !block_traces.is_empty() {
+        println!("Calculating Queue-to-Complete (QtoC) latency for {} block events...", block_traces.len());
+        let qtoc_start = Instant::now();
+        crate::parsers::log_common::calculate_qtoc_latency_advanced(&mut block_traces);
+        println!("QtoC calculation completed in {:.2}s", qtoc_start.elapsed().as_secs_f64());
+    }
     
     Ok((ufs_traces, block_traces, ufscustom_traces))
 }
