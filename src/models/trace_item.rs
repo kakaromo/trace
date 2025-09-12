@@ -3,6 +3,12 @@ pub trait TraceItem {
     // 트레이스 항목의 타입을 반환 (UFS의 opcode나 Block의 io_type 등)
     fn get_type(&self) -> String;
 
+    // 시간 정보
+    fn get_time(&self) -> f64;
+
+    // I/O 타입 정보 (Read/Write 구분)
+    fn get_io_type(&self) -> String;
+
     // 지연 시간 관련 메서드들
     fn get_dtoc(&self) -> f64; // Dispatch to Complete 지연 시간
     fn get_ctoc(&self) -> f64; // Complete to Complete 지연 시간
@@ -16,6 +22,9 @@ pub trait TraceItem {
 
     // continuous 여부
     fn is_continuous(&self) -> bool;
+
+    // alignment 여부
+    fn is_aligned(&self) -> bool;
 
     // Queue Depth
     fn get_qd(&self) -> u32;

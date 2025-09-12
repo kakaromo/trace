@@ -349,8 +349,15 @@ fn create_ufs_metric_chart(
     // 명령어별로 데이터 그룹화 (opcode 값 그대로 사용)
     let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
     for item in data {
-        // 양수 값이 필요한 메트릭은 필터링
-        if !metric_info.require_positive || (metric_info.metric_extractor)(item) > 0.0 {
+        // LBA와 QD 메트릭의 경우 send_req만 포함
+        let include_item = if metric == "lba" || metric == "qd" {
+            item.action == "send_req"
+        } else {
+            // 다른 메트릭은 기존 로직 유지
+            !metric_info.require_positive || (metric_info.metric_extractor)(item) > 0.0
+        };
+
+        if include_item {
             opcode_groups
                 .entry(item.opcode.clone())  // opcode 값 그대로 사용
                 .or_default()
@@ -442,8 +449,8 @@ fn create_block_metric_chart(
             require_positive: false,
         },
         "lba" => BlockMetricInfo {
-            metric_name: "LBA",
-            metric_label: "Sector/LBA",
+            metric_name: "Sector",
+            metric_label: "Sector",
             metric_extractor: |block| block.sector as f64,
             file_suffix: "lba",
             require_positive: false,
@@ -454,8 +461,15 @@ fn create_block_metric_chart(
     // I/O 타입별로 데이터 그룹화
     let mut io_type_groups: HashMap<String, Vec<&Block>> = HashMap::new();
     for block in data {
-        // 양수 값이 필요한 메트릭은 필터링
-        if !metric_info.require_positive || (metric_info.metric_extractor)(block) > 0.0 {
+        // LBA와 QD 메트릭의 경우 issue만 포함 (block_rq_issue 또는 Q)
+        let include_item = if metric == "lba" || metric == "qd" {
+            block.action == "block_rq_issue" || block.action == "Q"
+        } else {
+            // 다른 메트릭은 기존 로직 유지
+            !metric_info.require_positive || (metric_info.metric_extractor)(block) > 0.0
+        };
+
+        if include_item {
             io_type_groups
                 .entry(block.io_type.clone())
                 .or_default()

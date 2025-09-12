@@ -6,3 +6,7 @@ pub const UFS_DEBUG_LBA: u64 = 2305843009213693951;
 
 // 터무니없는 LBA 판정을 위한 최대 허용 값 (약 2^48)
 pub const MAX_VALID_UFS_LBA: u64 = 1u64 << 48;
+
+// Default alignment size (64KB in sectors for Block, in 4KB units for UFS)
+pub const DEFAULT_ALIGNMENT_SIZE_SECTORS: u64 = 128; // 64KB / 512 bytes = 128 sectors
+pub const DEFAULT_ALIGNMENT_SIZE_4KB: u64 = 16; // 64KB / 4KB = 16 units

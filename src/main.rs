@@ -6,6 +6,7 @@ use std::time::Instant;
 use trace::parsers::{parse_log_file_high_perf};
 use trace::utils::{
     parse_latency_ranges, read_filter_options, set_user_latency_ranges, FilterOptions, Logger,
+    AlignmentConfig, set_alignment_config,
 };
 use trace::TraceType;
 use trace::*;
@@ -47,6 +48,30 @@ fn parse_y_axis_ranges(input: &str) -> Result<HashMap<String, (f64, f64)>, Strin
     Ok(ranges)
 }
 
+/// Parse alignment size from command line argument
+/// Format: "64KB", "128KB", "4KB", "1MB" etc.
+fn parse_alignment_size(input: &str) -> Result<u64, String> {
+    let input = input.to_uppercase();
+    
+    if let Some(size_str) = input.strip_suffix("KB") {
+        let size = size_str.parse::<u64>()
+            .map_err(|_| format!("Invalid alignment size: '{}'", input))?;
+        Ok(size * 1024)
+    } else if let Some(size_str) = input.strip_suffix("MB") {
+        let size = size_str.parse::<u64>()
+            .map_err(|_| format!("Invalid alignment size: '{}'", input))?;
+        Ok(size * 1024 * 1024)
+    } else if let Some(size_str) = input.strip_suffix("GB") {
+        let size = size_str.parse::<u64>()
+            .map_err(|_| format!("Invalid alignment size: '{}'", input))?;
+        Ok(size * 1024 * 1024 * 1024)
+    } else {
+        // 단위가 없으면 bytes로 처리
+        input.parse::<u64>()
+            .map_err(|_| format!("Invalid alignment size: '{}'. Use format like '64KB', '1MB'", input))
+    }
+}
+
 fn print_usage(program: &str) {
     eprintln!("Usage:");
     eprintln!("  {} [options] <log_file> <output_prefix>                      - Parse log file and generate statistics", program);
@@ -62,6 +87,8 @@ fn print_usage(program: &str) {
     eprintln!("                 Example: -y ufs_dtoc:0:100,block_dtoc:0:50");
     eprintln!("  -c <size>    - Set chunk size for Parquet file writing (default: 50000). Example: -c 100000");
     eprintln!("  --csv        - Export filtered data to CSV files (works with all modes including --parquet)");
+    eprintln!("  --perf       - Generate performance analysis CSV (read/write MiB/s per second)");
+    eprintln!("  --align <size> - Set alignment size for sector/LBA alignment check (default: 64KB). Example: --align 128KB, --align 4KB");
     eprintln!("\nMigration Options:");
     eprintln!("  --chunk-size <size> - Set chunk size for migration (default: 10000)");
     eprintln!("  --no-backup        - Don't create backup files before migration");
@@ -90,6 +117,8 @@ fn main() -> io::Result<()> {
     let mut y_axis_ranges: Option<HashMap<String, (f64, f64)>> = None;
     let mut chunk_size: usize = 50_000; // 기본 청크 크기
     let mut export_csv = false; // CSV export 옵션
+    let mut generate_perf = false; // Performance analysis 옵션
+    let mut alignment_size: Option<u64> = None; // Alignment size 옵션 (None이면 기본값 64KB 사용)
 
     while i < args.len() {
         match args[i].as_str() {
@@ -169,6 +198,31 @@ fn main() -> io::Result<()> {
                 export_csv = true;
                 i += 1;
             }
+            "--perf" => {
+                generate_perf = true;
+                i += 1;
+            }
+            "--align" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --align option requires alignment size value");
+                    print_usage(&args[0]);
+                    return Ok(());
+                }
+
+                match parse_alignment_size(&args[i + 1]) {
+                    Ok(size) => {
+                        alignment_size = Some(size);
+                        log!("Using custom alignment size: {} bytes ({})", size, &args[i + 1]);
+                    }
+                    Err(e) => {
+                        eprintln!("Error in alignment size: {}", e);
+                        print_usage(&args[0]);
+                        return Ok(());
+                    }
+                }
+
+                i += 2; // 옵션과 값을 건너뜀
+            }
             "--migrate" => {
                 if i + 1 >= args.len() {
                     eprintln!("Error: --migrate option requires input path");
@@ -239,6 +293,16 @@ fn main() -> io::Result<()> {
                 i += 1;
             }
         }
+    }
+
+    // Alignment configuration 설정
+    if let Some(size_bytes) = alignment_size {
+        let size_kb = size_bytes / 1024;
+        let config = AlignmentConfig {
+            alignment_size_kb: size_kb,
+        };
+        set_alignment_config(config);
+        log!("Alignment configuration set to {} KB ({} bytes)", size_kb, size_bytes);
     }
 
     // 필터 옵션 처리
@@ -338,6 +402,7 @@ fn main() -> io::Result<()> {
                     y_axis_ranges.as_ref(),
                     chunk_size,
                     export_csv,
+                    generate_perf,
                 )
             }
             Err(e) => {
@@ -576,6 +641,7 @@ fn process_highperf_log_file(
     y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
     chunk_size: usize,
     export_csv: bool,
+    generate_perf: bool,
 ) -> io::Result<()> {
     // Logger 초기화
     Logger::init(output_prefix);
@@ -845,6 +911,56 @@ fn process_highperf_log_file(
         Err(e) => log_error!("Error while generating high-performance charts: {}", e),
     }
 
+    // 성능 분석 (요청된 경우)
+    if generate_perf {
+        let step_num = if export_csv { 6 } else { 5 };
+        log!("\n[{}/6] Generating performance analysis...", step_num);
+        let perf_start = Instant::now();
+
+        use trace::output::{analyze_block_performance, analyze_ufs_performance, analyze_ufscustom_performance, save_performance_csv};
+
+        let mut ufs_perf_data = Vec::new();
+        let mut block_perf_data = Vec::new();
+        let mut ufscustom_perf_data = Vec::new();
+
+        // UFS 성능 분석
+        if has_ufs && !ufs_data.is_empty() {
+            let perf_data = analyze_ufs_performance(ufs_data);
+            log!("UFS performance analysis completed: {} data points", perf_data.len());
+            ufs_perf_data = perf_data;
+        }
+
+        // Block 성능 분석
+        if has_block && !block_data.is_empty() {
+            let perf_data = analyze_block_performance(block_data);
+            log!("Block performance analysis completed: {} data points", perf_data.len());
+            block_perf_data = perf_data;
+        }
+
+        // UFSCUSTOM 성능 분석
+        if has_ufscustom && !ufscustom_data.is_empty() {
+            let perf_data = analyze_ufscustom_performance(ufscustom_data);
+            log!("UFSCUSTOM performance analysis completed: {} data points", perf_data.len());
+            ufscustom_perf_data = perf_data;
+        }
+
+        // 성능 데이터를 CSV로 저장
+        if !ufs_perf_data.is_empty() || !block_perf_data.is_empty() || !ufscustom_perf_data.is_empty() {
+            if let Err(e) = save_performance_csv(output_prefix, &block_perf_data, &ufs_perf_data, &ufscustom_perf_data) {
+                log_error!("Error saving performance analysis CSV: {}", e);
+            } else {
+                let filename = format!("{}_performance.csv", output_prefix);
+                log!(
+                    "Performance analysis CSV saved successfully: {} (Time taken: {:.2}s)",
+                    filename,
+                    perf_start.elapsed().as_secs_f64()
+                );
+            }
+        } else {
+            log!("No performance data to analyze");
+        }
+    }
+
     // 요약 정보 출력
     log!("\n===== High-Performance Log File Processing Complete =====");
     log!(
@@ -892,6 +1008,9 @@ fn process_highperf_log_file(
     }
 
     log!("- Log file: {}_result.log", output_prefix);
+    if generate_perf {
+        log!("- Performance analysis CSV: {}_performance.csv", output_prefix);
+    }
 
     // 로그 파일 버퍼 비우기
     let _ = Logger::flush();

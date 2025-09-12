@@ -140,6 +140,7 @@ fn convert_batch_to_ufs(
             ctoc: ctoc_array.value(i),
             ctod: ctod_array.value(i),
             continuous: continuous_array.value(i),
+            aligned: false, // Parquet에서 읽을 때는 기본값으로 설정
         };
         result.push(ufs);
     }
@@ -216,6 +217,7 @@ fn convert_batch_to_block(
             ctoc: ctoc_array.value(i),
             ctod: ctod_array.value(i),
             continuous: continuous_array.value(i),
+            aligned: false, // Parquet에서 읽을 때는 기본값으로 설정
         };
         result.push(block);
     }
@@ -276,6 +278,7 @@ fn convert_batch_to_ufscustom(
             ctod: ctod_array.as_ref().map_or(0.0, |arr| arr.value(i)),
             #[allow(clippy::unnecessary_map_or)]
             continuous: continuous_array.as_ref().map_or(false, |arr| arr.value(i)),
+            aligned: false, // Parquet에서 읽을 때는 기본값으로 설정
         };
         result.push(ufscustom);
     }

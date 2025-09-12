@@ -17,4 +17,5 @@ pub struct UFSCUSTOM {
     pub ctoc: f64,         // Complete to Complete latency (ms)
     pub ctod: f64,         // Complete to Dispatch latency (ms)
     pub continuous: bool,  // 연속적인 요청 여부
+    pub aligned: bool,     // LBA alignment check
 }

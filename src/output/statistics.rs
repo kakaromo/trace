@@ -10,6 +10,21 @@ impl TraceItem for UFS {
         self.opcode.clone() // UFS는 opcode를 타입으로 사용
     }
 
+    fn get_time(&self) -> f64 {
+        self.time
+    }
+
+    fn get_io_type(&self) -> String {
+        // UFS의 opcode에서 Read/Write 판단
+        if self.opcode.to_lowercase().contains("0x28") {
+            "R".to_string()
+        } else if self.opcode.to_lowercase().contains("0x2a") {
+            "W".to_string()
+        } else {
+            "O".to_string() // Other
+        }
+    }
+
     fn get_dtoc(&self) -> f64 {
         self.dtoc
     }
@@ -32,6 +47,10 @@ impl TraceItem for UFS {
 
     fn is_continuous(&self) -> bool {
         self.continuous
+    }
+
+    fn is_aligned(&self) -> bool {
+        self.aligned
     }
 
     fn get_qd(&self) -> u32 {
@@ -46,6 +65,15 @@ impl TraceItem for Block {
         self.io_type.chars().next().unwrap_or('?').to_string()
     }
 
+    fn get_time(&self) -> f64 {
+        self.time
+    }
+
+    fn get_io_type(&self) -> String {
+        // Block은 io_type을 직접 사용
+        self.io_type.clone()
+    }
+
     fn get_dtoc(&self) -> f64 {
         self.dtoc
     }
@@ -70,6 +98,10 @@ impl TraceItem for Block {
         self.continuous
     }
 
+    fn is_aligned(&self) -> bool {
+        self.aligned
+    }
+
     fn get_qd(&self) -> u32 {
         self.qd
     }
@@ -79,6 +111,21 @@ impl TraceItem for Block {
 impl TraceItem for UFSCUSTOM {
     fn get_type(&self) -> String {
         self.opcode.clone() // UFSCUSTOM도 UFS와 같이 opcode를 타입으로 사용
+    }
+
+    fn get_time(&self) -> f64 {
+        self.end_time // 완료 시간을 기본 시간으로 사용
+    }
+
+    fn get_io_type(&self) -> String {
+        // UFSCUSTOM의 opcode에서 Read/Write 판단
+        if self.opcode.to_lowercase().contains("read") {
+            "R".to_string()
+        } else if self.opcode.to_lowercase().contains("write") {
+            "W".to_string()
+        } else {
+            "O".to_string() // Other
+        }
     }
 
     fn get_dtoc(&self) -> f64 {
@@ -103,6 +150,10 @@ impl TraceItem for UFSCUSTOM {
 
     fn is_continuous(&self) -> bool {
         self.continuous // 이제 실제 값 반환
+    }
+
+    fn is_aligned(&self) -> bool {
+        self.aligned
     }
 
     fn get_qd(&self) -> u32 {
@@ -363,6 +414,12 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
     log!(
         "Continuous request ratio: {:.1}%",
         (continuous_reqs as f64 / traces.len() as f64) * 100.0
+    );
+
+    let aligned_reqs = traces.iter().filter(|t| t.is_aligned()).count();
+    log!(
+        "Aligned request ratio: {:.1}%",
+        (aligned_reqs as f64 / traces.len() as f64) * 100.0
     );
 
     // 타입별 요청 수 집계
@@ -720,6 +777,13 @@ fn print_ufscustom_specific_statistics(traces: &[UFSCUSTOM]) {
     log!(
         "Continuous request ratio: {:.1}%",
         (continuous_reqs as f64 / traces.len() as f64) * 100.0
+    );
+
+    // Aligned 요청 비율
+    let aligned_reqs = traces.iter().filter(|t| t.aligned).count();
+    log!(
+        "Aligned request ratio: {:.1}%",
+        (aligned_reqs as f64 / traces.len() as f64) * 100.0
     );
 
     // 타입별 요청 수 집계

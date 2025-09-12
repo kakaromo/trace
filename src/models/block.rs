@@ -20,4 +20,5 @@ pub struct Block {
     pub ctoc: f64, // Complete to Complete latency
     pub ctod: f64, // Complete to Device latency
     pub continuous: bool,
+    pub aligned: bool, // Sector alignment check
 }

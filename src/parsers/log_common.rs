@@ -58,14 +58,14 @@ pub fn parse_ufs_event(line: &str) -> Result<UFS, &'static str> {
         let raw_size: i64 = caps["size"].parse::<i64>().unwrap_or(0).unsigned_abs() as i64;
 
         // Debug 또는 비정상적으로 큰 LBA 값은 0으로 처리
-        let cleaned_lba = if raw_lba == UFS_DEBUG_LBA || raw_lba > MAX_VALID_UFS_LBA {
+        let lba = if raw_lba == UFS_DEBUG_LBA || raw_lba > MAX_VALID_UFS_LBA {
             0
         } else {
             raw_lba
         };
 
         // Convert bytes to 4KB units
-        let lba_in_4kb = cleaned_lba / 4096;
+        // let lba_in_4kb = cleaned_lba / 4096;
         let size_in_4kb = (raw_size as f64 / 4096.0).ceil() as u32;
 
         let ufs = UFS {
@@ -75,7 +75,7 @@ pub fn parse_ufs_event(line: &str) -> Result<UFS, &'static str> {
             action: caps["command"].to_string(),
             tag: caps["tag"].parse().unwrap_or(0),
             opcode: caps["opcode"].to_string(),
-            lba: lba_in_4kb,
+            lba,
             size: size_in_4kb,
             groupid: u32::from_str_radix(&caps["group_id"], 16).unwrap_or(0),
             hwqid: caps["hwq_id"].parse().unwrap_or(0),
@@ -84,6 +84,7 @@ pub fn parse_ufs_event(line: &str) -> Result<UFS, &'static str> {
             ctoc: 0.0,
             ctod: 0.0,
             continuous: false,
+            aligned: crate::utils::is_ufs_aligned(lba),
         };
 
         Ok(ufs)
@@ -104,14 +105,8 @@ pub fn parse_block_io_event(line: &str) -> Result<Block, &'static str> {
             devmajor: caps["devmajor"].parse().unwrap_or(0),
             devminor: caps["devminor"].parse().unwrap_or(0),
             io_type: caps["io_type"].to_string(),
-            extra: caps
-                .name("extra")
-                .map_or(0, |m| m.as_str().parse().unwrap_or(0)),
-            sector: match caps["sector"].parse::<u64>() {
-                Ok(18446744073709551615) => 0,
-                Ok(s) => s,
-                Err(_) => 0,
-            },
+            extra: caps.name("extra").map_or(0, |m| m.as_str().parse().unwrap_or(0)),
+            sector: caps["sector"].parse().unwrap_or(0),
             size: caps["size"].parse().unwrap_or(0),
             comm: caps["comm"].to_string(),
             qd: 0,
@@ -119,6 +114,7 @@ pub fn parse_block_io_event(line: &str) -> Result<Block, &'static str> {
             ctoc: 0.0,
             ctod: 0.0,
             continuous: false,
+            aligned: crate::utils::is_block_aligned(caps["sector"].parse().unwrap_or(0)),
         };
 
         Ok(block)
@@ -159,6 +155,7 @@ pub fn parse_blktrace_csv_event(line: &str) -> Result<Block, &'static str> {
             ctoc: 0.0,
             ctod: 0.0,
             continuous: false,
+            aligned: crate::utils::is_block_aligned(caps["sector"].parse().unwrap_or(0)),
         };
 
         Ok(block)
@@ -182,13 +179,20 @@ pub fn parse_ufscustom_event(line: &str) -> Result<UFSCUSTOM, &'static str> {
     if let Some(caps) = UFSCUSTOM_RE.captures(line) {
         // Use string references to reduce copying
         let opcode = caps["opcode"].to_string();
-        let lba: u64 = caps["lba"].parse().unwrap_or(0);
+        let raw_lba: u64 = caps["lba"].parse().unwrap_or(0);
         let size: u32 = caps["size"].parse().unwrap_or(0);
         let start_time: f64 = caps["start_time"].parse().unwrap_or(0.0);
         let end_time: f64 = caps["end_time"].parse().unwrap_or(0.0);
 
         // Calculate dtoc (in milliseconds)
         let dtoc = (end_time - start_time) * 1000.0;
+
+        // Debug 또는 비정상적으로 큰 LBA 값은 0으로 처리
+        let lba = if raw_lba == UFS_DEBUG_LBA || raw_lba > MAX_VALID_UFS_LBA {
+            0
+        } else {
+            raw_lba
+        };
 
         let ufscustom = UFSCUSTOM {
             opcode,
@@ -203,6 +207,7 @@ pub fn parse_ufscustom_event(line: &str) -> Result<UFSCUSTOM, &'static str> {
             ctoc: 0.0,
             ctod: 0.0,
             continuous: false,
+            aligned: crate::utils::is_block_aligned(lba),
         };
 
         Ok(ufscustom)
@@ -658,106 +663,32 @@ pub fn parse_log_line(line: &str) -> Option<(crate::TraceType, String)> {
 pub fn calculate_block_latency_advanced(blocks: &mut Vec<Block>) {
     use std::collections::HashMap;
     
-    // Map Q (dispatch) events to C (complete) events with merge support
-    // Key: (devmajor, devminor, sector_start, sector_end, comm) for merged requests
-    // Value: (first_q_time, latest_q_time) to track dispatch sequence
-    let mut dispatch_map: HashMap<(u32, u32, u64, u64, String), (f64, f64)> = HashMap::new();
+    // Simple Q (dispatch) to C (complete) mapping
+    // Key: (devmajor, devminor, sector, size, comm)
+    let mut dispatch_map: HashMap<(u32, u32, u64, u32, String), f64> = HashMap::new();
     
     for block in blocks.iter_mut() {
         match block.action.as_str() {
             "Q" => {
-                // Q acts as dispatch (issue) - handle potential merges
-                let sector_start = block.sector;
-                let sector_end = block.sector + (block.size as u64 / 512).max(1) - 1; // Convert to sectors
-                let key = (block.devmajor, block.devminor, sector_start, sector_end, block.comm.clone());
-                
-                // Check for merge candidates - look for existing Q with adjacent sectors
-                let mut merged = false;
-                let mut keys_to_update = Vec::new();
-                
-                for (existing_key, (first_time, _)) in dispatch_map.iter() {
-                    if existing_key.0 == block.devmajor && existing_key.1 == block.devminor && existing_key.4 == block.comm {
-                        let existing_start = existing_key.2;
-                        let existing_end = existing_key.3;
-                        
-                        // Check if sectors are adjacent or overlapping (merge candidate)
-                        if sector_start <= existing_end + 1 && sector_end >= existing_start.saturating_sub(1) {
-                            // This Q can be merged with existing Q
-                            let new_start = existing_start.min(sector_start);
-                            let new_end = existing_end.max(sector_end);
-                            let new_key = (block.devmajor, block.devminor, new_start, new_end, block.comm.clone());
-                            
-                            keys_to_update.push((existing_key.clone(), new_key, *first_time, block.time));
-                            merged = true;
-                            break;
-                        }
-                    }
-                }
-                
-                if merged {
-                    // Update the merged entry
-                    for (old_key, new_key, first_time, latest_time) in keys_to_update {
-                        dispatch_map.remove(&old_key);
-                        dispatch_map.insert(new_key, (first_time, latest_time));
-                    }
-                } else {
-                    // No merge, insert as new entry
-                    dispatch_map.insert(key, (block.time, block.time));
-                }
-                
+                // Q acts as dispatch (issue) - store dispatch time
+                let key = (block.devmajor, block.devminor, block.sector, block.size, block.comm.clone());
+                dispatch_map.insert(key, block.time);
                 // Set dtoc = 0 for dispatch events (no completion yet)
                 block.dtoc = 0.0;
             },
-            "M" => {
-                // M (Merge) - indicates that requests are being merged
-                // The merge logic is handled in Q events, so just set dtoc = 0
-                block.dtoc = 0.0;
-            },
             "C" => {
-                // C acts as complete - find the best matching Q (considering merges)
-                let sector_start = block.sector;
-                let sector_end = block.sector + (block.size as u64 / 512).max(1) - 1;
-                
-                let mut best_match: Option<((u32, u32, u64, u64, String), (f64, f64))> = None;
-                
-                // Find the dispatch entry that best matches this completion
-                for (key, times) in dispatch_map.iter() {
-                    if key.0 == block.devmajor && key.1 == block.devminor && key.4 == block.comm {
-                        let dispatch_start = key.2;
-                        let dispatch_end = key.3;
-                        
-                        // Check if completion covers the dispatched range
-                        if sector_start <= dispatch_start && sector_end >= dispatch_end {
-                            best_match = Some((key.clone(), *times));
-                            break;
-                        }
-                        // Also check if there's significant overlap
-                        else if sector_start <= dispatch_end && sector_end >= dispatch_start {
-                            let overlap_start = sector_start.max(dispatch_start);
-                            let overlap_end = sector_end.min(dispatch_end);
-                            let overlap_size = overlap_end.saturating_sub(overlap_start) + 1;
-                            let dispatch_size = dispatch_end - dispatch_start + 1;
-                            
-                            // If overlap is significant (>= 50%), consider it a match
-                            if overlap_size * 2 >= dispatch_size {
-                                best_match = Some((key.clone(), *times));
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                if let Some((matched_key, (_first_q_time, latest_q_time))) = best_match {
-                    // Use the latest Q time as the dispatch time for merged requests
-                    block.dtoc = (block.time - latest_q_time) * 1000.0;
-                    dispatch_map.remove(&matched_key);
+                // C acts as complete - calculate dtoc from corresponding Q
+                let key = (block.devmajor, block.devminor, block.sector, block.size, block.comm.clone());
+                if let Some(dispatch_time) = dispatch_map.remove(&key) {
+                    // Calculate dispatch-to-complete latency in milliseconds
+                    block.dtoc = (block.time - dispatch_time) * 1000.0;
                 } else {
                     // No matching Q found, set to 0
                     block.dtoc = 0.0;
                 }
             },
             _ => {
-                // Other actions don't affect dtoc calculation
+                // Other actions (including M) don't affect dtoc calculation
                 block.dtoc = 0.0;
             }
         }

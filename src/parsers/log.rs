@@ -646,6 +646,7 @@ fn process_ufscustom_content(content: &str) -> io::Result<Vec<UFSCUSTOM>> {
                         ctoc: 0.0,
                         ctod: 0.0,
                         continuous: false,
+                        aligned: crate::utils::is_block_aligned(lba),
                     };
 
                     chunk_results.push(ufscustom);
