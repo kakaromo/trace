@@ -139,7 +139,7 @@ pub fn parse_blktrace_csv_event(line: &str) -> Result<Block, &'static str> {
     if let Some(caps) = BLKTRACE_CSV_RE.captures(line) {
         let block = Block {
             time: caps["time"].parse().unwrap_or(0.0),
-            process: format!("{}", caps["pid"].to_string()), // PID as process identifier
+            process: caps["pid"].to_string(), // PID as process identifier
             cpu: caps["cpu"].parse().unwrap_or(0),
             flags: String::new(), // Not available in CSV format
             action: caps["action"].to_string(),
@@ -660,7 +660,7 @@ pub fn parse_log_line(line: &str) -> Option<(crate::TraceType, String)> {
 // Calculate dispatch-to-complete (dtoc) latency for block events
 // Q (Queue) is treated as dispatch, C (Complete) is treated as complete
 // This matches Q with C events similar to block_rq_issue -> block_rq_complete
-pub fn calculate_block_latency_advanced(blocks: &mut Vec<Block>) {
+pub fn calculate_block_latency_advanced(blocks: &mut [Block]) {
     use std::collections::HashMap;
     
     // Simple Q (dispatch) to C (complete) mapping
