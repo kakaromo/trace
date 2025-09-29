@@ -505,7 +505,7 @@ pub fn append_block_to_parquet(
     Ok(())
 }
 
-pub fn append_ufscustom_to_parquet(
+fn append_ufscustom_to_parquet(
     ufscustom_traces: &[UFSCUSTOM],
     filepath: &str,
     chunk_size: usize,

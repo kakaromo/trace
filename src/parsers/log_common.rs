@@ -5,8 +5,8 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use std::io;
 use rand::random;
-use std::fs::{self, OpenOptions, File};
-use std::io::{Read, BufWriter, BufRead, Write};
+use std::fs::{OpenOptions, File};
+use std::io::{Read, BufRead};
 use std::time::Instant;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
@@ -438,55 +438,6 @@ pub fn deserialize_ufscustom_items<R: Read>(reader: &mut R) -> io::Result<Vec<UF
     Ok(ufscustom_items)
 }
 
-/// Serialize items to a binary file using bincode
-pub fn serialize_to_bincode<T: bincode::Encode>(
-    items: &[T], 
-    file_path: &str
-) -> io::Result<()> {
-    let start_time = Instant::now();
-    let file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(file_path)?;
-        
-    let mut writer = BufWriter::new(file);
-    let config = bincode::config::standard();
-    
-    println!("Serializing {} items to {}", items.len(), file_path);
-    
-    for item in items {
-        bincode::encode_into_std_write(item, &mut writer, config)
-            .map_err(|e| io::Error::new(
-                io::ErrorKind::Other, 
-                format!("Bincode serialization error: {}", e)
-            ))?;
-    }
-    
-    writer.flush()?;
-    
-    println!("Serialized {} items in {:.2} seconds", 
-        items.len(), start_time.elapsed().as_secs_f64());
-    
-    Ok(())
-}
-
-/// Check if a file exists and is readable
-pub fn check_file_readable(file_path: &str) -> io::Result<u64> {
-    let metadata = fs::metadata(file_path)?;
-    if !metadata.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("Path is not a file: {}", file_path),
-        ));
-    }
-    
-    // Try opening the file to verify read access
-    let file = File::open(file_path)?;
-    let file_size = file.metadata()?.len();
-    
-    Ok(file_size)
-}
 
 /// Get optimal buffer size based on file size
 pub fn get_optimal_buffer_size(file_size: u64) -> usize {
