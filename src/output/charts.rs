@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::error::Error;
 
 /// Plotters 차트 생성을 위한 공통 구조체
+#[derive(Clone)]
 pub struct PlottersConfig {
     pub width: u32,
     pub height: u32,
@@ -21,12 +22,12 @@ impl Default for PlottersConfig {
         Self {
             width: 1800,
             height: 800,
-            font_family: "D2Coding", // D2Coding 폰트 (크로스플랫폼 개발자용 폰트)
-            title_font_size: 24,      // 30 -> 24로 줄임
-            axis_label_font_size: 16, // 20 -> 16으로 줄임
-            tick_label_font_size: 12, // 15 -> 12로 줄임
+            font_family: "D2Coding",
+            title_font_size: 24,
+            axis_label_font_size: 16,
+            tick_label_font_size: 12, 
             point_size: 2,
-            legend_spacing: 25,       // 30 -> 25로 줄임
+            legend_spacing: 25,
             y_axis_range: None, // 기본값은 자동 범위
         }
     }
@@ -114,6 +115,21 @@ fn ufs_opcode_color_mapper(opcode: &str) -> RGBColor {
     }
 }
 
+/// CPU 색상 매핑 헬퍼 함수 - CPU 번호에 따라 색상 고정
+fn cpu_color_mapper(cpu: &str) -> RGBColor {
+    match cpu {
+        "0" => RGBColor(228, 26, 28),      // 빨강
+        "1" => RGBColor(55, 126, 184),     // 파랑
+        "2" => RGBColor(77, 175, 74),      // 초록
+        "3" => RGBColor(152, 78, 163),     // 보라
+        "4" => RGBColor(255, 127, 0),      // 주황
+        "5" => RGBColor(255, 255, 51),     // 노랑
+        "6" => RGBColor(166, 86, 40),      // 갈색
+        "7" => RGBColor(247, 129, 191),    // 분홍
+        _ => RGBColor(50, 50, 50),         // 기타 (8 이상 또는 음수) - 검은색
+    }
+}
+
 /// 일반적인 X대비 Y 그래프 생성을 위한 함수
 /// T: 데이터 타입, F: X축 추출 함수, G: Y축 데이터 추출 함수, H: 필터 조건 함수
 /// 
@@ -169,7 +185,7 @@ where
     .into_drawing_area();
     root.fill(&WHITE).map_err(|e| e.to_string())?;
 
-    // 차트 영역과 레전드 영역을 분리 (y축 라벨을 위한 공간 확보)
+    // chart 영역과 legend 영역을 분리 (y축 label을 위한 공간 확보)
     let (chart_area, legend_area) = root.split_horizontally(1100);
 
     // Find min and max values for axes
@@ -216,12 +232,12 @@ where
             (
                 chart_config.config.font_family,
                 chart_config.config.title_font_size,
-                FontStyle::Normal,  // Bold 제거, Normal 스타일 명시적 지정
+                FontStyle::Normal,
             ),
         )
-        .margin(30)              // 20 -> 30으로 늘림 (제목과 차트 간격)
-        .x_label_area_size(70)   // 60 -> 70으로 늘림
-        .y_label_area_size(150)  // 140 -> 150으로 늘림 (y축 라벨 영역 더 확대)
+        .margin(30)
+        .x_label_area_size(70)
+        .y_label_area_size(150)
         .build_cartesian_2d(min_x..max_x, min_y..max_y)
         .map_err(|e| e.to_string())?;
 
@@ -238,7 +254,7 @@ where
         .label_style((
             chart_config.config.font_family,
             chart_config.config.tick_label_font_size,
-            FontStyle::Normal,  // Bold 제거, Normal 스타일 명시적 지정
+            FontStyle::Normal,
         ))
         // .disable_mesh()  // 격자 비활성화
         .draw()
@@ -294,6 +310,83 @@ struct UfsMetricInfo<'a> {
     require_positive: bool,
 }
 
+/// UFS CPU 차트 생성 함수
+/// Send/Complete별로 Time vs CPU 또는 Time vs LBA 차트를 생성합니다
+fn create_ufs_cpu_chart(
+    data: &[UFS],
+    output_prefix: &str,
+    config: &PlottersConfig,
+    action_filter: &str, // "send_req" 또는 "complete_rsp"
+    chart_type: &str, // "cpu" 또는 "address"
+) -> Result<(), String> {
+    if data.is_empty() {
+        return Err("No UFS data available for generating CPU charts".to_string());
+    }
+
+    // CPU별로 데이터 그룹화
+    let mut cpu_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
+    for item in data {
+        // 지정된 action만 포함
+        if item.action == action_filter {
+            cpu_groups
+                .entry(item.cpu.to_string())
+                .or_default()
+                .push(item);
+        }
+    }
+
+    if cpu_groups.is_empty() {
+        return Err(format!("No valid data for UFS {} {} chart", action_filter, chart_type));
+    }
+
+    let action_label = if action_filter == "send_req" { "Send" } else { "Complete" };
+    
+    let (title, y_label, png_path, y_range) = match chart_type {
+        "cpu" => (
+            format!("UFS {} - CPU Allocation over Time", action_label),
+            "CPU",
+            format!("{}_ufs_{}_cpu_time_plotters.png", output_prefix, action_filter),
+            Some((-1.0, 8.0)),
+        ),
+        "address" => (
+            format!("UFS {} - LBA Distribution over Time (by CPU)", action_label),
+            "LBA",
+            format!("{}_ufs_{}_lba_time_plotters.png", output_prefix, action_filter),
+            None,
+        ),
+        _ => return Err(format!("Unknown chart type: {}", chart_type)),
+    };
+
+    let y_extractor: fn(&UFS) -> f64 = match chart_type {
+        "cpu" => |ufs: &UFS| ufs.cpu as f64,
+        "address" => |ufs: &UFS| ufs.lba as f64,
+        _ => return Err(format!("Unknown chart type: {}", chart_type)),
+    };
+
+    // y축 범위 설정
+    let mut chart_config = config.clone();
+    if let Some(range) = y_range {
+        chart_config.y_axis_range = Some(range);
+    }
+
+    create_xy_scatter_chart(
+        &cpu_groups,
+        &png_path,
+        &chart_config,
+        &title,
+        "Time (s)",
+        &y_label,
+        |ufs| ufs.time,
+        y_extractor,
+        cpu_color_mapper,
+        None::<fn(&&UFS) -> bool>,
+    )?;
+
+    println!("UFS {} {} chart saved to: {}", action_filter, chart_type, png_path);
+
+    Ok(())
+}
+
 /// 통합된 UFS 지표 차트 생성 함수
 /// 매개변수로 받은 metric에 따라 다양한 UFS 차트를 생성합니다
 fn create_ufs_metric_chart(
@@ -346,7 +439,7 @@ fn create_ufs_metric_chart(
         _ => return Err(format!("Unknown metric: {}", metric)),
     };
 
-    // 명령어별로 데이터 그룹화 (opcode 값 그대로 사용)
+    // opcode별로 데이터 그룹화 (opcode 값 그대로 사용)
     let mut opcode_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
     for item in data {
         // LBA와 QD 메트릭의 경우 send_req만 포함
@@ -404,6 +497,89 @@ struct BlockMetricInfo<'a> {
     metric_extractor: fn(&Block) -> f64,
     file_suffix: &'a str,
     require_positive: bool,
+}
+
+/// Block CPU 차트 생성 함수
+/// Send/Complete별로 Time vs CPU 또는 Time vs Sector 차트를 생성합니다
+fn create_block_cpu_chart(
+    data: &[Block],
+    output_prefix: &str,
+    config: &PlottersConfig,
+    action_filter: &str, // "issue" 또는 "complete"
+    chart_type: &str, // "cpu" 또는 "address"
+) -> Result<(), String> {
+    if data.is_empty() {
+        return Err("No Block data available for generating CPU charts".to_string());
+    }
+
+    // CPU별로 데이터 그룹화
+    let mut cpu_groups: HashMap<String, Vec<&Block>> = HashMap::new();
+    for item in data {
+        // action_filter에 따라 필터링
+        let is_match = match action_filter {
+            "issue" => item.action == "block_rq_issue" || item.action == "Q",
+            "complete" => item.action == "block_rq_complete" || item.action == "C",
+            _ => false,
+        };
+        
+        if is_match {
+            cpu_groups
+                .entry(item.cpu.to_string())
+                .or_default()
+                .push(item);
+        }
+    }
+
+    if cpu_groups.is_empty() {
+        return Err(format!("No valid data for Block {} {} chart", action_filter, chart_type));
+    }
+
+    let action_label = if action_filter == "issue" { "Send" } else { "Complete" };
+    
+    let (title, y_label, png_path, y_range) = match chart_type {
+        "cpu" => (
+            format!("Block I/O {} - CPU Allocation over Time", action_label),
+            "CPU",
+            format!("{}_block_{}_cpu_time_plotters.png", output_prefix, action_filter),
+            Some((-1.0, 8.0)),
+        ),
+        "address" => (
+            format!("Block I/O {} - Sector Distribution over Time (by CPU)", action_label),
+            "Sector",
+            format!("{}_block_{}_sector_time_plotters.png", output_prefix, action_filter),
+            None,
+        ),
+        _ => return Err(format!("Unknown chart type: {}", chart_type)),
+    };
+
+    let y_extractor: fn(&Block) -> f64 = match chart_type {
+        "cpu" => |block: &Block| block.cpu as f64,
+        "address" => |block: &Block| block.sector as f64,
+        _ => return Err(format!("Unknown chart type: {}", chart_type)),
+    };
+
+    // y축 범위 설정
+    let mut chart_config = config.clone();
+    if let Some(range) = y_range {
+        chart_config.y_axis_range = Some(range);
+    }
+
+    create_xy_scatter_chart(
+        &cpu_groups,
+        &png_path,
+        &chart_config,
+        &title,
+        "Time (s)",
+        &y_label,
+        |block| block.time,
+        y_extractor,
+        cpu_color_mapper,
+        None::<fn(&&Block) -> bool>,
+    )?;
+
+    println!("Block {} {} chart saved to: {}", action_filter, chart_type, png_path);
+
+    Ok(())
 }
 
 /// 통합된 Block I/O 지표 차트 생성 함수
@@ -577,7 +753,7 @@ fn create_ufscustom_metric_chart(
         _ => return Err(format!("Unknown metric: {}", metric)),
     };
 
-    // 명령어별로 데이터 그룹화 (opcode 값 그대로 사용)
+    // opcode별로 데이터 그룹화 (opcode 값 그대로 사용)
     let mut opcode_groups: HashMap<String, Vec<&UFSCUSTOM>> = HashMap::new();
     for item in data {
         // 양수 값이 필요한 메트릭은 필터링
@@ -648,6 +824,48 @@ pub fn generate_charts_with_config(
 
     // UFS 차트 생성
     if !processed_ufs.is_empty() {
+        let config = PlottersConfig::default();
+        
+        // UFS Send CPU Time 차트
+        match create_ufs_cpu_chart(processed_ufs, output_prefix, &config, "send_req", "cpu") {
+            Ok(_) => {
+                println!("UFS send_req CPU time chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFS send_req CPU time chart: {}", e);
+            }
+        }
+
+        // UFS Send LBA Time 차트 (CPU별 색상)
+        match create_ufs_cpu_chart(processed_ufs, output_prefix, &config, "send_req", "address") {
+            Ok(_) => {
+                println!("UFS send_req LBA time chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFS send_req LBA time chart: {}", e);
+            }
+        }
+
+        // UFS Complete CPU Time 차트
+        match create_ufs_cpu_chart(processed_ufs, output_prefix, &config, "complete_rsp", "cpu") {
+            Ok(_) => {
+                println!("UFS complete_rsp CPU time chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFS complete_rsp CPU time chart: {}", e);
+            }
+        }
+
+        // UFS Complete LBA Time 차트 (CPU별 색상)
+        match create_ufs_cpu_chart(processed_ufs, output_prefix, &config, "complete_rsp", "address") {
+            Ok(_) => {
+                println!("UFS complete_rsp LBA time chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating UFS complete_rsp LBA time chart: {}", e);
+            }
+        }
+
         // UFS lba 차트
         let config = PlottersConfig {
             y_axis_range: get_y_range_for_metric("ufs_lba"),
@@ -721,6 +939,48 @@ pub fn generate_charts_with_config(
 
     // Block I/O 차트 생성
     if !processed_blocks.is_empty() {
+        let config = PlottersConfig::default();
+        
+        // Block Send CPU Time 차트
+        match create_block_cpu_chart(processed_blocks, output_prefix, &config, "issue", "cpu") {
+            Ok(_) => {
+                println!("Block I/O issue CPU time chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating Block I/O issue CPU time chart: {}", e);
+            }
+        }
+
+        // Block Send Sector Time 차트 (CPU별 색상)
+        match create_block_cpu_chart(processed_blocks, output_prefix, &config, "issue", "address") {
+            Ok(_) => {
+                println!("Block I/O issue sector time chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating Block I/O issue sector time chart: {}", e);
+            }
+        }
+
+        // Block Complete CPU Time 차트
+        match create_block_cpu_chart(processed_blocks, output_prefix, &config, "complete", "cpu") {
+            Ok(_) => {
+                println!("Block I/O complete CPU time chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating Block I/O complete CPU time chart: {}", e);
+            }
+        }
+
+        // Block Complete Sector Time 차트 (CPU별 색상)
+        match create_block_cpu_chart(processed_blocks, output_prefix, &config, "complete", "address") {
+            Ok(_) => {
+                println!("Block I/O complete sector time chart generated.");
+            }
+            Err(e) => {
+                eprintln!("Error generating Block I/O complete sector time chart: {}", e);
+            }
+        }
+
         // Block I/O lba 차트
         let config = PlottersConfig {
             y_axis_range: get_y_range_for_metric("block_lba"),

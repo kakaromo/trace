@@ -18,8 +18,6 @@ fn get_file_size(file_path: &str) -> io::Result<u64> {
     Ok(metadata.len())
 }
 
-
-
 /// Parse y-axis ranges from command line argument
 /// Format: "metric:min:max,metric:min:max"
 /// Example: "ufs_dtoc:0:100,block_dtoc:0:50"

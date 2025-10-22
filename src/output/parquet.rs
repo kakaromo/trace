@@ -18,7 +18,7 @@ pub fn save_to_parquet(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
     
-    // 순차적으로 파일 저장 (스레드 안전성 문제 해결)
+    // sequentially save files (thread safety issue resolved)
     if !ufs_traces.is_empty() {
         save_ufs_to_parquet(ufs_traces, &format!("{}_ufs.parquet", output_path), chunk_size)?;
     }
@@ -35,32 +35,32 @@ pub fn save_to_parquet(
     Ok(())
 }
 
-// 압축 알고리즘 선택 (데이터 크기에 따라 동적 결정)
+// select compression algorithm (dynamic decision based on data size)
 fn select_compression(data_size: usize) -> Compression {
     match data_size {
-        // 소형 데이터 (< 1MB): SNAPPY (빠른 속도)
+        // small data (< 1MB): SNAPPY (fast speed)
         n if n < 1024 * 1024 => Compression::SNAPPY,
-        // 중형 데이터 (1MB ~ 10MB): ZSTD 레벨 3 (균형)
+        // medium data (1MB ~ 10MB): ZSTD level 3 (balance)
         n if n < 10 * 1024 * 1024 => Compression::ZSTD(ZstdLevel::try_new(3).unwrap()),
-        // 대형 데이터 (10MB ~ 100MB): ZSTD 레벨 6 (높은 압축률)
+        // large data (10MB ~ 100MB): ZSTD level 6 (high compression rate)
         n if n < 100 * 1024 * 1024 => Compression::ZSTD(ZstdLevel::try_new(6).unwrap()),
-        // 초대형 데이터 (≥ 100MB): ZSTD 레벨 9 (최고 압축률)
+        // large data (≥ 100MB): ZSTD level 9 (highest compression rate)
         _ => Compression::ZSTD(ZstdLevel::try_new(9).unwrap()),
     }
 }
 
-// 최적화된 WriterProperties 생성 (동적 압축 설정)
+// optimized WriterProperties creation (dynamic compression settings)
 fn create_writer_properties_with_compression(compression: Compression) -> WriterProperties {
     WriterProperties::builder()
         .set_compression(compression)
-        .set_encoding(Encoding::PLAIN)         // 빠른 인코딩
-        .set_dictionary_enabled(true)          // 딕셔너리 활성화로 압축률 향상
-        .set_statistics_enabled(EnabledStatistics::Chunk)  // 청크 단위 통계로 균형 유지
-        .set_max_row_group_size(1_000_000)    // 큰 로우 그룹으로 I/O 최적화
+        .set_encoding(Encoding::PLAIN)         // fast encoding
+        .set_dictionary_enabled(true)          // enable dictionary compression for better compression rate
+        .set_statistics_enabled(EnabledStatistics::Chunk)  // enable chunk-wise statistics for balance between performance and compression rate
+        .set_max_row_group_size(1_000_000)    // optimize I/O by using large row groups
         .build()
 }
 
-// 최적화된 UFS Parquet 저장
+// optimized UFS Parquet save
 fn save_ufs_to_parquet(
     traces: &[UFS], 
     filepath: &str, 
