@@ -1,6 +1,7 @@
 use crate::log;
 use crate::models::{Block, TraceItem, UFS, UFSCUSTOM};
 use crate::utils::get_user_latency_ranges;
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -173,6 +174,7 @@ impl TraceItem for UFSCUSTOM {
 #[derive(Default)]
 struct LatencyStats {
     values: Vec<f64>,
+    sorted_values: Option<Vec<f64>>, // 정렬된 값을 캐시
     sum: f64,
     min: f64,
     max: f64,
@@ -182,6 +184,7 @@ impl LatencyStats {
     fn new() -> Self {
         Self {
             values: Vec::new(),
+            sorted_values: None,
             sum: 0.0,
             min: f64::MAX,
             max: 0.0,
@@ -193,6 +196,18 @@ impl LatencyStats {
         self.sum += value;
         self.min = self.min.min(value);
         self.max = self.max.max(value);
+        // 값이 추가되면 캐시 무효화
+        self.sorted_values = None;
+    }
+    
+    // 정렬된 값을 가져오거나 생성
+    fn get_sorted(&mut self) -> &[f64] {
+        if self.sorted_values.is_none() {
+            let mut sorted = self.values.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+            self.sorted_values = Some(sorted);
+        }
+        self.sorted_values.as_ref().unwrap()
     }
 
     fn avg(&self) -> f64 {
@@ -203,15 +218,13 @@ impl LatencyStats {
         }
     }
 
-    fn median(&self) -> f64 {
+    fn median(&mut self) -> f64 {
         if self.values.is_empty() {
             return 0.0;
         }
 
-        // Copy and sort values
-        let mut sorted = self.values.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-
+        // 정렬된 값 재사용
+        let sorted = self.get_sorted();
         let mid = sorted.len() / 2;
         if sorted.len() % 2 == 0 {
             (sorted[mid - 1] + sorted[mid]) / 2.0
@@ -237,14 +250,12 @@ impl LatencyStats {
         variance.sqrt()
     }
 
-    fn percentile(&self, p: f64) -> f64 {
+    fn percentile(&mut self, p: f64) -> f64 {
         if self.values.is_empty() {
             return 0.0;
         }
-        // Copy and sort values for percentile calculation
-        let mut sorted = self.values.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-
+        // 정렬된 값 재사용
+        let sorted = self.get_sorted();
         let idx = (p / 100.0 * (sorted.len() - 1) as f64).round() as usize;
         sorted[idx]
     }
@@ -327,7 +338,7 @@ fn count_sizes<T>(traces: &[&T], size_fn: impl Fn(&&T) -> u32) -> HashMap<u32, u
 // 모든 트레이스 타입에 공통으로 사용할 통계 처리 함수들
 
 // 제네릭 통계 출력 함수
-pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str) {
+pub fn print_trace_statistics<T: TraceItem + Sync>(traces: &[T], trace_type_name: &str) {
     if traces.is_empty() {
         log!("{} 트레이스가 비어 있습니다.", trace_type_name);
         return;
@@ -552,10 +563,10 @@ pub fn print_trace_statistics<T: TraceItem>(traces: &[T], trace_type_name: &str)
 }
 
 // 제네릭 지연 시간 통계 출력 함수
-fn print_generic_latency_stats_by_type<T: TraceItem>(
+fn print_generic_latency_stats_by_type<T: TraceItem + Sync>(
     type_groups: &HashMap<String, Vec<&T>>,
     stat_name: &str,
-    latency_fn: impl Fn(&&T) -> f64,
+    latency_fn: impl Fn(&&T) -> f64 + Sync + Send,
 ) {
     log!("\n{} Statistics:", stat_name);
     log!("Type,Avg,Min,Median,Max,Std,99th,99.9th,99.99th,99.999th,99.9999th");
@@ -564,43 +575,69 @@ fn print_generic_latency_stats_by_type<T: TraceItem>(
     let mut types: Vec<&String> = type_groups.keys().collect();
     types.sort();
 
-    for &type_name in &types {
-        let traces = &type_groups[type_name];
+    // 타입별 통계를 병렬로 계산
+    let results: Vec<(String, String)> = types
+        .par_iter()
+        .filter_map(|&type_name| {
+            let traces = &type_groups[type_name];
 
-        // 지연 시간 통계 계산
-        let mut stats = LatencyStats::new();
-        for &trace in traces {
-            let latency = latency_fn(&trace);
-            if latency > 0.0 {
-                // 유효한 지연 시간만 처리
-                stats.add(latency);
+            // 지연 시간 통계 계산
+            let mut stats = LatencyStats::new();
+            for &trace in traces {
+                let latency = latency_fn(&trace);
+                if latency > 0.0 {
+                    // 유효한 지연 시간만 처리
+                    stats.add(latency);
+                }
             }
-        }
 
-        if !stats.values.is_empty() {
-            log!(
-                "{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}",
-                type_name,
-                stats.avg(),
-                stats.min,
-                stats.median(),
-                stats.max,
-                stats.std_dev(),
-                stats.percentile(99.0),
-                stats.percentile(99.9),
-                stats.percentile(99.99),
-                stats.percentile(99.999),
-                stats.percentile(99.9999)
-            );
+            if !stats.values.is_empty() {
+                // 모든 통계 값을 먼저 계산 (mutable borrow 문제 해결)
+                let avg = stats.avg();
+                let min = stats.min;
+                let median = stats.median();
+                let max = stats.max;
+                let std_dev = stats.std_dev();
+                let p99 = stats.percentile(99.0);
+                let p999 = stats.percentile(99.9);
+                let p9999 = stats.percentile(99.99);
+                let p99999 = stats.percentile(99.999);
+                let p999999 = stats.percentile(99.9999);
+                
+                let result = format!(
+                    "{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}",
+                    type_name,
+                    avg,
+                    min,
+                    median,
+                    max,
+                    std_dev,
+                    p99,
+                    p999,
+                    p9999,
+                    p99999,
+                    p999999
+                );
+                Some((type_name.clone(), result))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // 타입 이름 순서대로 출력 (병렬 계산 후 순서 보장)
+    for type_name in types {
+        if let Some((_, result)) = results.iter().find(|(name, _)| name == type_name) {
+            log!("{}", result);
         }
     }
 }
 
 // 제네릭 지연 시간 범위 분포 출력 함수
-fn print_generic_latency_ranges_by_type<T: TraceItem>(
+fn print_generic_latency_ranges_by_type<T: TraceItem + Sync>(
     type_groups: &HashMap<String, Vec<&T>>,
     stat_name: &str,
-    latency_fn: impl Fn(&&T) -> f64,
+    latency_fn: impl Fn(&&T) -> f64 + Sync + Send,
 ) {
     log!("\n{} Distribution by Range:", stat_name);
 
@@ -615,21 +652,23 @@ fn print_generic_latency_ranges_by_type<T: TraceItem>(
     }
     log!("{}", header);
 
-    // 각 타입에 대한 지연 시간 통계 계산
-    let mut all_stats = HashMap::new();
-    for &type_name in &types {
-        let traces = &type_groups[type_name];
-        let mut stats = LatencyStats::new();
+    // 각 타입에 대한 지연 시간 통계를 병렬로 계산
+    let all_stats: HashMap<&String, LatencyStats> = types
+        .par_iter()
+        .map(|&type_name| {
+            let traces = &type_groups[type_name];
+            let mut stats = LatencyStats::new();
 
-        for &trace in traces {
-            let latency = latency_fn(&trace);
-            if latency > 0.0 {
-                stats.add(latency);
+            for &trace in traces {
+                let latency = latency_fn(&trace);
+                if latency > 0.0 {
+                    stats.add(latency);
+                }
             }
-        }
 
-        all_stats.insert(type_name, stats);
-    }
+            (type_name, stats)
+        })
+        .collect();
 
     // 지연 시간 범위를 동적으로 가져오기
     // 첫 번째 통계 객체에서 범위를 가져옴 (비어 있지 않다면)
