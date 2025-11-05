@@ -256,8 +256,22 @@ impl LatencyStats {
         }
         // 정렬된 값 재사용
         let sorted = self.get_sorted();
-        let idx = (p / 100.0 * (sorted.len() - 1) as f64).round() as usize;
-        sorted[idx]
+        let n = sorted.len();
+
+        // 선형 보간법 (Linear Interpolation) 사용
+        // 표준적인 percentile 계산 방법
+        let index = (p / 100.0) * (n - 1) as f64;
+        let lower_index = index.floor() as usize;
+        let upper_index = index.ceil() as usize;
+
+        // 인덱스가 같으면 (정수 인덱스인 경우) 해당 값 반환
+        if lower_index == upper_index {
+            return sorted[lower_index];
+        }
+
+        // 선형 보간
+        let weight = index - lower_index as f64;
+        sorted[lower_index] * (1.0 - weight) + sorted[upper_index] * weight
     }
 
     fn latency_ranges(&self) -> HashMap<String, usize> {
