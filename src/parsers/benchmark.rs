@@ -48,8 +48,8 @@ impl BenchmarkParser {
             ufs_trace_regex: Regex::new(r"ufshcd_command:").unwrap(),
             // Block trace 감지: "block_rq_"
             block_trace_regex: Regex::new(r"block_rq_").unwrap(),
-            // UFSCustom trace 감지 (예시 패턴, 실제 패턴에 맞게 수정 필요)
-            ufscustom_trace_regex: Regex::new(r"ufscustom_").unwrap(),
+            // UFSCustom trace 감지: CSV 형식 "0x[opcode],[lba],[size],[start_time],[end_time]"
+            ufscustom_trace_regex: Regex::new(r"^0x[0-9a-f]+,\d+,\d+,").unwrap(),
         }
     }
 
@@ -223,9 +223,24 @@ mod tests {
     fn test_trace_detection() {
         let parser = BenchmarkParser::new();
         let mut current_iter = 1;
-        
+
         let ufs_line = "    kworker/1:1H-175     [001] ..... 22218.735851: ufshcd_command: send_req:";
         let result = parser.detect_line_type(ufs_line, &mut current_iter);
         assert_eq!(result, LogLineType::UfsTrace);
+
+        // Test block trace detection
+        let block_line = "  test-123   [000] ..... 12345.678901: block_rq_issue: 8,0 R 4096 () 1000 + 8 [test]";
+        let result = parser.detect_line_type(block_line, &mut current_iter);
+        assert_eq!(result, LogLineType::BlockTrace);
+
+        // Test UFSCUSTOM trace detection
+        let ufscustom_line = "0x28,1000,8,123.456,123.789";
+        let result = parser.detect_line_type(ufscustom_line, &mut current_iter);
+        assert_eq!(result, LogLineType::UfsCustomTrace);
+
+        // Test another UFSCUSTOM format
+        let ufscustom_line2 = "0x2a,2048,16,456.123,456.567";
+        let result = parser.detect_line_type(ufscustom_line2, &mut current_iter);
+        assert_eq!(result, LogLineType::UfsCustomTrace);
     }
 }
