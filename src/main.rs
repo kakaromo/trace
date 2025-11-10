@@ -4,6 +4,7 @@ use std::fs;
 use std::io;
 use std::time::Instant;
 use trace::parsers::{parse_log_file_high_perf};
+use trace::processors;
 use trace::utils::{
     parse_latency_ranges, read_filter_options, set_user_latency_ranges, FilterOptions, Logger,
     AlignmentConfig, set_alignment_config,
@@ -78,6 +79,9 @@ fn print_usage(program: &str) {
 
     eprintln!("  {} --migrate <path> [migration_options]                      - Migrate existing Parquet files to new schema", program);
     eprintln!("\nOptions:");
+    eprintln!("  -p           - Performance benchmark mode: Auto-detects FIO, TIOtest, IOzone results and trace types");
+    eprintln!("                 Creates iteration-based folders: <output_prefix>/1/, <output_prefix>/2/, ...");
+    eprintln!("                 Example: {} -p benchmark.log fio_result", program);
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
     eprintln!("  -f           - Apply filters (time, sector/lba, latency, queue depth) with interactive input");
     eprintln!("  -y <ranges>  - Set y-axis ranges for charts. Format: metric:min:max,metric:min:max");
@@ -115,9 +119,14 @@ fn main() -> io::Result<()> {
     let mut chunk_size: usize = 50_000; // 기본 청크 크기
     let mut export_csv = false; // CSV export 옵션
     let mut alignment_size: Option<u64> = None; // Alignment size 옵션 (None이면 기본값 64KB 사용)
+    let mut benchmark_mode = false; // 벤치마크 모드
 
     while i < args.len() {
         match args[i].as_str() {
+            "-p" => {
+                benchmark_mode = true;
+                i += 1;
+            }
             "-l" => {
                 if i + 1 >= args.len() {
                     eprintln!("Error: -l option requires values");
@@ -376,11 +385,18 @@ fn main() -> io::Result<()> {
     };
 
     // 명령줄 인수 처리
-    let result: io::Result<()> = if !is_parquet_mode
+    let result: io::Result<()> = if benchmark_mode && log_file_index > 0 && output_prefix_index > 0 {
+        // 벤치마크 모드: iteration 자동 감지 및 trace 타입 자동 분류
+        println!("Performance benchmark mode: Auto-detecting iterations and trace types...");
+        trace::processors::parse_benchmark_log(
+            &args[log_file_index],
+            &args[output_prefix_index],
+        )
+    } else if !is_parquet_mode
         && log_file_index > 0
         && output_prefix_index > 0
     {
-        // 항상 highperf 모드 사용
+        // 일반 trace 로그 파일 처리
         match get_file_size(&args[log_file_index]) {
             Ok(file_size) => {
                 let file_size_mb = file_size as f64 / (1024.0 * 1024.0);

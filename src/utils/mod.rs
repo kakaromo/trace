@@ -4,6 +4,7 @@ pub mod latency;
 pub mod logger;
 pub mod encoding;
 pub mod performance;
+pub mod iteration;
 
 use std::sync::OnceLock;
 
@@ -55,6 +56,7 @@ pub use self::latency::{
 };
 pub use self::logger::Logger;
 pub use self::encoding::{open_encoded_reader, read_to_string_auto, EncodedBufReader};
+pub use self::iteration::IterationOutputManager;
 pub use self::performance::{
     PerformanceMetrics, PerformanceProfiler, MemoryMonitor, SystemMemoryInfo, calculate_optimal_chunk_size,
 };
