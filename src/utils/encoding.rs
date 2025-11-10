@@ -17,14 +17,19 @@ pub fn open_encoded_reader(filepath: &str, buffer_size: usize) -> io::Result<Enc
 }
 
 /// Read the entire file with automatic encoding detection into a UTF-8 `String`.
+/// Uses lossy decoding to handle invalid UTF-8 sequences.
 pub fn read_to_string_auto(filepath: &str) -> io::Result<String> {
-    let file = File::open(filepath)?;
-    let mut decoder = DecodeReaderBytesBuilder::new()
-        .encoding(None)
-        .build(file);
-    let mut contents = String::new();
-    decoder.read_to_string(&mut contents)?;
-    Ok(contents)
+    let mut file = File::open(filepath)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+
+    // Detect encoding from the file content
+    let encoding = detect_encoding(&bytes);
+
+    // Decode with lossy conversion (invalid characters are replaced)
+    let (decoded, _encoding_used, _had_errors) = encoding.decode(&bytes);
+
+    Ok(decoded.into_owned())
 }
 
 /// Detect text encoding from a byte slice.
