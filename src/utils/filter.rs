@@ -9,14 +9,15 @@ pub struct FilterOptions {
     pub start_sector: u64, // 시작 섹터/LBA
     pub end_sector: u64,   // 종료 섹터/LBA
     // 레이턴시 필터링 옵션
-    pub min_dtoc: f64, // 최소 Device to Complete 레이턴시 (ms)
-    pub max_dtoc: f64, // 최대 Device to Complete 레이턴시 (ms)
-    pub min_ctoc: f64, // 최소 Complete to Complete 레이턴시 (ms)
-    pub max_ctoc: f64, // 최대 Complete to Complete 레이턴시 (ms)
-    pub min_ctod: f64, // 최소 Complete to Device 레이턴시 (ms)
-    pub max_ctod: f64, // 최대 Complete to Device 레이턴시 (ms)
-    pub min_qd: u32,   // 최소 Queue Depth
-    pub max_qd: u32,   // 최대 Queue Depth
+    pub min_dtoc: f64,      // 최소 Device to Complete 레이턴시 (ms)
+    pub max_dtoc: f64,      // 최대 Device to Complete 레이턴시 (ms)
+    pub min_ctoc: f64,      // 최소 Complete to Complete 레이턴시 (ms)
+    pub max_ctoc: f64,      // 최대 Complete to Complete 레이턴시 (ms)
+    pub min_ctod: f64,      // 최소 Complete to Device 레이턴시 (ms)
+    pub max_ctod: f64,      // 최대 Complete to Device 레이턴시 (ms)
+    pub min_qd: u32,        // 최소 Queue Depth
+    pub max_qd: u32,        // 최대 Queue Depth
+    pub cpu_list: Vec<u32>, // 필터링할 CPU 번호 목록
 }
 
 impl Default for FilterOptions {
@@ -34,6 +35,7 @@ impl Default for FilterOptions {
             max_ctod: 0.0,
             min_qd: 0,
             max_qd: 0,
+            cpu_list: Vec::new(),
         }
     }
 }
@@ -65,6 +67,10 @@ impl FilterOptions {
         self.min_qd > 0 || self.max_qd > 0
     }
 
+    pub fn is_cpu_filter_active(&self) -> bool {
+        !self.cpu_list.is_empty()
+    }
+
     // UFS LBA로 변환 (4KB = 8 섹터)
     pub fn to_ufs_lba(&self) -> FilterOptions {
         FilterOptions {
@@ -88,6 +94,7 @@ impl FilterOptions {
             max_ctod: self.max_ctod,
             min_qd: self.min_qd,
             max_qd: self.max_qd,
+            cpu_list: self.cpu_list.clone(),
         }
     }
 }
@@ -217,6 +224,21 @@ pub fn read_filter_options() -> io::Result<FilterOptions> {
         }
     }
 
+    // CPU 목록 입력
+    println!("cpu numbers (comma-separated, e.g., 0,1,2,3 or press enter to skip): ");
+    input.clear();
+    stdin.lock().read_line(&mut input)?;
+    let cpu_input = input.trim();
+    if !cpu_input.is_empty() {
+        let cpus: Result<Vec<u32>, _> = cpu_input
+            .split(',')
+            .map(|s| s.trim().parse::<u32>())
+            .collect();
+        if let Ok(cpu_vec) = cpus {
+            filter.cpu_list = cpu_vec;
+        }
+    }
+
     Ok(filter)
 }
 
@@ -232,6 +254,7 @@ pub fn filter_block_data(
         && !filter.is_ctoc_filter_active()
         && !filter.is_ctod_filter_active()
         && !filter.is_qd_filter_active()
+        && !filter.is_cpu_filter_active()
     {
         return block_data;
     }
@@ -380,8 +403,21 @@ pub fn filter_block_data(
                 true
             };
 
+            // CPU 필터 적용
+            let cpu_match = if filter.is_cpu_filter_active() {
+                filter.cpu_list.contains(&item.cpu)
+            } else {
+                true
+            };
+
             // 모든 필터 조건을 만족해야 함
-            time_match && sector_match && dtoc_match && ctoc_match && ctod_match && qd_match
+            time_match
+                && sector_match
+                && dtoc_match
+                && ctoc_match
+                && ctod_match
+                && qd_match
+                && cpu_match
         })
         .collect()
 }
@@ -395,6 +431,7 @@ pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec
         && !filter.is_ctoc_filter_active()
         && !filter.is_ctod_filter_active()
         && !filter.is_qd_filter_active()
+        && !filter.is_cpu_filter_active()
     {
         return ufs_data;
     }
@@ -546,8 +583,21 @@ pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec
                 true
             };
 
+            // CPU 필터 적용
+            let cpu_match = if filter.is_cpu_filter_active() {
+                filter.cpu_list.contains(&item.cpu)
+            } else {
+                true
+            };
+
             // 모든 필터 조건을 만족해야 함
-            time_match && lba_match && dtoc_match && ctoc_match && ctod_match && qd_match
+            time_match
+                && lba_match
+                && dtoc_match
+                && ctoc_match
+                && ctod_match
+                && qd_match
+                && cpu_match
         })
         .collect()
 }
@@ -564,6 +614,7 @@ pub fn filter_ufscustom_data(
         && !filter.is_ctoc_filter_active()
         && !filter.is_ctod_filter_active()
         && !filter.is_qd_filter_active()
+        && !filter.is_cpu_filter_active()
     {
         return ufscustom_data;
     }
@@ -702,7 +753,7 @@ pub fn filter_ufscustom_data(
                 true
             };
 
-            // 모든 필터 조건을 만족해야 함
+            // 모든 필터 조건을 만족해야 함 (UFSCUSTOM은 CPU 필드가 없음)
             time_match && lba_match && dtoc_match && ctoc_match && ctod_match && qd_match
         })
         .collect()
