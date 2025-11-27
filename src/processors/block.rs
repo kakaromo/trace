@@ -1,8 +1,8 @@
 use crate::log;
 use crate::models::Block;
 use crate::utils::constants::MILLISECONDS;
-use std::collections::{HashMap, HashSet};
 use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 // Block latency post-processing function
 pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {

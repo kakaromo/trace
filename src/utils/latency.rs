@@ -38,7 +38,7 @@ pub fn parse_latency_ranges(value_str: &str) -> Result<Vec<f64>, String> {
         match val.trim().parse::<f64>() {
             Ok(v) if v >= 0.0 => ranges.push(v),
             Ok(_) => return Err("Latency range values must be non-negative".to_string()),
-            Err(_) => return Err(format!("Invalid latency range value: {}", val)),
+            Err(_) => return Err(format!("Invalid latency range value: {val}")),
         }
     }
 

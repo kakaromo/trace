@@ -3,15 +3,15 @@ use std::env;
 use std::fs;
 use std::io;
 use std::time::Instant;
-use trace::parsers::{parse_log_file_high_perf};
+use trace::output::save_to_csv;
+use trace::parsers::parse_log_file_high_perf;
 use trace::processors;
 use trace::utils::{
-    parse_latency_ranges, read_filter_options, set_user_latency_ranges, FilterOptions, Logger,
-    AlignmentConfig, set_alignment_config,
+    parse_latency_ranges, read_filter_options, set_alignment_config, set_user_latency_ranges,
+    AlignmentConfig, FilterOptions, Logger,
 };
 use trace::TraceType;
 use trace::*;
-use trace::output::save_to_csv;
 
 /// 파일 크기를 확인하여 처리 방식을 결정하는 함수
 fn get_file_size(file_path: &str) -> io::Result<u64> {
@@ -24,26 +24,38 @@ fn get_file_size(file_path: &str) -> io::Result<u64> {
 /// Example: "ufs_dtoc:0:100,block_dtoc:0:50"
 fn parse_y_axis_ranges(input: &str) -> Result<HashMap<String, (f64, f64)>, String> {
     let mut ranges = HashMap::new();
-    
+
     for part in input.split(',') {
         let components: Vec<&str> = part.split(':').collect();
         if components.len() != 3 {
-            return Err(format!("Invalid format for y-axis range: '{}'. Expected format: metric:min:max", part));
+            return Err(format!(
+                "Invalid format for y-axis range: '{part}'. Expected format: metric:min:max"
+            ));
         }
-        
+
         let metric = components[0].to_string();
-        let min = components[1].parse::<f64>()
-            .map_err(|_| format!("Invalid minimum value '{}' for metric '{}'", components[1], metric))?;
-        let max = components[2].parse::<f64>()
-            .map_err(|_| format!("Invalid maximum value '{}' for metric '{}'", components[2], metric))?;
-        
+        let min = components[1].parse::<f64>().map_err(|_| {
+            format!(
+                "Invalid minimum value '{}' for metric '{}'",
+                components[1], metric
+            )
+        })?;
+        let max = components[2].parse::<f64>().map_err(|_| {
+            format!(
+                "Invalid maximum value '{}' for metric '{}'",
+                components[2], metric
+            )
+        })?;
+
         if min >= max {
-            return Err(format!("Minimum value ({}) must be less than maximum value ({}) for metric '{}'", min, max, metric));
+            return Err(format!(
+                "Minimum value ({min}) must be less than maximum value ({max}) for metric '{metric}'"
+            ));
         }
-        
+
         ranges.insert(metric, (min, max));
     }
-    
+
     Ok(ranges)
 }
 
@@ -51,40 +63,50 @@ fn parse_y_axis_ranges(input: &str) -> Result<HashMap<String, (f64, f64)>, Strin
 /// Format: "64KB", "128KB", "4KB", "1MB" etc.
 fn parse_alignment_size(input: &str) -> Result<u64, String> {
     let input = input.to_uppercase();
-    
+
     if let Some(size_str) = input.strip_suffix("KB") {
-        let size = size_str.parse::<u64>()
-            .map_err(|_| format!("Invalid alignment size: '{}'", input))?;
+        let size = size_str
+            .parse::<u64>()
+            .map_err(|_| format!("Invalid alignment size: '{input}'"))?;
         Ok(size * 1024)
     } else if let Some(size_str) = input.strip_suffix("MB") {
-        let size = size_str.parse::<u64>()
-            .map_err(|_| format!("Invalid alignment size: '{}'", input))?;
+        let size = size_str
+            .parse::<u64>()
+            .map_err(|_| format!("Invalid alignment size: '{input}'"))?;
         Ok(size * 1024 * 1024)
     } else if let Some(size_str) = input.strip_suffix("GB") {
-        let size = size_str.parse::<u64>()
-            .map_err(|_| format!("Invalid alignment size: '{}'", input))?;
+        let size = size_str
+            .parse::<u64>()
+            .map_err(|_| format!("Invalid alignment size: '{input}'"))?;
         Ok(size * 1024 * 1024 * 1024)
     } else {
         // 단위가 없으면 bytes로 처리
-        input.parse::<u64>()
-            .map_err(|_| format!("Invalid alignment size: '{}'. Use format like '64KB', '1MB'", input))
+        input.parse::<u64>().map_err(|_| {
+            format!(
+                "Invalid alignment size: '{input}'. Use format like '64KB', '1MB'"
+            )
+        })
     }
 }
 
 fn print_usage(program: &str) {
     eprintln!("Usage:");
-    eprintln!("  {} [options] <log_file> <output_prefix>                      - Parse log file and generate statistics", program);
-    eprintln!("  {} [options] --parquet <type> <parquet_file> <output_prefix> - Read Parquet file and generate statistics", program);
+    eprintln!("  {program} [options] <log_file> <output_prefix>                      - Parse log file and generate statistics");
+    eprintln!("  {program} [options] --parquet <type> <parquet_file> <output_prefix> - Read Parquet file and generate statistics");
     eprintln!("    where <type> is one of: 'ufs', 'block'");
 
-    eprintln!("  {} --migrate <path> [migration_options]                      - Migrate existing Parquet files to new schema", program);
+    eprintln!("  {program} --migrate <path> [migration_options]                      - Migrate existing Parquet files to new schema");
     eprintln!("\nOptions:");
     eprintln!("  -p           - Performance benchmark mode: Auto-detects FIO, TIOtest, IOzone results and trace types");
     eprintln!("                 Creates iteration-based folders: <output_prefix>/1/, <output_prefix>/2/, ...");
-    eprintln!("                 Example: {} -p benchmark.log fio_result", program);
+    eprintln!(
+        "                 Example: {program} -p benchmark.log fio_result"
+    );
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
     eprintln!("  -f           - Apply filters (time, sector/lba, latency, queue depth) with interactive input");
-    eprintln!("  -y <ranges>  - Set y-axis ranges for charts. Format: metric:min:max,metric:min:max");
+    eprintln!(
+        "  -y <ranges>  - Set y-axis ranges for charts. Format: metric:min:max,metric:min:max"
+    );
     eprintln!("                 Metrics: ufs_dtoc, ufs_ctoc, ufs_ctod, ufs_qd, ufs_lba, block_dtoc, block_ctoc, block_ctod, block_qd, block_lba");
     eprintln!("                 Example: -y ufs_dtoc:0:100,block_dtoc:0:50");
     eprintln!("  -c <size>    - Set chunk size for Parquet file writing (default: 50000). Example: -c 100000");
@@ -140,7 +162,7 @@ fn main() -> io::Result<()> {
                         log!("Using custom latency ranges: {:?}", args[i + 1]);
                     }
                     Err(e) => {
-                        eprintln!("Error in latency ranges: {}", e);
+                        eprintln!("Error in latency ranges: {e}");
                         print_usage(&args[0]);
                         return Ok(());
                     }
@@ -165,7 +187,7 @@ fn main() -> io::Result<()> {
                         log!("Using custom y-axis ranges: {:?}", args[i + 1]);
                     }
                     Err(e) => {
-                        eprintln!("Error in y-axis ranges: {}", e);
+                        eprintln!("Error in y-axis ranges: {e}");
                         print_usage(&args[0]);
                         return Ok(());
                     }
@@ -213,10 +235,14 @@ fn main() -> io::Result<()> {
                 match parse_alignment_size(&args[i + 1]) {
                     Ok(size) => {
                         alignment_size = Some(size);
-                        log!("Using custom alignment size: {} bytes ({})", size, &args[i + 1]);
+                        log!(
+                            "Using custom alignment size: {} bytes ({})",
+                            size,
+                            &args[i + 1]
+                        );
                     }
                     Err(e) => {
-                        eprintln!("Error in alignment size: {}", e);
+                        eprintln!("Error in alignment size: {e}");
                         print_usage(&args[0]);
                         return Ok(());
                     }
@@ -267,9 +293,14 @@ fn main() -> io::Result<()> {
                 }
 
                 // 마이그레이션 실행
-                match trace::migration::run_migration(input_path, migrate_chunk_size, backup_enabled, recursive) {
+                match trace::migration::run_migration(
+                    input_path,
+                    migrate_chunk_size,
+                    backup_enabled,
+                    recursive,
+                ) {
                     Ok(_) => println!("Migration completed successfully"),
-                    Err(e) => eprintln!("Migration failed: {}", e),
+                    Err(e) => eprintln!("Migration failed: {e}"),
                 }
 
                 return Ok(());
@@ -303,7 +334,11 @@ fn main() -> io::Result<()> {
             alignment_size_kb: size_kb,
         };
         set_alignment_config(config);
-        log!("Alignment configuration set to {} KB ({} bytes)", size_kb, size_bytes);
+        log!(
+            "Alignment configuration set to {} KB ({} bytes)",
+            size_kb,
+            size_bytes
+        );
     }
 
     // 필터 옵션 처리
@@ -334,8 +369,16 @@ fn main() -> io::Result<()> {
                 if filter.is_dtoc_filter_active() {
                     println!(
                         "  DTOC 레이턴시 필터: {:.3} - {:.3} ms",
-                        if filter.min_dtoc > 0.0 { filter.min_dtoc } else { 0.0 },
-                        if filter.max_dtoc > 0.0 { filter.max_dtoc } else { f64::INFINITY }
+                        if filter.min_dtoc > 0.0 {
+                            filter.min_dtoc
+                        } else {
+                            0.0
+                        },
+                        if filter.max_dtoc > 0.0 {
+                            filter.max_dtoc
+                        } else {
+                            f64::INFINITY
+                        }
                     );
                 } else {
                     println!("  DTOC 레이턴시 필터: 사용하지 않음");
@@ -344,8 +387,16 @@ fn main() -> io::Result<()> {
                 if filter.is_ctoc_filter_active() {
                     println!(
                         "  CTOC 레이턴시 필터: {:.3} - {:.3} ms",
-                        if filter.min_ctoc > 0.0 { filter.min_ctoc } else { 0.0 },
-                        if filter.max_ctoc > 0.0 { filter.max_ctoc } else { f64::INFINITY }
+                        if filter.min_ctoc > 0.0 {
+                            filter.min_ctoc
+                        } else {
+                            0.0
+                        },
+                        if filter.max_ctoc > 0.0 {
+                            filter.max_ctoc
+                        } else {
+                            f64::INFINITY
+                        }
                     );
                 } else {
                     println!("  CTOC 레이턴시 필터: 사용하지 않음");
@@ -354,8 +405,16 @@ fn main() -> io::Result<()> {
                 if filter.is_ctod_filter_active() {
                     println!(
                         "  CTOD 레이턴시 필터: {:.3} - {:.3} ms",
-                        if filter.min_ctod > 0.0 { filter.min_ctod } else { 0.0 },
-                        if filter.max_ctod > 0.0 { filter.max_ctod } else { f64::INFINITY }
+                        if filter.min_ctod > 0.0 {
+                            filter.min_ctod
+                        } else {
+                            0.0
+                        },
+                        if filter.max_ctod > 0.0 {
+                            filter.max_ctod
+                        } else {
+                            f64::INFINITY
+                        }
                     );
                 } else {
                     println!("  CTOD 레이턴시 필터: 사용하지 않음");
@@ -365,7 +424,11 @@ fn main() -> io::Result<()> {
                     println!(
                         "  QD 필터: {} - {}",
                         if filter.min_qd > 0 { filter.min_qd } else { 0 },
-                        if filter.max_qd > 0 { filter.max_qd } else { u32::MAX }
+                        if filter.max_qd > 0 {
+                            filter.max_qd
+                        } else {
+                            u32::MAX
+                        }
                     );
                 } else {
                     println!("  QD 필터: 사용하지 않음");
@@ -376,7 +439,7 @@ fn main() -> io::Result<()> {
                 Some(filter)
             }
             Err(e) => {
-                eprintln!("필터 옵션 읽기 오류: {}", e);
+                eprintln!("필터 옵션 읽기 오류: {e}");
                 None
             }
         }
@@ -385,24 +448,21 @@ fn main() -> io::Result<()> {
     };
 
     // 명령줄 인수 처리
-    let result: io::Result<()> = if benchmark_mode && log_file_index > 0 && output_prefix_index > 0 {
+    let result: io::Result<()> = if benchmark_mode && log_file_index > 0 && output_prefix_index > 0
+    {
         // 벤치마크 모드: iteration 자동 감지 및 trace 타입 자동 분류
         println!("Performance benchmark mode: Auto-detecting iterations and trace types...");
-        trace::processors::parse_benchmark_log(
-            &args[log_file_index],
-            &args[output_prefix_index],
-        )
-    } else if !is_parquet_mode
-        && log_file_index > 0
-        && output_prefix_index > 0
-    {
+        trace::processors::parse_benchmark_log(&args[log_file_index], &args[output_prefix_index])
+    } else if !is_parquet_mode && log_file_index > 0 && output_prefix_index > 0 {
         // 일반 trace 로그 파일 처리
         match get_file_size(&args[log_file_index]) {
             Ok(file_size) => {
                 let file_size_mb = file_size as f64 / (1024.0 * 1024.0);
-                
+
                 // 항상 highperf 모드 사용
-                println!("File size: {:.2} MB - Using high-performance mode", file_size_mb);
+                println!(
+                    "File size: {file_size_mb:.2} MB - Using high-performance mode"
+                );
                 process_highperf_log_file(
                     &args[log_file_index],
                     &args[output_prefix_index],
@@ -413,7 +473,7 @@ fn main() -> io::Result<()> {
                 )
             }
             Err(e) => {
-                eprintln!("Error reading file size: {}", e);
+                eprintln!("Error reading file size: {e}");
                 return Ok(());
             }
         }
@@ -429,7 +489,7 @@ fn main() -> io::Result<()> {
         let trace_type = match args[parquet_type_index].parse::<TraceType>() {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("Error: {}", e);
+                eprintln!("Error: {e}");
                 eprintln!("Supported types: 'ufs', 'block'"); // 새 타입 추가 시 업데이트
                 print_usage(&args[0]);
                 return Ok(());
@@ -453,7 +513,7 @@ fn main() -> io::Result<()> {
 
     // 에러 처리: 프로세싱 함수에서 에러가 발생한 경우 메시지 출력
     if let Err(e) = result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         print_usage(&args[0]);
     }
 
@@ -529,7 +589,11 @@ fn process_single_parquet_file(
             log!(
                 "Using DTOC latency filter: {:.3} - {:.3} ms",
                 if f.min_dtoc > 0.0 { f.min_dtoc } else { 0.0 },
-                if f.max_dtoc > 0.0 { f.max_dtoc } else { f64::INFINITY }
+                if f.max_dtoc > 0.0 {
+                    f.max_dtoc
+                } else {
+                    f64::INFINITY
+                }
             );
         }
 
@@ -537,7 +601,11 @@ fn process_single_parquet_file(
             log!(
                 "Using CTOC latency filter: {:.3} - {:.3} ms",
                 if f.min_ctoc > 0.0 { f.min_ctoc } else { 0.0 },
-                if f.max_ctoc > 0.0 { f.max_ctoc } else { f64::INFINITY }
+                if f.max_ctoc > 0.0 {
+                    f.max_ctoc
+                } else {
+                    f64::INFINITY
+                }
             );
         }
 
@@ -545,7 +613,11 @@ fn process_single_parquet_file(
             log!(
                 "Using CTOD latency filter: {:.3} - {:.3} ms",
                 if f.min_ctod > 0.0 { f.min_ctod } else { 0.0 },
-                if f.max_ctod > 0.0 { f.max_ctod } else { f64::INFINITY }
+                if f.max_ctod > 0.0 {
+                    f.max_ctod
+                } else {
+                    f64::INFINITY
+                }
             );
         }
 
@@ -558,9 +630,13 @@ fn process_single_parquet_file(
         }
 
         // 필터링 적용
-        if f.is_time_filter_active() || f.is_sector_filter_active() 
-            || f.is_dtoc_filter_active() || f.is_ctoc_filter_active() 
-            || f.is_ctod_filter_active() || f.is_qd_filter_active() {
+        if f.is_time_filter_active()
+            || f.is_sector_filter_active()
+            || f.is_dtoc_filter_active()
+            || f.is_ctoc_filter_active()
+            || f.is_ctod_filter_active()
+            || f.is_qd_filter_active()
+        {
             log!("\n[1.5/3] Applying filters...");
             let filter_start = Instant::now();
 
@@ -608,7 +684,12 @@ fn process_single_parquet_file(
     }
 
     // 4. 차트 생성
-    log!("\n[{}/{}] Generating {} Plotters charts...", if export_csv { 3 } else { 2 }, if export_csv { 4 } else { 3 }, data_label);
+    log!(
+        "\n[{}/{}] Generating {} Plotters charts...",
+        if export_csv { 3 } else { 2 },
+        if export_csv { 4 } else { 3 },
+        data_label
+    );
     let charts_start = Instant::now();
 
     match trace_data.generate_charts(output_prefix, y_axis_ranges) {
@@ -617,7 +698,11 @@ fn process_single_parquet_file(
             data_label,
             charts_start.elapsed().as_secs_f64()
         ),
-        Err(e) => log_error!("Error while generating {} Plotters charts: {}", data_label, e),
+        Err(e) => log_error!(
+            "Error while generating {} Plotters charts: {}",
+            data_label,
+            e
+        ),
     }
 
     // 5. 요약 정보 출력
@@ -630,7 +715,12 @@ fn process_single_parquet_file(
     trace_data.print_summary(output_prefix);
 
     if export_csv {
-        log!("- {} CSV file: {}_{}.csv", data_label, output_prefix, data_label.to_lowercase());
+        log!(
+            "- {} CSV file: {}_{}.csv",
+            data_label,
+            output_prefix,
+            data_label.to_lowercase()
+        );
     }
     log!("- Log file: {}_result.log", output_prefix);
 
@@ -680,37 +770,37 @@ fn process_highperf_log_file(
             return Ok(());
         }
     };
-    
+
     // UFS 데이터 처리 (Latency 계산 등)
     let (ufs_data, block_data, ufscustom_data) = traces;
-    
+
     log!("\n[1.2/3] Processing UFS data for latency calculations...");
     let ufs_process_start = Instant::now();
-    
+
     let processed_ufs = if !ufs_data.is_empty() {
         log!("Applying latency analysis to UFS data...");
         ufs_bottom_half_latency_process(ufs_data)
     } else {
         ufs_data
     };
-    
+
     log!(
         "UFS data processing complete: {} events (Time taken: {:.2}s)",
         processed_ufs.len(),
         ufs_process_start.elapsed().as_secs_f64()
     );
-    
+
     // Block I/O 데이터 처리 (Latency 계산 등)
     log!("\n[1.3/4] Processing Block I/O data for latency calculations...");
     let block_process_start = Instant::now();
-    
+
     let processed_block = if !block_data.is_empty() {
         log!("Applying latency analysis to Block I/O data...");
         block_bottom_half_latency_process(block_data)
     } else {
         block_data
     };
-    
+
     log!(
         "Block I/O data processing complete: {} events (Time taken: {:.2}s)",
         processed_block.len(),
@@ -720,20 +810,20 @@ fn process_highperf_log_file(
     // UFSCUSTOM 데이터 처리 (Latency 계산 등)
     log!("\n[1.4/4] Processing UFSCUSTOM data for latency calculations...");
     let ufscustom_process_start = Instant::now();
-    
+
     let processed_ufscustom = if !ufscustom_data.is_empty() {
         log!("Applying latency analysis to UFSCUSTOM data...");
         crate::processors::ufscustom_bottom_half_latency_process(ufscustom_data)
     } else {
         ufscustom_data
     };
-    
+
     log!(
         "UFSCUSTOM data processing complete: {} events (Time taken: {:.2}s)",
         processed_ufscustom.len(),
         ufscustom_process_start.elapsed().as_secs_f64()
     );
-    
+
     // 처리된 데이터로 업데이트
     traces = (processed_ufs, processed_block, processed_ufscustom);
 
@@ -759,7 +849,11 @@ fn process_highperf_log_file(
             log!(
                 "Using DTOC latency filter: {:.3} - {:.3} ms",
                 if f.min_dtoc > 0.0 { f.min_dtoc } else { 0.0 },
-                if f.max_dtoc > 0.0 { f.max_dtoc } else { f64::MAX }
+                if f.max_dtoc > 0.0 {
+                    f.max_dtoc
+                } else {
+                    f64::MAX
+                }
             );
         }
 
@@ -774,9 +868,13 @@ fn process_highperf_log_file(
 
     // 필터링 적용
     if let Some(f) = filter {
-        if f.is_time_filter_active() || f.is_sector_filter_active() 
-            || f.is_dtoc_filter_active() || f.is_ctoc_filter_active() 
-            || f.is_ctod_filter_active() || f.is_qd_filter_active() {
+        if f.is_time_filter_active()
+            || f.is_sector_filter_active()
+            || f.is_dtoc_filter_active()
+            || f.is_ctoc_filter_active()
+            || f.is_ctod_filter_active()
+            || f.is_qd_filter_active()
+        {
             log!("\n[1.5/6] Applying filters...");
             let filter_start = Instant::now();
 
@@ -851,13 +949,13 @@ fn process_highperf_log_file(
         Ok(()) => {
             let mut saved_files = Vec::new();
             if has_ufs {
-                saved_files.push(format!("{}_ufs.parquet", output_prefix));
+                saved_files.push(format!("{output_prefix}_ufs.parquet"));
             }
             if has_block {
-                saved_files.push(format!("{}_block.parquet", output_prefix));
+                saved_files.push(format!("{output_prefix}_block.parquet"));
             }
             if has_ufscustom {
-                saved_files.push(format!("{}_ufscustom.parquet", output_prefix));
+                saved_files.push(format!("{output_prefix}_ufscustom.parquet"));
             }
             log!(
                 "Parquet files saved successfully (Time taken: {:.2}s):\n{}",
@@ -873,22 +971,17 @@ fn process_highperf_log_file(
         log!("\n[4/6] Saving filtered data to CSV files...");
         let csv_save_start = Instant::now();
 
-        match save_to_csv(
-            ufs_data,
-            block_data,
-            ufscustom_data,
-            output_prefix,
-        ) {
+        match save_to_csv(ufs_data, block_data, ufscustom_data, output_prefix) {
             Ok(()) => {
                 let mut saved_csv_files = Vec::new();
                 if has_ufs && !ufs_data.is_empty() {
-                    saved_csv_files.push(format!("{}_ufs.csv", output_prefix));
+                    saved_csv_files.push(format!("{output_prefix}_ufs.csv"));
                 }
                 if has_block && !block_data.is_empty() {
-                    saved_csv_files.push(format!("{}_block.csv", output_prefix));
+                    saved_csv_files.push(format!("{output_prefix}_block.csv"));
                 }
                 if has_ufscustom && !ufscustom_data.is_empty() {
-                    saved_csv_files.push(format!("{}_ufscustom.csv", output_prefix));
+                    saved_csv_files.push(format!("{output_prefix}_ufscustom.csv"));
                 }
                 if !saved_csv_files.is_empty() {
                     log!(
@@ -905,11 +998,19 @@ fn process_highperf_log_file(
     }
 
     // 차트 생성
-    log!("\n[{}/6] Generating charts...", if export_csv { 5 } else { 4 });
+    log!(
+        "\n[{}/6] Generating charts...",
+        if export_csv { 5 } else { 4 }
+    );
     let charts_start = Instant::now();
 
-    match trace::output::charts::generate_charts_with_config(ufs_traces, block_traces, ufscustom_traces, output_prefix, y_axis_ranges)
-    {
+    match trace::output::charts::generate_charts_with_config(
+        ufs_traces,
+        block_traces,
+        ufscustom_traces,
+        output_prefix,
+        y_axis_ranges,
+    ) {
         Ok(()) => log!(
             "High-performance charts generated successfully (Time taken: {:.2}s)",
             charts_start.elapsed().as_secs_f64()
@@ -956,11 +1057,17 @@ fn process_highperf_log_file(
     }
 
     if has_ufscustom {
-        log!("- UFSCUSTOM Parquet file: {}_ufscustom.parquet", output_prefix);
+        log!(
+            "- UFSCUSTOM Parquet file: {}_ufscustom.parquet",
+            output_prefix
+        );
         if export_csv {
             log!("- UFSCUSTOM CSV file: {}_ufscustom.csv", output_prefix);
         }
-        log!("- UFSCUSTOM Plotters charts: {}_ufscustom_*.png", output_prefix);
+        log!(
+            "- UFSCUSTOM Plotters charts: {}_ufscustom_*.png",
+            output_prefix
+        );
     }
 
     log!("- Log file: {}_result.log", output_prefix);
@@ -969,355 +1076,355 @@ fn process_highperf_log_file(
     let _ = Logger::flush();
 
     Ok(())
-}/*
-// 스트리밍 로그 파일 처리 로직 (더 이상 사용되지 않음)
-fn process_streaming_log_file(
-    log_file_path: &str,
-    output_prefix: &str,
-    filter: Option<&FilterOptions>,
-    y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
-    chunk_size: usize,
-    export_csv: bool,
-) -> io::Result<()> {
-    // Logger 초기화
-    Logger::init(output_prefix);
+} /*
+  // 스트리밍 로그 파일 처리 로직 (더 이상 사용되지 않음)
+  fn process_streaming_log_file(
+      log_file_path: &str,
+      output_prefix: &str,
+      filter: Option<&FilterOptions>,
+      y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
+      chunk_size: usize,
+      export_csv: bool,
+  ) -> io::Result<()> {
+      // Logger 초기화
+      Logger::init(output_prefix);
 
-    // 사용자 정의 레이턴시 범위가 있다면 로그에 기록
-    if let Some(ranges) = trace::utils::get_user_latency_ranges() {
-        log!("Using custom latency ranges: {:?} ms", ranges);
-    }
+      // 사용자 정의 레이턴시 범위가 있다면 로그에 기록
+      if let Some(ranges) = trace::utils::get_user_latency_ranges() {
+          log!("Using custom latency ranges: {:?} ms", ranges);
+      }
 
-    // 청크 크기 로그에 기록
-    log!("Using Parquet chunk size: {}", chunk_size);
+      // 청크 크기 로그에 기록
+      log!("Using Parquet chunk size: {}", chunk_size);
 
-    let total_start_time = Instant::now();
-    log!("===== Starting Streaming Log File Processing =====");
+      let total_start_time = Instant::now();
+      log!("===== Starting Streaming Log File Processing =====");
 
-    // 스트리밍 로그 파일 파싱
-    log!("\n[1/6] Parsing log file with streaming memory management...");
-    let parse_start = Instant::now();
+      // 스트리밍 로그 파일 파싱
+      log!("\n[1/6] Parsing log file with streaming memory management...");
+      let parse_start = Instant::now();
 
-    let mut traces = match parse_log_file_streaming(log_file_path) {
-        Ok(data) => {
-            let (ref ufs_data, ref block_data, ref ufscustom_data) = data;
-            let total_events = ufs_data.len() + block_data.len() + ufscustom_data.len();
-            log!(
-                "Streaming log file parsing complete: {} events (Time taken: {:.2}s)",
-                total_events,
-                parse_start.elapsed().as_secs_f64()
-            );
-            data
-        }
-        Err(e) => {
-            log_error!("Error parsing streaming log file: {}", e);
-            return Ok(());
-        }
-    };
-    
-    // UFS 데이터 처리 (Latency 계산 등)
-    let (ufs_data, block_data, ufscustom_data) = traces;
-    
-    log!("\n[1.2/6] Processing UFS data for latency calculations...");
-    let ufs_process_start = Instant::now();
-    
-    let processed_ufs = if !ufs_data.is_empty() {
-        log!("Applying latency analysis to UFS data...");
-        ufs_bottom_half_latency_process(ufs_data)
-    } else {
-        ufs_data
-    };
-    
-    log!(
-        "UFS data processing complete: {} events (Time taken: {:.2}s)",
-        processed_ufs.len(),
-        ufs_process_start.elapsed().as_secs_f64()
-    );
-    
-    // Block I/O 데이터 처리 (Latency 계산 등)
-    log!("\n[1.3/6] Processing Block I/O data for latency calculations...");
-    let block_process_start = Instant::now();
-    
-    let processed_block = if !block_data.is_empty() {
-        log!("Applying latency analysis to Block I/O data...");
-        block_bottom_half_latency_process(block_data)
-    } else {
-        block_data
-    };
-    
-    log!(
-        "Block I/O data processing complete: {} events (Time taken: {:.2}s)",
-        processed_block.len(),
-        block_process_start.elapsed().as_secs_f64()
-    );
+      let mut traces = match parse_log_file_streaming(log_file_path) {
+          Ok(data) => {
+              let (ref ufs_data, ref block_data, ref ufscustom_data) = data;
+              let total_events = ufs_data.len() + block_data.len() + ufscustom_data.len();
+              log!(
+                  "Streaming log file parsing complete: {} events (Time taken: {:.2}s)",
+                  total_events,
+                  parse_start.elapsed().as_secs_f64()
+              );
+              data
+          }
+          Err(e) => {
+              log_error!("Error parsing streaming log file: {}", e);
+              return Ok(());
+          }
+      };
 
-    // UFSCUSTOM 데이터 처리 (Latency 계산 등)
-    log!("\n[1.4/6] Processing UFSCUSTOM data for latency calculations...");
-    let ufscustom_process_start = Instant::now();
-    
-    let processed_ufscustom = if !ufscustom_data.is_empty() {
-        log!("Applying latency analysis to UFSCUSTOM data...");
-        crate::processors::ufscustom_bottom_half_latency_process(ufscustom_data)
-    } else {
-        ufscustom_data
-    };
-    
-    log!(
-        "UFSCUSTOM data processing complete: {} events (Time taken: {:.2}s)",
-        processed_ufscustom.len(),
-        ufscustom_process_start.elapsed().as_secs_f64()
-    );
-    
-    // 처리된 데이터로 업데이트
-    traces = (processed_ufs, processed_block, processed_ufscustom);
+      // UFS 데이터 처리 (Latency 계산 등)
+      let (ufs_data, block_data, ufscustom_data) = traces;
 
-    // 필터 옵션이 있다면 로그에 기록
-    if let Some(f) = filter {
-        if f.start_time > 0.0 && f.end_time > 0.0 {
-            log!(
-                "Using time filter: {:.3} - {:.3} ms",
-                f.start_time,
-                f.end_time
-            );
-        }
+      log!("\n[1.2/6] Processing UFS data for latency calculations...");
+      let ufs_process_start = Instant::now();
 
-        if f.start_sector > 0 && f.end_sector > 0 {
-            log!(
-                "Using sector/LBA filter: {} - {}",
-                f.start_sector,
-                f.end_sector
-            );
-        }
+      let processed_ufs = if !ufs_data.is_empty() {
+          log!("Applying latency analysis to UFS data...");
+          ufs_bottom_half_latency_process(ufs_data)
+      } else {
+          ufs_data
+      };
 
-        if f.is_dtoc_filter_active() {
-            log!(
-                "Using DTOC latency filter: {:.3} - {:.3} ms",
-                if f.min_dtoc > 0.0 { f.min_dtoc } else { 0.0 },
-                if f.max_dtoc > 0.0 { f.max_dtoc } else { f64::INFINITY }
-            );
-        }
+      log!(
+          "UFS data processing complete: {} events (Time taken: {:.2}s)",
+          processed_ufs.len(),
+          ufs_process_start.elapsed().as_secs_f64()
+      );
 
-        if f.is_ctoc_filter_active() {
-            log!(
-                "Using CTOC latency filter: {:.3} - {:.3} ms",
-                if f.min_ctoc > 0.0 { f.min_ctoc } else { 0.0 },
-                if f.max_ctoc > 0.0 { f.max_ctoc } else { f64::INFINITY }
-            );
-        }
+      // Block I/O 데이터 처리 (Latency 계산 등)
+      log!("\n[1.3/6] Processing Block I/O data for latency calculations...");
+      let block_process_start = Instant::now();
 
-        if f.is_ctod_filter_active() {
-            log!(
-                "Using CTOD latency filter: {:.3} - {:.3} ms",
-                if f.min_ctod > 0.0 { f.min_ctod } else { 0.0 },
-                if f.max_ctod > 0.0 { f.max_ctod } else { f64::INFINITY }
-            );
-        }
+      let processed_block = if !block_data.is_empty() {
+          log!("Applying latency analysis to Block I/O data...");
+          block_bottom_half_latency_process(block_data)
+      } else {
+          block_data
+      };
 
-        if f.is_qd_filter_active() {
-            log!(
-                "Using QD filter: {} - {}",
-                if f.min_qd > 0 { f.min_qd } else { 0 },
-                if f.max_qd > 0 { f.max_qd } else { u32::MAX }
-            );
-        }
+      log!(
+          "Block I/O data processing complete: {} events (Time taken: {:.2}s)",
+          processed_block.len(),
+          block_process_start.elapsed().as_secs_f64()
+      );
 
-        // 필터링 적용
-        if f.is_time_filter_active() || f.is_sector_filter_active() 
-            || f.is_dtoc_filter_active() || f.is_ctoc_filter_active() 
-            || f.is_ctod_filter_active() || f.is_qd_filter_active() {
-            log!("\n[1.5/6] Applying filters...");
-            let filter_start = Instant::now();
+      // UFSCUSTOM 데이터 처리 (Latency 계산 등)
+      log!("\n[1.4/6] Processing UFSCUSTOM data for latency calculations...");
+      let ufscustom_process_start = Instant::now();
 
-            // 튜플에서 개별 요소 추출
-            let (mut ufs_data, mut block_data, mut ufscustom_data) = traces;
+      let processed_ufscustom = if !ufscustom_data.is_empty() {
+          log!("Applying latency analysis to UFSCUSTOM data...");
+          crate::processors::ufscustom_bottom_half_latency_process(ufscustom_data)
+      } else {
+          ufscustom_data
+      };
 
-            let original_counts = (ufs_data.len(), block_data.len(), ufscustom_data.len());
+      log!(
+          "UFSCUSTOM data processing complete: {} events (Time taken: {:.2}s)",
+          processed_ufscustom.len(),
+          ufscustom_process_start.elapsed().as_secs_f64()
+      );
 
-            // 필터 적용
-            if !ufs_data.is_empty() {
-                ufs_data = filter_ufs_data(ufs_data, f);
-            }
+      // 처리된 데이터로 업데이트
+      traces = (processed_ufs, processed_block, processed_ufscustom);
 
-            if !block_data.is_empty() {
-                block_data = filter_block_data(block_data, f);
-            }
+      // 필터 옵션이 있다면 로그에 기록
+      if let Some(f) = filter {
+          if f.start_time > 0.0 && f.end_time > 0.0 {
+              log!(
+                  "Using time filter: {:.3} - {:.3} ms",
+                  f.start_time,
+                  f.end_time
+              );
+          }
 
-            if !ufscustom_data.is_empty() {
-                ufscustom_data = filter_ufscustom_data(ufscustom_data, f);
-            }
+          if f.start_sector > 0 && f.end_sector > 0 {
+              log!(
+                  "Using sector/LBA filter: {} - {}",
+                  f.start_sector,
+                  f.end_sector
+              );
+          }
 
-            // 필터링된 결과로 traces 업데이트
-            traces = (ufs_data, block_data, ufscustom_data);
+          if f.is_dtoc_filter_active() {
+              log!(
+                  "Using DTOC latency filter: {:.3} - {:.3} ms",
+                  if f.min_dtoc > 0.0 { f.min_dtoc } else { 0.0 },
+                  if f.max_dtoc > 0.0 { f.max_dtoc } else { f64::INFINITY }
+              );
+          }
 
-            log!(
-                "Streaming data filtered: ({} -> {}, {} -> {}, {} -> {}) events (Time taken: {:.2}s)",
-                original_counts.0,
-                traces.0.len(),
-                original_counts.1,
-                traces.1.len(),
-                original_counts.2,
-                traces.2.len(),
-                filter_start.elapsed().as_secs_f64()
-            );
-        }
-    }
+          if f.is_ctoc_filter_active() {
+              log!(
+                  "Using CTOC latency filter: {:.3} - {:.3} ms",
+                  if f.min_ctoc > 0.0 { f.min_ctoc } else { 0.0 },
+                  if f.max_ctoc > 0.0 { f.max_ctoc } else { f64::INFINITY }
+              );
+          }
 
-    // 통계 계산 및 출력
-    log!("\n[2/6] Calculating statistics...");
-    let stats_start = Instant::now();
-    log!("\n=== Streaming Log File Analysis Results ===");
+          if f.is_ctod_filter_active() {
+              log!(
+                  "Using CTOD latency filter: {:.3} - {:.3} ms",
+                  if f.min_ctod > 0.0 { f.min_ctod } else { 0.0 },
+                  if f.max_ctod > 0.0 { f.max_ctod } else { f64::INFINITY }
+              );
+          }
 
-    // 튜플에서 개별 요소 추출
-    let (ufs_traces, block_traces, ufscustom_traces) = &traces;
+          if f.is_qd_filter_active() {
+              log!(
+                  "Using QD filter: {} - {}",
+                  if f.min_qd > 0 { f.min_qd } else { 0 },
+                  if f.max_qd > 0 { f.max_qd } else { u32::MAX }
+              );
+          }
 
-    // 기존 통계 함수 사용
-    trace::output::print_ufs_statistics(ufs_traces);
-    trace::output::print_block_statistics(block_traces);
-    trace::output::print_ufscustom_statistics(ufscustom_traces);
+          // 필터링 적용
+          if f.is_time_filter_active() || f.is_sector_filter_active()
+              || f.is_dtoc_filter_active() || f.is_ctoc_filter_active()
+              || f.is_ctod_filter_active() || f.is_qd_filter_active() {
+              log!("\n[1.5/6] Applying filters...");
+              let filter_start = Instant::now();
 
-    log!(
-        "Statistics calculation complete (Time taken: {:.2}s)",
-        stats_start.elapsed().as_secs_f64()
-    );
+              // 튜플에서 개별 요소 추출
+              let (mut ufs_data, mut block_data, mut ufscustom_data) = traces;
 
-    // Parquet 파일 저장
-    log!("\n[3/6] Saving to Parquet files...");
-    let save_start = Instant::now();
+              let original_counts = (ufs_data.len(), block_data.len(), ufscustom_data.len());
 
-    let (ufs_data, block_data, ufscustom_data) = &traces;
-    let has_ufs = !ufs_data.is_empty();
-    let has_block = !block_data.is_empty();
-    let has_ufscustom = !ufscustom_data.is_empty();
+              // 필터 적용
+              if !ufs_data.is_empty() {
+                  ufs_data = filter_ufs_data(ufs_data, f);
+              }
 
-    match save_to_parquet(
-        ufs_data,
-        block_data,
-        ufscustom_data,
-        output_prefix,
-        chunk_size,
-    ) {
-        Ok(()) => {
-            let mut saved_files = Vec::new();
-            if has_ufs {
-                saved_files.push(format!("{}_ufs.parquet", output_prefix));
-            }
-            if has_block {
-                saved_files.push(format!("{}_block.parquet", output_prefix));
-            }
-            if has_ufscustom {
-                saved_files.push(format!("{}_ufscustom.parquet", output_prefix));
-            }
-            log!(
-                "Parquet files saved successfully (Time taken: {:.2}s):\n{}",
-                save_start.elapsed().as_secs_f64(),
-                saved_files.join("\n")
-            );
-        }
-        Err(e) => log_error!("Error while saving Parquet files: {}", e),
-    }
+              if !block_data.is_empty() {
+                  block_data = filter_block_data(block_data, f);
+              }
 
-    // CSV 내보내기 (요청된 경우)
-    if export_csv {
-        log!("\n[4/6] Saving filtered data to CSV files...");
-        let csv_save_start = Instant::now();
+              if !ufscustom_data.is_empty() {
+                  ufscustom_data = filter_ufscustom_data(ufscustom_data, f);
+              }
 
-        match save_to_csv(
-            ufs_data,
-            block_data,
-            ufscustom_data,
-            output_prefix,
-        ) {
-            Ok(()) => {
-                let mut saved_csv_files = Vec::new();
-                if has_ufs && !ufs_data.is_empty() {
-                    saved_csv_files.push(format!("{}_ufs.csv", output_prefix));
-                }
-                if has_block && !block_data.is_empty() {
-                    saved_csv_files.push(format!("{}_block.csv", output_prefix));
-                }
-                if has_ufscustom && !ufscustom_data.is_empty() {
-                    saved_csv_files.push(format!("{}_ufscustom.csv", output_prefix));
-                }
-                if !saved_csv_files.is_empty() {
-                    log!(
-                        "Filtered CSV files saved successfully (Time taken: {:.2}s):\n{}",
-                        csv_save_start.elapsed().as_secs_f64(),
-                        saved_csv_files.join("\n")
-                    );
-                } else {
-                    log!("No CSV files saved (all filtered data is empty)");
-                }
-            }
-            Err(e) => log_error!("Error while saving CSV files: {}", e),
-        }
-    }
+              // 필터링된 결과로 traces 업데이트
+              traces = (ufs_data, block_data, ufscustom_data);
 
-    // 차트 생성
-    log!("\n[{}/6] Generating charts...", if export_csv { 5 } else { 4 });
-    let charts_start = Instant::now();
+              log!(
+                  "Streaming data filtered: ({} -> {}, {} -> {}, {} -> {}) events (Time taken: {:.2}s)",
+                  original_counts.0,
+                  traces.0.len(),
+                  original_counts.1,
+                  traces.1.len(),
+                  original_counts.2,
+                  traces.2.len(),
+                  filter_start.elapsed().as_secs_f64()
+              );
+          }
+      }
 
-    match trace::output::charts::generate_charts_with_config(ufs_traces, block_traces, ufscustom_traces, output_prefix, y_axis_ranges)
-    {
-        Ok(()) => log!(
-            "Streaming charts generated successfully (Time taken: {:.2}s)",
-            charts_start.elapsed().as_secs_f64()
-        ),
-        Err(e) => log_error!("Error while generating streaming charts: {}", e),
-    }
+      // 통계 계산 및 출력
+      log!("\n[2/6] Calculating statistics...");
+      let stats_start = Instant::now();
+      log!("\n=== Streaming Log File Analysis Results ===");
 
-    // 요약 정보 출력
-    log!("\n===== Streaming Log File Processing Complete =====");
-    log!(
-        "Total time taken: {:.2}s",
-        total_start_time.elapsed().as_secs_f64()
-    );
+      // 튜플에서 개별 요소 추출
+      let (ufs_traces, block_traces, ufscustom_traces) = &traces;
 
-    // 결과 요약
-    log!("Processed events:");
-    if has_ufs {
-        log!("- UFS events: {}", ufs_data.len());
-    }
-    if has_block {
-        log!("- Block I/O events: {}", block_data.len());
-    }
-    if has_ufscustom {
-        log!("- UFSCUSTOM events: {}", ufscustom_data.len());
-    }
+      // 기존 통계 함수 사용
+      trace::output::print_ufs_statistics(ufs_traces);
+      trace::output::print_block_statistics(block_traces);
+      trace::output::print_ufscustom_statistics(ufscustom_traces);
 
-    log!("Generated files:");
+      log!(
+          "Statistics calculation complete (Time taken: {:.2}s)",
+          stats_start.elapsed().as_secs_f64()
+      );
 
-    // 생성된 파일 목록
-    if has_ufs {
-        log!("- UFS Parquet file: {}_ufs.parquet", output_prefix);
-        if export_csv {
-            log!("- UFS CSV file: {}_ufs.csv", output_prefix);
-        }
-        log!("- UFS Plotters charts: {}_ufs_*.png", output_prefix);
-    }
+      // Parquet 파일 저장
+      log!("\n[3/6] Saving to Parquet files...");
+      let save_start = Instant::now();
 
-    if has_block {
-        log!("- Block I/O Parquet file: {}_block.parquet", output_prefix);
-        if export_csv {
-            log!("- Block I/O CSV file: {}_block.csv", output_prefix);
-        }
-        log!("- Block I/O Plotters charts: {}_block_*.png", output_prefix);
-    }
+      let (ufs_data, block_data, ufscustom_data) = &traces;
+      let has_ufs = !ufs_data.is_empty();
+      let has_block = !block_data.is_empty();
+      let has_ufscustom = !ufscustom_data.is_empty();
 
-    if has_ufscustom {
-        log!("- UFSCUSTOM Parquet file: {}_ufscustom.parquet", output_prefix);
-        if export_csv {
-            log!("- UFSCUSTOM CSV file: {}_ufscustom.csv", output_prefix);
-        }
-        log!("- UFSCUSTOM Plotters charts: {}_ufscustom_*.png", output_prefix);
-    }
+      match save_to_parquet(
+          ufs_data,
+          block_data,
+          ufscustom_data,
+          output_prefix,
+          chunk_size,
+      ) {
+          Ok(()) => {
+              let mut saved_files = Vec::new();
+              if has_ufs {
+                  saved_files.push(format!("{}_ufs.parquet", output_prefix));
+              }
+              if has_block {
+                  saved_files.push(format!("{}_block.parquet", output_prefix));
+              }
+              if has_ufscustom {
+                  saved_files.push(format!("{}_ufscustom.parquet", output_prefix));
+              }
+              log!(
+                  "Parquet files saved successfully (Time taken: {:.2}s):\n{}",
+                  save_start.elapsed().as_secs_f64(),
+                  saved_files.join("\n")
+              );
+          }
+          Err(e) => log_error!("Error while saving Parquet files: {}", e),
+      }
 
-    log!("- Log file: {}_result.log", output_prefix);
+      // CSV 내보내기 (요청된 경우)
+      if export_csv {
+          log!("\n[4/6] Saving filtered data to CSV files...");
+          let csv_save_start = Instant::now();
 
-    // 로그 파일 버퍼 비우기
-    let _ = Logger::flush();
+          match save_to_csv(
+              ufs_data,
+              block_data,
+              ufscustom_data,
+              output_prefix,
+          ) {
+              Ok(()) => {
+                  let mut saved_csv_files = Vec::new();
+                  if has_ufs && !ufs_data.is_empty() {
+                      saved_csv_files.push(format!("{}_ufs.csv", output_prefix));
+                  }
+                  if has_block && !block_data.is_empty() {
+                      saved_csv_files.push(format!("{}_block.csv", output_prefix));
+                  }
+                  if has_ufscustom && !ufscustom_data.is_empty() {
+                      saved_csv_files.push(format!("{}_ufscustom.csv", output_prefix));
+                  }
+                  if !saved_csv_files.is_empty() {
+                      log!(
+                          "Filtered CSV files saved successfully (Time taken: {:.2}s):\n{}",
+                          csv_save_start.elapsed().as_secs_f64(),
+                          saved_csv_files.join("\n")
+                      );
+                  } else {
+                      log!("No CSV files saved (all filtered data is empty)");
+                  }
+              }
+              Err(e) => log_error!("Error while saving CSV files: {}", e),
+          }
+      }
 
-    Ok(())
-}
-*/
+      // 차트 생성
+      log!("\n[{}/6] Generating charts...", if export_csv { 5 } else { 4 });
+      let charts_start = Instant::now();
+
+      match trace::output::charts::generate_charts_with_config(ufs_traces, block_traces, ufscustom_traces, output_prefix, y_axis_ranges)
+      {
+          Ok(()) => log!(
+              "Streaming charts generated successfully (Time taken: {:.2}s)",
+              charts_start.elapsed().as_secs_f64()
+          ),
+          Err(e) => log_error!("Error while generating streaming charts: {}", e),
+      }
+
+      // 요약 정보 출력
+      log!("\n===== Streaming Log File Processing Complete =====");
+      log!(
+          "Total time taken: {:.2}s",
+          total_start_time.elapsed().as_secs_f64()
+      );
+
+      // 결과 요약
+      log!("Processed events:");
+      if has_ufs {
+          log!("- UFS events: {}", ufs_data.len());
+      }
+      if has_block {
+          log!("- Block I/O events: {}", block_data.len());
+      }
+      if has_ufscustom {
+          log!("- UFSCUSTOM events: {}", ufscustom_data.len());
+      }
+
+      log!("Generated files:");
+
+      // 생성된 파일 목록
+      if has_ufs {
+          log!("- UFS Parquet file: {}_ufs.parquet", output_prefix);
+          if export_csv {
+              log!("- UFS CSV file: {}_ufs.csv", output_prefix);
+          }
+          log!("- UFS Plotters charts: {}_ufs_*.png", output_prefix);
+      }
+
+      if has_block {
+          log!("- Block I/O Parquet file: {}_block.parquet", output_prefix);
+          if export_csv {
+              log!("- Block I/O CSV file: {}_block.csv", output_prefix);
+          }
+          log!("- Block I/O Plotters charts: {}_block_*.png", output_prefix);
+      }
+
+      if has_ufscustom {
+          log!("- UFSCUSTOM Parquet file: {}_ufscustom.parquet", output_prefix);
+          if export_csv {
+              log!("- UFSCUSTOM CSV file: {}_ufscustom.csv", output_prefix);
+          }
+          log!("- UFSCUSTOM Plotters charts: {}_ufscustom_*.png", output_prefix);
+      }
+
+      log!("- Log file: {}_result.log", output_prefix);
+
+      // 로그 파일 버퍼 비우기
+      let _ = Logger::flush();
+
+      Ok(())
+  }
+  */
 
 // TraceData 열거형 정의 - 각 트레이스 타입에 대한 데이터를 담습니다
 #[allow(clippy::upper_case_acronyms)]
@@ -1353,8 +1460,7 @@ impl TraceData {
             TraceData::UFSCUSTOM(traces) => {
                 let filtered = filter_ufscustom_data(traces.clone(), filter);
                 TraceData::UFSCUSTOM(filtered)
-            }
-            // 새 트레이스 타입 추가 시 여기에 추가
+            } // 새 트레이스 타입 추가 시 여기에 추가
         }
     }
 
@@ -1369,11 +1475,33 @@ impl TraceData {
     }
 
     // 차트 생성
-    fn generate_charts(&self, output_prefix: &str, y_axis_ranges: Option<&HashMap<String, (f64, f64)>>) -> Result<(), String> {
+    fn generate_charts(
+        &self,
+        output_prefix: &str,
+        y_axis_ranges: Option<&HashMap<String, (f64, f64)>>,
+    ) -> Result<(), String> {
         match self {
-            TraceData::UFS(traces) => output::charts::generate_charts_with_config(traces, &[], &[], output_prefix, y_axis_ranges),
-            TraceData::Block(traces) => output::charts::generate_charts_with_config(&[], traces, &[], output_prefix, y_axis_ranges),
-            TraceData::UFSCUSTOM(traces) => output::charts::generate_charts_with_config(&[], &[], traces, output_prefix, y_axis_ranges),
+            TraceData::UFS(traces) => output::charts::generate_charts_with_config(
+                traces,
+                &[],
+                &[],
+                output_prefix,
+                y_axis_ranges,
+            ),
+            TraceData::Block(traces) => output::charts::generate_charts_with_config(
+                &[],
+                traces,
+                &[],
+                output_prefix,
+                y_axis_ranges,
+            ),
+            TraceData::UFSCUSTOM(traces) => output::charts::generate_charts_with_config(
+                &[],
+                &[],
+                traces,
+                output_prefix,
+                y_axis_ranges,
+            ),
             // 새 트레이스 타입 추가 시 여기에 추가
         }
     }
@@ -1389,8 +1517,7 @@ impl TraceData {
             }
             TraceData::UFSCUSTOM(traces) => {
                 save_to_csv(&[], &[], traces, output_prefix)?;
-            }
-            // 새 트레이스 타입 추가 시 여기에 추가
+            } // 새 트레이스 타입 추가 시 여기에 추가
         }
         Ok(())
     }
@@ -1407,11 +1534,11 @@ impl TraceData {
             TraceData::Block(traces) => {
                 log!("Total Block I/O events analyzed: {}", traces.len());
                 log!("Generated files:");
-                log!("- Block I/O Plotters charts: {}_block_*.html", output_prefix);
                 log!(
-                    "- Block I/O Plotters charts: {}_block_*.png",
+                    "- Block I/O Plotters charts: {}_block_*.html",
                     output_prefix
                 );
+                log!("- Block I/O Plotters charts: {}_block_*.png", output_prefix);
             }
             TraceData::UFSCUSTOM(traces) => {
                 log!("Total UFSCustom events analyzed: {}", traces.len());

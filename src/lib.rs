@@ -1,25 +1,24 @@
+pub mod migration;
 pub mod models;
+pub mod output;
 pub mod parsers;
 pub mod processors;
-pub mod output;
-pub mod utils;
-pub mod migration;  // 마이그레이션 모듈 추가
+pub mod utils; // 마이그레이션 모듈 추가
 
 use std::sync::OnceLock;
 use utils::filter::FilterOptions;
 
 // 주요 기능 재내보내기(re-exporting)
+pub use migration::*;
 pub use models::{Block, TraceType, UFS, UFSCUSTOM};
 pub use output::{
-    generate_charts, print_block_statistics, print_ufs_statistics,
-    print_ufscustom_statistics, read_block_from_parquet, read_ufs_from_parquet,
-    read_ufscustom_from_parquet, save_to_parquet,
+    generate_charts, print_block_statistics, print_ufs_statistics, print_ufscustom_statistics,
+    read_block_from_parquet, read_ufs_from_parquet, read_ufscustom_from_parquet, save_to_parquet,
 };
 pub use parsers::log::{parse_log_file, parse_ufscustom_file};
 pub use processors::{block_bottom_half_latency_process, ufs_bottom_half_latency_process};
 pub use utils::filter::{filter_block_data, filter_ufs_data, filter_ufscustom_data};
-pub use utils::latency::{get_user_latency_ranges, parse_latency_ranges, set_user_latency_ranges};
-pub use migration::*;  // 마이그레이션 모듈 사용
+pub use utils::latency::{get_user_latency_ranges, parse_latency_ranges, set_user_latency_ranges}; // 마이그레이션 모듈 사용
 
 // 전역 필터 옵션 저장
 static FILTER_OPTIONS: OnceLock<FilterOptions> = OnceLock::new();

@@ -12,10 +12,10 @@ pub struct UFSCUSTOM {
     pub end_time: f64,
     pub dtoc: f64,
     // 새로 추가할 필드들
-    pub start_qd: u32,     // Queue Depth at request start
-    pub end_qd: u32,       // Queue Depth at request end
-    pub ctoc: f64,         // Complete to Complete latency (ms)
-    pub ctod: f64,         // Complete to Dispatch latency (ms)
-    pub continuous: bool,  // 연속적인 요청 여부
-    pub aligned: bool,     // LBA alignment check
+    pub start_qd: u32,    // Queue Depth at request start
+    pub end_qd: u32,      // Queue Depth at request end
+    pub ctoc: f64,        // Complete to Complete latency (ms)
+    pub ctod: f64,        // Complete to Dispatch latency (ms)
+    pub continuous: bool, // 연속적인 요청 여부
+    pub aligned: bool,    // LBA alignment check
 }

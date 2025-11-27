@@ -1,7 +1,7 @@
+pub mod benchmark;
 pub mod log;
 pub mod log_common;
 pub mod log_high_perf;
-pub mod benchmark;
 
 // 기존 함수들 내보내기
 pub use log::{parse_log_file, parse_ufscustom_file};

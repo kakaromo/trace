@@ -9,22 +9,22 @@ pub struct IterationOutputManager {
 
 impl IterationOutputManager {
     /// 새로운 IterationOutputManager 생성
-    /// 
+    ///
     /// # Arguments
     /// * `output_prefix` - 출력 파일 접두사 (예: "fio_result")
     pub fn new(output_prefix: &str) -> io::Result<Self> {
         let base_dir = PathBuf::from(output_prefix);
-        
+
         // 베이스 디렉토리 생성
         if !base_dir.exists() {
             fs::create_dir_all(&base_dir)?;
         }
-        
+
         Ok(Self { base_dir })
     }
 
     /// Iteration 번호에 해당하는 디렉토리 경로 반환
-    /// 
+    ///
     /// # Arguments
     /// * `iteration` - Iteration 번호 (1, 2, 3, ...)
     pub fn get_iteration_dir(&self, iteration: usize) -> PathBuf {
@@ -32,21 +32,21 @@ impl IterationOutputManager {
     }
 
     /// Iteration 디렉토리 생성
-    /// 
+    ///
     /// # Arguments
     /// * `iteration` - Iteration 번호
     pub fn create_iteration_dir(&self, iteration: usize) -> io::Result<PathBuf> {
         let iter_dir = self.get_iteration_dir(iteration);
-        
+
         if !iter_dir.exists() {
             fs::create_dir_all(&iter_dir)?;
         }
-        
+
         Ok(iter_dir)
     }
 
     /// Iteration 디렉토리에 파일 경로 생성
-    /// 
+    ///
     /// # Arguments
     /// * `iteration` - Iteration 번호
     /// * `filename` - 파일명 (예: "ufs_trace.parquet")
@@ -58,12 +58,12 @@ impl IterationOutputManager {
     /// 모든 iteration 디렉토리 나열
     pub fn list_iterations(&self) -> io::Result<Vec<usize>> {
         let mut iterations = Vec::new();
-        
+
         if self.base_dir.exists() {
             for entry in fs::read_dir(&self.base_dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                
+
                 if path.is_dir() {
                     if let Some(dirname) = path.file_name() {
                         if let Some(dirname_str) = dirname.to_str() {
@@ -75,7 +75,7 @@ impl IterationOutputManager {
                 }
             }
         }
-        
+
         iterations.sort();
         Ok(iterations)
     }
@@ -94,12 +94,12 @@ impl IterationOutputManager {
     pub fn list_files(&self, iteration: usize) -> io::Result<Vec<String>> {
         let iter_dir = self.get_iteration_dir(iteration);
         let mut files = Vec::new();
-        
+
         if iter_dir.exists() {
             for entry in fs::read_dir(iter_dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                
+
                 if path.is_file() {
                     if let Some(filename) = path.file_name() {
                         if let Some(filename_str) = filename.to_str() {
@@ -109,7 +109,7 @@ impl IterationOutputManager {
                 }
             }
         }
-        
+
         files.sort();
         Ok(files)
     }
@@ -123,25 +123,25 @@ mod tests {
     #[test]
     fn test_iteration_manager() {
         let temp_dir = "test_output_temp";
-        
+
         // 테스트용 매니저 생성
         let manager = IterationOutputManager::new(temp_dir).unwrap();
-        
+
         // Iteration 디렉토리 생성
         let iter1_dir = manager.create_iteration_dir(1).unwrap();
         let iter2_dir = manager.create_iteration_dir(2).unwrap();
-        
+
         assert!(iter1_dir.exists());
         assert!(iter2_dir.exists());
-        
+
         // 파일 경로 생성
         let file_path = manager.get_file_path(1, "test.parquet").unwrap();
         assert!(file_path.to_str().unwrap().contains("test.parquet"));
-        
+
         // Iteration 목록 확인
         let iterations = manager.list_iterations().unwrap();
         assert_eq!(iterations, vec![1, 2]);
-        
+
         // 정리
         fs::remove_dir_all(temp_dir).ok();
     }

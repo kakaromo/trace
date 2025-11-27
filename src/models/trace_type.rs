@@ -21,7 +21,7 @@ impl FromStr for TraceType {
             "block" => Ok(TraceType::Block),
             "ufscustom" => Ok(TraceType::UFSCUSTOM),
             // 여기에 새 트레이스 타입 매칭 추가
-            _ => Err(format!("Unknown trace type: {}", s)),
+            _ => Err(format!("Unknown trace type: {s}")),
         }
     }
 }

@@ -1,8 +1,8 @@
 use crate::log;
 use crate::models::UFS;
 use crate::utils::constants::MILLISECONDS;
-use std::collections::{HashMap, HashSet};
 use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     // 이벤트가 없으면 빈 벡터 반환
@@ -41,17 +41,17 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
 
     // 이전 send_req의 정보를 저장할 변수들
     let mut prev_send_req: Option<(u64, u32, String)> = None; // (lba, size, opcode)
-    
+
     // send_req와 complete_rsp의 쌍을 추적하기 위한 집합
     let send_req_indices: HashSet<usize> = HashSet::new();
     let complete_rsp_indices: HashSet<usize> = HashSet::new();
     let paired_tags: HashMap<(u32, String), usize> = HashMap::new(); // (tag, opcode) -> send_req index
-    
+
     log!("  Calculating UFS Latency and continuity...");
 
     // 배치 처리를 더 큰 단위로 변경하여 오버헤드 감소
     let batch_size = 50000; // 더 큰 배치 크기로 변경
-    
+
     // 프로그레스 카운터 업데이트 (필터링 후 새로운 크기 기준)
     let total_events = ufs_list.len();
     let report_interval = (total_events / 10).max(5000); // 10% 간격으로 변경
@@ -92,7 +92,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
 
                     // 해시맵에 삽입 (이제 쌍이 있는 것들만 처리되므로 안전)
                     req_times.insert((ufs.tag, ufs.opcode.clone()), ufs.time);
-                    
+
                     current_qd += 1;
                     if current_qd == 1 {
                         if let Some(t) = last_complete_qd0_time {

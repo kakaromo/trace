@@ -4,11 +4,23 @@ use regex::Regex;
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogLineType {
     /// FIO 성능 결과 라인
-    FioResult { iteration: usize, test_type: String, bandwidth: f64 },
+    FioResult {
+        iteration: usize,
+        test_type: String,
+        bandwidth: f64,
+    },
     /// TIOtest 성능 결과 라인
-    TioTestResult { iteration: usize, test_type: String, bandwidth: f64 },
+    TioTestResult {
+        iteration: usize,
+        test_type: String,
+        bandwidth: f64,
+    },
     /// IOzone 성능 결과 라인
-    IOzoneResult { iteration: usize, test_type: String, bandwidth: f64 },
+    IOzoneResult {
+        iteration: usize,
+        test_type: String,
+        bandwidth: f64,
+    },
     /// UFS Trace 라인
     UfsTrace,
     /// Block Trace 라인
@@ -48,8 +60,8 @@ impl BenchmarkParser {
             ufs_trace_regex: Regex::new(r"ufshcd_command:").unwrap(),
             // Block trace 감지: "block_rq_"
             block_trace_regex: Regex::new(r"block_rq_").unwrap(),
-            // UFSCustom trace 감지 (예시 패턴, 실제 패턴에 맞게 수정 필요)
-            ufscustom_trace_regex: Regex::new(r"ufscustom_").unwrap(),
+            // UFSCustom trace 감지: CSV 형식 "0x[opcode],[lba],[size],[start_time],[end_time]"
+            ufscustom_trace_regex: Regex::new(r"^0x[0-9a-f]+,\d+,\d+,").unwrap(),
         }
     }
 
@@ -107,7 +119,11 @@ impl BenchmarkParser {
 
         // IOzone random 결과 감지
         if let Some(caps) = self.iozone_rand_regex.captures(line) {
-            let test_type = if caps[1].to_string() == "readers" { "Random Read" } else { "Random Write" };
+            let test_type = if caps[1].to_string() == "readers" {
+                "Random Read"
+            } else {
+                "Random Write"
+            };
             if let Ok(bandwidth) = caps[2].parse::<f64>() {
                 return LogLineType::IOzoneResult {
                     iteration: *current_iteration,
@@ -140,7 +156,11 @@ impl BenchmarkParser {
 
         for line in log_content.lines() {
             match self.detect_line_type(line, &mut current_iteration) {
-                LogLineType::FioResult { iteration, test_type, bandwidth } => {
+                LogLineType::FioResult {
+                    iteration,
+                    test_type,
+                    bandwidth,
+                } => {
                     results.push(BenchmarkResult {
                         tool: "FIO".to_string(),
                         iteration,
@@ -148,7 +168,11 @@ impl BenchmarkParser {
                         bandwidth,
                     });
                 }
-                LogLineType::TioTestResult { iteration, test_type, bandwidth } => {
+                LogLineType::TioTestResult {
+                    iteration,
+                    test_type,
+                    bandwidth,
+                } => {
                     results.push(BenchmarkResult {
                         tool: "TIOtest".to_string(),
                         iteration,
@@ -156,7 +180,11 @@ impl BenchmarkParser {
                         bandwidth,
                     });
                 }
-                LogLineType::IOzoneResult { iteration, test_type, bandwidth } => {
+                LogLineType::IOzoneResult {
+                    iteration,
+                    test_type,
+                    bandwidth,
+                } => {
                     results.push(BenchmarkResult {
                         tool: "IOzone".to_string(),
                         iteration,
@@ -195,7 +223,7 @@ mod tests {
     fn test_fio_iteration_detection() {
         let parser = BenchmarkParser::new();
         let mut current_iter = 0;
-        
+
         let line = "--- FIO 1GB Sequential Write Test (Iteration 1) ---";
         parser.detect_line_type(line, &mut current_iter);
         assert_eq!(current_iter, 1);
@@ -205,12 +233,16 @@ mod tests {
     fn test_fio_result_detection() {
         let parser = BenchmarkParser::new();
         let mut current_iter = 1;
-        
+
         let line = "  WRITE: bw=604MiB/s (633MB/s), 604MiB/s-604MiB/s (633MB/s-633MB/s), io=1024MiB (1074MB), run=1695-1695msec";
         let result = parser.detect_line_type(line, &mut current_iter);
-        
+
         match result {
-            LogLineType::FioResult { iteration, test_type, bandwidth } => {
+            LogLineType::FioResult {
+                iteration,
+                test_type,
+                bandwidth,
+            } => {
                 assert_eq!(iteration, 1);
                 assert_eq!(test_type, "WRITE");
                 assert_eq!(bandwidth, 604.0);
@@ -223,9 +255,26 @@ mod tests {
     fn test_trace_detection() {
         let parser = BenchmarkParser::new();
         let mut current_iter = 1;
-        
-        let ufs_line = "    kworker/1:1H-175     [001] ..... 22218.735851: ufshcd_command: send_req:";
+
+        let ufs_line =
+            "    kworker/1:1H-175     [001] ..... 22218.735851: ufshcd_command: send_req:";
         let result = parser.detect_line_type(ufs_line, &mut current_iter);
         assert_eq!(result, LogLineType::UfsTrace);
+
+        // Test block trace detection
+        let block_line =
+            "  test-123   [000] ..... 12345.678901: block_rq_issue: 8,0 R 4096 () 1000 + 8 [test]";
+        let result = parser.detect_line_type(block_line, &mut current_iter);
+        assert_eq!(result, LogLineType::BlockTrace);
+
+        // Test UFSCUSTOM trace detection
+        let ufscustom_line = "0x28,1000,8,123.456,123.789";
+        let result = parser.detect_line_type(ufscustom_line, &mut current_iter);
+        assert_eq!(result, LogLineType::UfsCustomTrace);
+
+        // Test another UFSCUSTOM format
+        let ufscustom_line2 = "0x2a,2048,16,456.123,456.567";
+        let result = parser.detect_line_type(ufscustom_line2, &mut current_iter);
+        assert_eq!(result, LogLineType::UfsCustomTrace);
     }
 }

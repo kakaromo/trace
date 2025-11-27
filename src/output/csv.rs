@@ -12,14 +12,30 @@ pub fn save_ufs_to_csv(traces: &[UFS], output_prefix: &str) -> Result<(), Box<dy
     while start < total {
         let end = usize::min(start + EXCEL_MAX_ROWS, total);
         let chunk = &traces[start..end];
-        if chunk.is_empty() { break; }
+        if chunk.is_empty() {
+            break;
+        }
         let start_time = chunk.first().map(|t| t.time).unwrap_or(0.0);
         let end_time = chunk.last().map(|t| t.time).unwrap_or(0.0);
-        let filename = format!("{}_ufs_{}_{}.csv", output_prefix, start_time, end_time);
+        let filename = format!("{output_prefix}_ufs_{start_time}_{end_time}.csv");
         let file = File::create(&filename)?;
         let mut writer = Writer::from_writer(file);
         writer.write_record([
-            "time", "process", "cpu", "action", "tag", "opcode", "lba", "size", "groupid", "hwqid", "qd", "dtoc", "ctoc", "ctod", "continuous"
+            "time",
+            "process",
+            "cpu",
+            "action",
+            "tag",
+            "opcode",
+            "lba",
+            "size",
+            "groupid",
+            "hwqid",
+            "qd",
+            "dtoc",
+            "ctoc",
+            "ctod",
+            "continuous",
         ])?;
         for trace in chunk {
             writer.write_record(&[
@@ -53,14 +69,32 @@ pub fn save_block_to_csv(traces: &[Block], output_prefix: &str) -> Result<(), Bo
     while start < total {
         let end = usize::min(start + EXCEL_MAX_ROWS, total);
         let chunk = &traces[start..end];
-        if chunk.is_empty() { break; }
+        if chunk.is_empty() {
+            break;
+        }
         let start_time = chunk.first().map(|t| t.time).unwrap_or(0.0);
         let end_time = chunk.last().map(|t| t.time).unwrap_or(0.0);
-        let filename = format!("{}_block_{}_{}.csv", output_prefix, start_time, end_time);
+        let filename = format!("{output_prefix}_block_{start_time}_{end_time}.csv");
         let file = File::create(&filename)?;
         let mut writer = Writer::from_writer(file);
         writer.write_record([
-            "time", "process", "cpu", "flags", "action", "devmajor", "devminor", "io_type", "extra", "sector", "size", "comm", "qd", "dtoc", "ctoc", "ctod", "continuous"
+            "time",
+            "process",
+            "cpu",
+            "flags",
+            "action",
+            "devmajor",
+            "devminor",
+            "io_type",
+            "extra",
+            "sector",
+            "size",
+            "comm",
+            "qd",
+            "dtoc",
+            "ctoc",
+            "ctod",
+            "continuous",
         ])?;
         for trace in chunk {
             writer.write_record(&[
@@ -90,20 +124,37 @@ pub fn save_block_to_csv(traces: &[Block], output_prefix: &str) -> Result<(), Bo
 }
 
 /// CSV export function for UFSCUSTOM traces
-pub fn save_ufscustom_to_csv(traces: &[UFSCUSTOM], output_prefix: &str) -> Result<(), Box<dyn Error>> {
+pub fn save_ufscustom_to_csv(
+    traces: &[UFSCUSTOM],
+    output_prefix: &str,
+) -> Result<(), Box<dyn Error>> {
     let mut start = 0;
     let total = traces.len();
     while start < total {
         let end = usize::min(start + EXCEL_MAX_ROWS, total);
         let chunk = &traces[start..end];
-        if chunk.is_empty() { break; }
+        if chunk.is_empty() {
+            break;
+        }
         let start_time = chunk.first().map(|t| t.start_time).unwrap_or(0.0);
         let end_time = chunk.last().map(|t| t.start_time).unwrap_or(0.0);
-        let filename = format!("{}_ufscustom_{}_{}.csv", output_prefix, start_time, end_time);
+        let filename = format!(
+            "{output_prefix}_ufscustom_{start_time}_{end_time}.csv"
+        );
         let file = File::create(&filename)?;
         let mut writer = Writer::from_writer(file);
         writer.write_record([
-            "start_time", "end_time", "opcode", "lba", "size", "start_qd", "end_qd", "dtoc", "ctoc", "ctod", "continuous"
+            "start_time",
+            "end_time",
+            "opcode",
+            "lba",
+            "size",
+            "start_qd",
+            "end_qd",
+            "dtoc",
+            "ctoc",
+            "ctod",
+            "continuous",
         ])?;
         for trace in chunk {
             writer.write_record(&[
@@ -129,7 +180,7 @@ pub fn save_ufscustom_to_csv(traces: &[UFSCUSTOM], output_prefix: &str) -> Resul
 /// Save all trace types to CSV files
 pub fn save_to_csv(
     ufs_traces: &[UFS],
-    block_traces: &[Block], 
+    block_traces: &[Block],
     ufscustom_traces: &[UFSCUSTOM],
     output_prefix: &str,
 ) -> Result<(), Box<dyn Error>> {

@@ -34,14 +34,14 @@ impl Logger {
                     .and_then(|n| n.to_str())
                     .unwrap_or("output");
 
-                dir.join(format!("{}_result.log", file_name))
+                dir.join(format!("{file_name}_result.log"))
             };
 
             // 디렉토리가 없으면 생성
             let log_dir = log_path.parent().unwrap_or_else(|| Path::new("."));
             if !log_dir.exists() {
                 if let Err(e) = fs::create_dir_all(log_dir) {
-                    eprintln!("로그 디렉토리를 생성할 수 없습니다: {}", e);
+                    eprintln!("로그 디렉토리를 생성할 수 없습니다: {e}");
                     LOGGER.get_or_init(|| Mutex::new(None));
                     return;
                 }
@@ -60,7 +60,7 @@ impl Logger {
                     LOGGER.get_or_init(|| Mutex::new(Some(file)));
                 }
                 Err(e) => {
-                    eprintln!("로그 파일을 열 수 없습니다: {}", e);
+                    eprintln!("로그 파일을 열 수 없습니다: {e}");
                     LOGGER.get_or_init(|| Mutex::new(None));
                 }
             }
@@ -69,14 +69,14 @@ impl Logger {
 
     pub fn log(message: &str) {
         // 콘솔에 출력
-        println!("{}", message);
+        println!("{message}");
 
         // 파일에도 동일한 내용 기록
         if let Some(logger) = LOGGER.get() {
             if let Ok(mut file_guard) = logger.lock() {
                 if let Some(file) = file_guard.as_mut() {
-                    if let Err(e) = writeln!(file, "{}", message) {
-                        eprintln!("로그 파일 쓰기 실패: {}", e);
+                    if let Err(e) = writeln!(file, "{message}") {
+                        eprintln!("로그 파일 쓰기 실패: {e}");
                     }
                 }
             }
@@ -85,14 +85,14 @@ impl Logger {
 
     pub fn log_error(message: &str) {
         // 콘솔에 에러 출력
-        eprintln!("{}", message);
+        eprintln!("{message}");
 
         // 파일에도 동일한 내용 기록
         if let Some(logger) = LOGGER.get() {
             if let Ok(mut file_guard) = logger.lock() {
                 if let Some(file) = file_guard.as_mut() {
-                    if let Err(e) = writeln!(file, "ERROR: {}", message) {
-                        eprintln!("에러 로그 파일 쓰기 실패: {}", e);
+                    if let Err(e) = writeln!(file, "ERROR: {message}") {
+                        eprintln!("에러 로그 파일 쓰기 실패: {e}");
                     }
                 }
             }
@@ -101,14 +101,14 @@ impl Logger {
 
     pub fn log_fmt(args: std::fmt::Arguments<'_>) {
         // 콘솔에 출력
-        println!("{}", args);
+        println!("{args}");
 
         // 파일에도 동일한 내용 기록
         if let Some(logger) = LOGGER.get() {
             if let Ok(mut file_guard) = logger.lock() {
                 if let Some(file) = file_guard.as_mut() {
-                    if let Err(e) = writeln!(file, "{}", args) {
-                        eprintln!("로그 파일 쓰기 실패: {}", e);
+                    if let Err(e) = writeln!(file, "{args}") {
+                        eprintln!("로그 파일 쓰기 실패: {e}");
                     }
                 }
             }

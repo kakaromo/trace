@@ -5,7 +5,9 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::fs::File;
 
 /// UFS Parquet 파일에서 데이터를 읽어 UFS 구조체 벡터로 반환
-pub fn read_ufs_from_parquet(filepath: &str) -> Result<Vec<UFS>, Box<dyn std::error::Error + Send + Sync>> {
+pub fn read_ufs_from_parquet(
+    filepath: &str,
+) -> Result<Vec<UFS>, Box<dyn std::error::Error + Send + Sync>> {
     // 파일 열기
     let file = File::open(filepath)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
@@ -28,7 +30,9 @@ pub fn read_ufs_from_parquet(filepath: &str) -> Result<Vec<UFS>, Box<dyn std::er
 }
 
 /// Block Parquet 파일에서 데이터를 읽어 Block 구조체 벡터로 반환
-pub fn read_block_from_parquet(filepath: &str) -> Result<Vec<Block>, Box<dyn std::error::Error + Send + Sync>> {
+pub fn read_block_from_parquet(
+    filepath: &str,
+) -> Result<Vec<Block>, Box<dyn std::error::Error + Send + Sync>> {
     // 파일 열기
     let file = File::open(filepath)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
@@ -252,15 +256,25 @@ fn convert_batch_to_ufscustom(
         .as_primitive::<Float64Type>();
 
     // 새 필드들 (옵션으로 처리하여 기존 파일과 호환)
-    let start_qd_array = schema.index_of("start_qd").ok()
+    let start_qd_array = schema
+        .index_of("start_qd")
+        .ok()
         .map(|idx| batch.column(idx).as_primitive::<UInt32Type>());
-    let end_qd_array = schema.index_of("end_qd").ok()
+    let end_qd_array = schema
+        .index_of("end_qd")
+        .ok()
         .map(|idx| batch.column(idx).as_primitive::<UInt32Type>());
-    let ctoc_array = schema.index_of("ctoc").ok()
+    let ctoc_array = schema
+        .index_of("ctoc")
+        .ok()
         .map(|idx| batch.column(idx).as_primitive::<Float64Type>());
-    let ctod_array = schema.index_of("ctod").ok()
+    let ctod_array = schema
+        .index_of("ctod")
+        .ok()
         .map(|idx| batch.column(idx).as_primitive::<Float64Type>());
-    let continuous_array = schema.index_of("continuous").ok()
+    let continuous_array = schema
+        .index_of("continuous")
+        .ok()
         .map(|idx| batch.column(idx).as_boolean());
 
     // 각 행을 UFSCUSTOM 구조체로 변환

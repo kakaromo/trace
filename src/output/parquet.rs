@@ -2,8 +2,8 @@ use crate::models::{Block, UFS, UFSCUSTOM};
 use arrow::array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt32Array, UInt64Array};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::arrow_writer::ArrowWriter;
-use parquet::file::properties::{WriterProperties, EnabledStatistics};
 use parquet::basic::{Compression, Encoding, ZstdLevel};
+use parquet::file::properties::{EnabledStatistics, WriterProperties};
 use rayon::prelude::*;
 use std::fs::File;
 use std::sync::Arc;
@@ -17,21 +17,36 @@ pub fn save_to_parquet(
     chunk_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
-    
+
     // sequentially save files (thread safety issue resolved)
     if !ufs_traces.is_empty() {
-        save_ufs_to_parquet(ufs_traces, &format!("{}_ufs.parquet", output_path), chunk_size)?;
+        save_ufs_to_parquet(
+            ufs_traces,
+            &format!("{output_path}_ufs.parquet"),
+            chunk_size,
+        )?;
     }
 
     if !block_traces.is_empty() {
-        save_block_to_parquet(block_traces, &format!("{}_block.parquet", output_path), chunk_size)?;
+        save_block_to_parquet(
+            block_traces,
+            &format!("{output_path}_block.parquet"),
+            chunk_size,
+        )?;
     }
 
     if !ufscustom_traces.is_empty() {
-        save_ufscustom_to_parquet(ufscustom_traces, &format!("{}_ufscustom.parquet", output_path), chunk_size)?;
+        save_ufscustom_to_parquet(
+            ufscustom_traces,
+            &format!("{output_path}_ufscustom.parquet"),
+            chunk_size,
+        )?;
     }
 
-    println!("All Parquet files saved in {:.2}s", start_time.elapsed().as_secs_f64());
+    println!(
+        "All Parquet files saved in {:.2}s",
+        start_time.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 
@@ -53,18 +68,18 @@ fn select_compression(data_size: usize) -> Compression {
 fn create_writer_properties_with_compression(compression: Compression) -> WriterProperties {
     WriterProperties::builder()
         .set_compression(compression)
-        .set_encoding(Encoding::PLAIN)         // fast encoding
-        .set_dictionary_enabled(true)          // enable dictionary compression for better compression rate
-        .set_statistics_enabled(EnabledStatistics::Chunk)  // enable chunk-wise statistics for balance between performance and compression rate
-        .set_max_row_group_size(1_000_000)    // optimize I/O by using large row groups
+        .set_encoding(Encoding::PLAIN) // fast encoding
+        .set_dictionary_enabled(true) // enable dictionary compression for better compression rate
+        .set_statistics_enabled(EnabledStatistics::Chunk) // enable chunk-wise statistics for balance between performance and compression rate
+        .set_max_row_group_size(1_000_000) // optimize I/O by using large row groups
         .build()
 }
 
 // optimized UFS Parquet save
 fn save_ufs_to_parquet(
-    traces: &[UFS], 
-    filepath: &str, 
-    chunk_size: usize
+    traces: &[UFS],
+    filepath: &str,
+    chunk_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if traces.is_empty() {
         return Ok(());
@@ -72,7 +87,7 @@ fn save_ufs_to_parquet(
 
     let start_time = Instant::now();
     let total_chunks = traces.len().div_ceil(chunk_size);
-    
+
     // 데이터 크기 추정 (각 UFS 레코드 약 200바이트)
     let estimated_size = traces.len() * 200;
     let compression = select_compression(estimated_size);
@@ -81,9 +96,14 @@ fn save_ufs_to_parquet(
         Compression::ZSTD(_) => "ZSTD",
         _ => "Other",
     };
-    
-    println!("Saving {} UFS traces to {} using {} compression ({} chunks)", 
-              traces.len(), filepath, compression_name, total_chunks);
+
+    println!(
+        "Saving {} UFS traces to {} using {} compression ({} chunks)",
+        traces.len(),
+        filepath,
+        compression_name,
+        total_chunks
+    );
 
     let schema = Arc::new(arrow::datatypes::Schema::new(vec![
         arrow::datatypes::Field::new("time", arrow::datatypes::DataType::Float64, false),
@@ -108,12 +128,17 @@ fn save_ufs_to_parquet(
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
     // 병렬 처리로 배치 데이터 준비
-    let batches: Vec<_> = traces.par_chunks(chunk_size)
+    let batches: Vec<_> = traces
+        .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_idx, chunk)| {
             if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
-                println!("Processing UFS chunk {}/{} ({} records)", 
-                          chunk_idx + 1, total_chunks, chunk.len());
+                println!(
+                    "Processing UFS chunk {}/{} ({} records)",
+                    chunk_idx + 1,
+                    total_chunks,
+                    chunk.len()
+                );
             }
 
             // 사전 할당된 벡터로 메모리 할당 최적화
@@ -181,12 +206,15 @@ fn save_ufs_to_parquet(
     }
 
     writer.close()?;
-    println!("UFS Parquet file saved in {:.2}s: {}", 
-             start_time.elapsed().as_secs_f64(), filepath);
+    println!(
+        "UFS Parquet file saved in {:.2}s: {}",
+        start_time.elapsed().as_secs_f64(),
+        filepath
+    );
     Ok(())
 }
 
-// 최적화된 Block Parquet 저장  
+// 최적화된 Block Parquet 저장
 fn save_block_to_parquet(
     traces: &[Block],
     filepath: &str,
@@ -198,7 +226,7 @@ fn save_block_to_parquet(
 
     let start_time = Instant::now();
     let total_chunks = traces.len().div_ceil(chunk_size);
-    
+
     // 데이터 크기 추정 (각 Block 레코드 약 250바이트)
     let estimated_size = traces.len() * 250;
     let compression = select_compression(estimated_size);
@@ -207,9 +235,14 @@ fn save_block_to_parquet(
         Compression::ZSTD(_) => "ZSTD",
         _ => "Other",
     };
-    
-    println!("Saving {} Block traces to {} using {} compression ({} chunks)", 
-              traces.len(), filepath, compression_name, total_chunks);
+
+    println!(
+        "Saving {} Block traces to {} using {} compression ({} chunks)",
+        traces.len(),
+        filepath,
+        compression_name,
+        total_chunks
+    );
 
     let schema = Arc::new(arrow::datatypes::Schema::new(vec![
         arrow::datatypes::Field::new("time", arrow::datatypes::DataType::Float64, false),
@@ -236,12 +269,17 @@ fn save_block_to_parquet(
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
     // 병렬 처리로 배치 데이터 준비
-    let batches: Vec<_> = traces.par_chunks(chunk_size)
+    let batches: Vec<_> = traces
+        .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_idx, chunk)| {
             if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
-                println!("Processing Block chunk {}/{} ({} records)", 
-                          chunk_idx + 1, total_chunks, chunk.len());
+                println!(
+                    "Processing Block chunk {}/{} ({} records)",
+                    chunk_idx + 1,
+                    total_chunks,
+                    chunk.len()
+                );
             }
 
             // 사전 할당된 벡터로 메모리 할당 최적화
@@ -315,8 +353,11 @@ fn save_block_to_parquet(
     }
 
     writer.close()?;
-    println!("Block Parquet file saved in {:.2}s: {}", 
-             start_time.elapsed().as_secs_f64(), filepath);
+    println!(
+        "Block Parquet file saved in {:.2}s: {}",
+        start_time.elapsed().as_secs_f64(),
+        filepath
+    );
     Ok(())
 }
 
@@ -332,7 +373,7 @@ fn save_ufscustom_to_parquet(
 
     let start_time = Instant::now();
     let total_chunks = traces.len().div_ceil(chunk_size);
-    
+
     // 데이터 크기 추정 (각 UFSCUSTOM 레코드 약 150바이트)
     let estimated_size = traces.len() * 150;
     let compression = select_compression(estimated_size);
@@ -341,9 +382,14 @@ fn save_ufscustom_to_parquet(
         Compression::ZSTD(_) => "ZSTD",
         _ => "Other",
     };
-    
-    println!("Saving {} UFSCUSTOM traces to {} using {} compression ({} chunks)", 
-              traces.len(), filepath, compression_name, total_chunks);
+
+    println!(
+        "Saving {} UFSCUSTOM traces to {} using {} compression ({} chunks)",
+        traces.len(),
+        filepath,
+        compression_name,
+        total_chunks
+    );
 
     let schema = Arc::new(arrow::datatypes::Schema::new(vec![
         arrow::datatypes::Field::new("opcode", arrow::datatypes::DataType::Utf8, false),
@@ -353,8 +399,8 @@ fn save_ufscustom_to_parquet(
         arrow::datatypes::Field::new("end_time", arrow::datatypes::DataType::Float64, false),
         arrow::datatypes::Field::new("dtoc", arrow::datatypes::DataType::Float64, false),
         // 새로 추가된 필드들
-        arrow::datatypes::Field::new("start_qd", arrow::datatypes::DataType::UInt32, false),    // 시작 QD
-        arrow::datatypes::Field::new("end_qd", arrow::datatypes::DataType::UInt32, false),      // 종료 QD
+        arrow::datatypes::Field::new("start_qd", arrow::datatypes::DataType::UInt32, false), // 시작 QD
+        arrow::datatypes::Field::new("end_qd", arrow::datatypes::DataType::UInt32, false), // 종료 QD
         arrow::datatypes::Field::new("ctoc", arrow::datatypes::DataType::Float64, false),
         arrow::datatypes::Field::new("ctod", arrow::datatypes::DataType::Float64, false),
         arrow::datatypes::Field::new("continuous", arrow::datatypes::DataType::Boolean, false),
@@ -365,12 +411,17 @@ fn save_ufscustom_to_parquet(
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
     // 병렬 처리로 배치 데이터 준비
-    let batches: Vec<_> = traces.par_chunks(chunk_size)
+    let batches: Vec<_> = traces
+        .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_idx, chunk)| {
             if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
-                println!("Processing UFSCUSTOM chunk {}/{} ({} records)", 
-                          chunk_idx + 1, total_chunks, chunk.len());
+                println!(
+                    "Processing UFSCUSTOM chunk {}/{} ({} records)",
+                    chunk_idx + 1,
+                    total_chunks,
+                    chunk.len()
+                );
             }
 
             // 사전 할당된 벡터로 메모리 할당 최적화
@@ -409,8 +460,8 @@ fn save_ufscustom_to_parquet(
                 Arc::new(Float64Array::from(start_time_vec)),
                 Arc::new(Float64Array::from(end_time_vec)),
                 Arc::new(Float64Array::from(dtoc_vec)),
-                Arc::new(UInt32Array::from(start_qd_vec)),   // 시작 QD
-                Arc::new(UInt32Array::from(end_qd_vec)),     // 종료 QD
+                Arc::new(UInt32Array::from(start_qd_vec)), // 시작 QD
+                Arc::new(UInt32Array::from(end_qd_vec)),   // 종료 QD
                 Arc::new(Float64Array::from(ctoc_vec)),
                 Arc::new(Float64Array::from(ctod_vec)),
                 Arc::new(BooleanArray::from(continuous_vec)),
@@ -426,8 +477,11 @@ fn save_ufscustom_to_parquet(
     }
 
     writer.close()?;
-    println!("UFSCUSTOM Parquet file saved in {:.2}s: {}", 
-             start_time.elapsed().as_secs_f64(), filepath);
+    println!(
+        "UFSCUSTOM Parquet file saved in {:.2}s: {}",
+        start_time.elapsed().as_secs_f64(),
+        filepath
+    );
     Ok(())
 }
 
@@ -440,21 +494,36 @@ pub fn append_to_parquet(
     chunk_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
-    
+
     // 순차적으로 파일에 append
     if !ufs_traces.is_empty() {
-        append_ufs_to_parquet(ufs_traces, &format!("{}_ufs.parquet", output_path), chunk_size)?;
+        append_ufs_to_parquet(
+            ufs_traces,
+            &format!("{output_path}_ufs.parquet"),
+            chunk_size,
+        )?;
     }
 
     if !block_traces.is_empty() {
-        append_block_to_parquet(block_traces, &format!("{}_block.parquet", output_path), chunk_size)?;
+        append_block_to_parquet(
+            block_traces,
+            &format!("{output_path}_block.parquet"),
+            chunk_size,
+        )?;
     }
 
     if !ufscustom_traces.is_empty() {
-        append_ufscustom_to_parquet(ufscustom_traces, &format!("{}_ufscustom.parquet", output_path), chunk_size)?;
+        append_ufscustom_to_parquet(
+            ufscustom_traces,
+            &format!("{output_path}_ufscustom.parquet"),
+            chunk_size,
+        )?;
     }
 
-    println!("All data appended to Parquet files in {:.2}s", start_time.elapsed().as_secs_f64());
+    println!(
+        "All data appended to Parquet files in {:.2}s",
+        start_time.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 
@@ -464,25 +533,25 @@ pub fn append_ufs_to_parquet(
     chunk_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::path::Path;
-    
+
     if Path::new(filepath).exists() {
         // 파일이 존재하면 기존 데이터를 읽어서 새 데이터와 합쳐서 저장
         // 간단한 방법으로 구현: 임시 파일 생성 후 교체
-        let temp_filepath = format!("{}.tmp", filepath);
-        
+        let temp_filepath = format!("{filepath}.tmp");
+
         // 기존 파일을 임시 파일로 복사
         std::fs::copy(filepath, &temp_filepath)?;
-        
+
         // 새 파일에 저장
         save_ufs_to_parquet(ufs_traces, filepath, chunk_size)?;
-        
+
         // 임시 파일 삭제
         std::fs::remove_file(&temp_filepath)?;
     } else {
         // 파일이 없으면 새로 생성
         save_ufs_to_parquet(ufs_traces, filepath, chunk_size)?;
     }
-    
+
     Ok(())
 }
 
@@ -492,16 +561,16 @@ pub fn append_block_to_parquet(
     chunk_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::path::Path;
-    
+
     if Path::new(filepath).exists() {
-        let temp_filepath = format!("{}.tmp", filepath);
+        let temp_filepath = format!("{filepath}.tmp");
         std::fs::copy(filepath, &temp_filepath)?;
         save_block_to_parquet(block_traces, filepath, chunk_size)?;
         std::fs::remove_file(&temp_filepath)?;
     } else {
         save_block_to_parquet(block_traces, filepath, chunk_size)?;
     }
-    
+
     Ok(())
 }
 
@@ -511,17 +580,15 @@ fn append_ufscustom_to_parquet(
     chunk_size: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::path::Path;
-    
+
     if Path::new(filepath).exists() {
-        let temp_filepath = format!("{}.tmp", filepath);
+        let temp_filepath = format!("{filepath}.tmp");
         std::fs::copy(filepath, &temp_filepath)?;
         save_ufscustom_to_parquet(ufscustom_traces, filepath, chunk_size)?;
         std::fs::remove_file(&temp_filepath)?;
     } else {
         save_ufscustom_to_parquet(ufscustom_traces, filepath, chunk_size)?;
     }
-    
+
     Ok(())
 }
-
-

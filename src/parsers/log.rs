@@ -1,15 +1,15 @@
 use crate::models::{Block, UFS, UFSCUSTOM};
 use crate::parsers::log_common;
 use crate::parsers::log_common::{create_temp_file, UFSCUSTOM_RE};
+use crate::utils::encoding::{decode_bytes_auto, open_encoded_reader};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
-use std::fs::File;
 use std::fs;
-use std::io::{self, BufReader, BufWriter, Read, Write, Seek};
+use std::fs::File;
+use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 use std::str;
 use std::sync::mpsc;
 use std::time::Instant;
-use crate::utils::encoding::{open_encoded_reader, decode_bytes_auto};
 
 // Using read_line_lossy from log_common module
 use crate::parsers::log_common::read_line_lossy;
@@ -30,15 +30,19 @@ fn process_chunk_streaming(
             Some((Some(ufs), None, None)) => {
                 // Serialize to Bincode format
                 bincode::encode_into_std_write(&ufs, &mut *ufs_writer, bincode::config::standard())
-                    .unwrap_or_else(|e| panic!("UFS bincode serialization failed: {}", e));
+                    .unwrap_or_else(|e| panic!("UFS bincode serialization failed: {e}"));
                 ufs_count += 1;
-            },
+            }
             Some((None, Some(block), None)) => {
                 // Serialize to Bincode format
-                bincode::encode_into_std_write(&block, &mut *block_writer, bincode::config::standard())
-                    .unwrap_or_else(|e| panic!("Block bincode serialization failed: {}", e));
+                bincode::encode_into_std_write(
+                    &block,
+                    &mut *block_writer,
+                    bincode::config::standard(),
+                )
+                .unwrap_or_else(|e| panic!("Block bincode serialization failed: {e}"));
                 block_count += 1;
-            },
+            }
             Some((None, None, Some(ufscustom))) => {
                 // Serialize to Bincode format
                 bincode::encode_into_std_write(
@@ -46,9 +50,9 @@ fn process_chunk_streaming(
                     &mut *ufscustom_writer,
                     bincode::config::standard(),
                 )
-                .unwrap_or_else(|e| panic!("UFSCUSTOM bincode serialization failed: {}", e));
+                .unwrap_or_else(|e| panic!("UFSCUSTOM bincode serialization failed: {e}"));
                 ufscustom_count += 1;
-            },
+            }
             _ => continue,
         }
     }
@@ -83,7 +87,7 @@ fn process_lines(lines: Vec<String>) -> (Vec<UFS>, Vec<Block>, Vec<UFSCUSTOM>) {
 // Main log file parsing function
 pub fn parse_log_file(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>, Vec<UFSCUSTOM>)> {
     let parse_start_time = Instant::now();
-    println!("Starting log file parsing: {}", filepath);
+    println!("Starting log file parsing: {filepath}");
 
     // Check file size
     let file_size = fs::metadata(filepath)?.len();
@@ -121,12 +125,12 @@ fn parse_log_file_in_memory(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
 
     // Configure thread pool for parallel processing
     let num_threads = num_cpus::get();
-    println!("Processing with {} threads", num_threads);
+    println!("Processing with {num_threads} threads");
 
     // Try memory mapping using common function
     if let Ok(mmap) = log_common::try_memory_map(&file) {
         println!("Using memory mapping for file processing");
-        
+
         // Process memory mapped file using common function
         const CHUNK_SIZE: usize = 100_000;
         match log_common::process_memory_mapped_file(&mmap, process_lines, CHUNK_SIZE) {
@@ -135,12 +139,16 @@ fn parse_log_file_in_memory(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
                 ufs_traces.append(&mut mapped_ufs);
                 block_traces.append(&mut mapped_blocks);
                 ufscustom_traces.append(&mut mapped_ufscustom);
-                
-                println!("Memory mapped processing complete: {} UFS, {} Block, {} UFSCUSTOM", 
-                    ufs_traces.len(), block_traces.len(), ufscustom_traces.len());
-            },
+
+                println!(
+                    "Memory mapped processing complete: {} UFS, {} Block, {} UFSCUSTOM",
+                    ufs_traces.len(),
+                    block_traces.len(),
+                    ufscustom_traces.len()
+                );
+            }
             Err(e) => {
-                println!("Error processing memory mapped file: {}", e);
+                println!("Error processing memory mapped file: {e}");
                 println!("Falling back to standard file reading");
                 // Fall back to standard reading mode
                 // Reset the file position to the beginning
@@ -150,16 +158,16 @@ fn parse_log_file_in_memory(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
     } else {
         // Fall back to traditional method if memory mapping fails
         println!("Memory mapping failed, processing with standard file reading");
-    
+
         let mut reader = open_encoded_reader(filepath, 16 * 1024 * 1024)?;
-    
+
         // Set chunk size
         const CHUNK_SIZE: usize = 100_000;
         let mut lines_chunk = Vec::with_capacity(CHUNK_SIZE);
         let mut total_lines = 0;
         let mut last_report_time = Instant::now();
         let mut buf = Vec::new();
-    
+
         while let Some(line) = read_line_lossy(&mut reader, &mut buf)? {
             lines_chunk.push(line);
 
@@ -211,10 +219,16 @@ fn parse_log_file_in_memory(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
 
     // Calculate block latency (Q->C mapping to dtoc) for block events
     if !block_traces.is_empty() {
-        println!("Calculating Dispatch-to-Complete (dtoc) latency for {} block events...", block_traces.len());
+        println!(
+            "Calculating Dispatch-to-Complete (dtoc) latency for {} block events...",
+            block_traces.len()
+        );
         let dtoc_start = Instant::now();
         crate::parsers::log_common::calculate_block_latency_advanced(&mut block_traces);
-        println!("dtoc calculation completed in {:.2}s", dtoc_start.elapsed().as_secs_f64());
+        println!(
+            "dtoc calculation completed in {:.2}s",
+            dtoc_start.elapsed().as_secs_f64()
+        );
     }
 
     Ok((ufs_traces, block_traces, ufscustom_traces))
@@ -234,7 +248,7 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
 
     // Set thread count for parallel processing
     let num_threads = num_cpus::get();
-    println!("Processing with {} threads", num_threads);
+    println!("Processing with {num_threads} threads");
 
     // Rayon uses a global thread pool, no need to create a separate one
 
@@ -444,20 +458,18 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
 
     // Load UFS data using common deserializer
     {
-        println!("Loading UFS data from {}", ufs_temp_path);
+        println!("Loading UFS data from {ufs_temp_path}");
         let file = File::open(&ufs_temp_path)?;
         let file_size = file.metadata()?.len();
         println!("UFS data file size: {} MB", file_size / 1_048_576);
-        
-        let mut reader = BufReader::with_capacity(
-            log_common::get_optimal_buffer_size(file_size), 
-            file
-        );
-        
+
+        let mut reader =
+            BufReader::with_capacity(log_common::get_optimal_buffer_size(file_size), file);
+
         match log_common::deserialize_ufs_items(&mut reader) {
             Ok(items) => ufs_traces = items,
             Err(e) => {
-                eprintln!("Error deserializing UFS data: {}", e);
+                eprintln!("Error deserializing UFS data: {e}");
                 // Continue with empty vec instead of failing completely
                 ufs_traces = Vec::new();
             }
@@ -466,20 +478,18 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
 
     // Load Block data using common deserializer
     {
-        println!("Loading Block data from {}", block_temp_path);
+        println!("Loading Block data from {block_temp_path}");
         let file = File::open(&block_temp_path)?;
         let file_size = file.metadata()?.len();
         println!("Block data file size: {} MB", file_size / 1_048_576);
-        
-        let mut reader = BufReader::with_capacity(
-            log_common::get_optimal_buffer_size(file_size),
-            file
-        );
-        
+
+        let mut reader =
+            BufReader::with_capacity(log_common::get_optimal_buffer_size(file_size), file);
+
         match log_common::deserialize_block_items(&mut reader) {
             Ok(items) => block_traces = items,
             Err(e) => {
-                eprintln!("Error deserializing Block data: {}", e);
+                eprintln!("Error deserializing Block data: {e}");
                 // Continue with empty vec instead of failing completely
                 block_traces = Vec::new();
             }
@@ -488,20 +498,18 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
 
     // Load UFSCUSTOM data using common deserializer
     {
-        println!("Loading UFSCUSTOM data from {}", ufscustom_temp_path);
+        println!("Loading UFSCUSTOM data from {ufscustom_temp_path}");
         let file = File::open(&ufscustom_temp_path)?;
         let file_size = file.metadata()?.len();
         println!("UFSCUSTOM data file size: {} MB", file_size / 1_048_576);
-        
-        let mut reader = BufReader::with_capacity(
-            log_common::get_optimal_buffer_size(file_size),
-            file
-        );
-        
+
+        let mut reader =
+            BufReader::with_capacity(log_common::get_optimal_buffer_size(file_size), file);
+
         match log_common::deserialize_ufscustom_items(&mut reader) {
             Ok(items) => ufscustom_traces = items,
             Err(e) => {
-                eprintln!("Error deserializing UFSCUSTOM data: {}", e);
+                eprintln!("Error deserializing UFSCUSTOM data: {e}");
                 // Continue with empty vec instead of failing completely
                 ufscustom_traces = Vec::new();
             }
@@ -529,12 +537,18 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
         start_time.elapsed().as_secs_f64()
     );
 
-    // Calculate block latency (Q->C mapping to dtoc) for block events  
+    // Calculate block latency (Q->C mapping to dtoc) for block events
     if !block_traces.is_empty() {
-        println!("Calculating Dispatch-to-Complete (dtoc) latency for {} block events...", block_traces.len());
+        println!(
+            "Calculating Dispatch-to-Complete (dtoc) latency for {} block events...",
+            block_traces.len()
+        );
         let dtoc_start = Instant::now();
         crate::parsers::log_common::calculate_block_latency_advanced(&mut block_traces);
-        println!("dtoc calculation completed in {:.2}s", dtoc_start.elapsed().as_secs_f64());
+        println!(
+            "dtoc calculation completed in {:.2}s",
+            dtoc_start.elapsed().as_secs_f64()
+        );
     }
 
     Ok((ufs_traces, block_traces, ufscustom_traces))
@@ -543,7 +557,7 @@ fn parse_log_file_streaming(filepath: &str) -> io::Result<(Vec<UFS>, Vec<Block>,
 // Parse UFSCustom log file
 pub fn parse_ufscustom_log(filepath: &str) -> io::Result<Vec<UFSCUSTOM>> {
     let _parse_start_time = Instant::now();
-    println!("Starting: UFSCustom log parsing - {}", filepath);
+    println!("Starting: UFSCustom log parsing - {filepath}");
 
     // Check file size
     let file = File::open(filepath)?;
@@ -552,7 +566,7 @@ pub fn parse_ufscustom_log(filepath: &str) -> io::Result<Vec<UFSCUSTOM>> {
 
     // Configure thread pool for parallel processing
     let num_threads = num_cpus::get();
-    println!("Processing with {} threads", num_threads);
+    println!("Processing with {num_threads} threads");
 
     // Try memory mapping
     if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
@@ -584,7 +598,7 @@ fn process_ufscustom_content(content: &str) -> io::Result<Vec<UFSCUSTOM>> {
     // Split into lines and process in parallel
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
-    println!("Starting to parse {} lines", total_lines);
+    println!("Starting to parse {total_lines} lines");
 
     let mut ufscustom_traces: Vec<UFSCUSTOM> = Vec::new();
     let mut parsed_lines = 0;
@@ -670,8 +684,7 @@ fn process_ufscustom_content(content: &str) -> io::Result<Vec<UFSCUSTOM>> {
 
     // Print statistics
     println!(
-        "UFSCustom log parsing completed: Total {} lines (Parsed: {}, Skipped: {})",
-        total_lines, parsed_lines, skipped_lines
+        "UFSCustom log parsing completed: Total {total_lines} lines (Parsed: {parsed_lines}, Skipped: {skipped_lines})"
     );
     println!(
         "Parsing time: {:.2} seconds",
@@ -686,7 +699,10 @@ fn process_ufscustom_content(content: &str) -> io::Result<Vec<UFSCUSTOM>> {
             .partial_cmp(&b.dtoc)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    println!("Sorting completed: {:.2} seconds", sort_start.elapsed().as_secs_f64());
+    println!(
+        "Sorting completed: {:.2} seconds",
+        sort_start.elapsed().as_secs_f64()
+    );
 
     // Print basic statistics
     if !ufscustom_traces.is_empty() {
@@ -698,9 +714,9 @@ fn process_ufscustom_content(content: &str) -> io::Result<Vec<UFSCUSTOM>> {
         let avg_dtoc = sum_dtoc / ufscustom_traces.len() as f64;
 
         println!("UFSCustom dtoc statistics (milliseconds):");
-        println!("  Min: {:.3} ms", min_dtoc);
-        println!("  Max: {:.3} ms", max_dtoc);
-        println!("  Avg: {:.3} ms", avg_dtoc);
+        println!("  Min: {min_dtoc:.3} ms");
+        println!("  Max: {max_dtoc:.3} ms");
+        println!("  Avg: {avg_dtoc:.3} ms");
     }
 
     Ok(ufscustom_traces)
@@ -709,13 +725,13 @@ fn process_ufscustom_content(content: &str) -> io::Result<Vec<UFSCUSTOM>> {
 // Parse UFSCustom CSV file for dtoc calculation
 pub fn parse_ufscustom_file(filepath: &str) -> io::Result<Vec<UFSCUSTOM>> {
     let parse_start_time = Instant::now();
-    println!("Starting UFSCustom file parsing: {}", filepath);
+    println!("Starting UFSCustom file parsing: {filepath}");
 
     // Check if file exists
     if !std::path::Path::new(filepath).exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("File not found: {}", filepath),
+            format!("File not found: {filepath}"),
         ));
     }
 

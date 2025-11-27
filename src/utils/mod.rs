@@ -1,10 +1,10 @@
 pub mod constants;
+pub mod encoding;
 pub mod filter;
+pub mod iteration;
 pub mod latency;
 pub mod logger;
-pub mod encoding;
 pub mod performance;
-pub mod iteration;
 
 use std::sync::OnceLock;
 
@@ -48,15 +48,16 @@ pub fn is_block_aligned(sector: u64) -> bool {
     sector % alignment_sectors == 0
 }
 
+pub use self::encoding::{open_encoded_reader, read_to_string_auto, EncodedBufReader};
 pub use self::filter::{
     filter_block_data, filter_ufs_data, filter_ufscustom_data, read_filter_options, FilterOptions,
 };
+pub use self::iteration::IterationOutputManager;
 pub use self::latency::{
     get_user_latency_ranges, parse_latency_ranges, set_user_latency_ranges, UserLatencyRanges,
 };
 pub use self::logger::Logger;
-pub use self::encoding::{open_encoded_reader, read_to_string_auto, EncodedBufReader};
-pub use self::iteration::IterationOutputManager;
 pub use self::performance::{
-    PerformanceMetrics, PerformanceProfiler, MemoryMonitor, SystemMemoryInfo, calculate_optimal_chunk_size,
+    calculate_optimal_chunk_size, MemoryMonitor, PerformanceMetrics, PerformanceProfiler,
+    SystemMemoryInfo,
 };

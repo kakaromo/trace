@@ -25,7 +25,7 @@ impl Default for PlottersConfig {
             font_family: "D2Coding",
             title_font_size: 24,
             axis_label_font_size: 16,
-            tick_label_font_size: 12, 
+            tick_label_font_size: 12,
             point_size: 2,
             legend_spacing: 25,
             y_axis_range: None, // 기본값은 자동 범위
@@ -80,7 +80,7 @@ fn draw_legend(
     // 레전드 영역의 높이 가져오기
     let (_, legend_height) = legend_area.dim_in_pixel();
     let total_legend_height = legends.len() * config.legend_spacing as usize;
-    
+
     // 세로 가운데 정렬을 위한 시작 위치 계산
     let start_y = ((legend_height as i32 - total_legend_height as i32) / 2).max(20);
 
@@ -97,7 +97,11 @@ fn draw_legend(
         legend_area.draw(&Text::new(
             name.clone(),
             (50_i32, y_pos),
-            (config.font_family, config.tick_label_font_size, FontStyle::Normal),  // Bold 제거
+            (
+                config.font_family,
+                config.tick_label_font_size,
+                FontStyle::Normal,
+            ), // Bold 제거
         ))?;
     }
 
@@ -107,32 +111,32 @@ fn draw_legend(
 /// UFS 색상 매핑 헬퍼 함수 - 주요 opcode 색상 고정
 fn ufs_opcode_color_mapper(opcode: &str) -> RGBColor {
     match opcode {
-        "0x28" => RGBColor(65, 105, 225),  // READ_10 - 파란색 계열
-        "0x2a" => RGBColor(220, 20, 60),   // WRITE_10 - 빨간색 계열  
-        "0x35" => RGBColor(255, 215, 0),   // SYNCHRONIZE_CACHE_10 - 노란색 계열
-        "0x42" => RGBColor(138, 43, 226),  // UNMAP/DISCARD - 보라색 계열
-        _ => RGBColor(50, 50, 50),         // 기타 - 검은색 계열
+        "0x28" => RGBColor(65, 105, 225), // READ_10 - 파란색 계열
+        "0x2a" => RGBColor(220, 20, 60),  // WRITE_10 - 빨간색 계열
+        "0x35" => RGBColor(255, 215, 0),  // SYNCHRONIZE_CACHE_10 - 노란색 계열
+        "0x42" => RGBColor(138, 43, 226), // UNMAP/DISCARD - 보라색 계열
+        _ => RGBColor(50, 50, 50),        // 기타 - 검은색 계열
     }
 }
 
 /// CPU 색상 매핑 헬퍼 함수 - CPU 번호에 따라 색상 고정
 fn cpu_color_mapper(cpu: &str) -> RGBColor {
     match cpu {
-        "0" => RGBColor(228, 26, 28),      // 빨강
-        "1" => RGBColor(55, 126, 184),     // 파랑
-        "2" => RGBColor(77, 175, 74),      // 초록
-        "3" => RGBColor(152, 78, 163),     // 보라
-        "4" => RGBColor(255, 127, 0),      // 주황
-        "5" => RGBColor(255, 255, 51),     // 노랑
-        "6" => RGBColor(166, 86, 40),      // 갈색
-        "7" => RGBColor(247, 129, 191),    // 분홍
-        _ => RGBColor(50, 50, 50),         // 기타 (8 이상 또는 음수) - 검은색
+        "0" => RGBColor(228, 26, 28),   // 빨강
+        "1" => RGBColor(55, 126, 184),  // 파랑
+        "2" => RGBColor(77, 175, 74),   // 초록
+        "3" => RGBColor(152, 78, 163),  // 보라
+        "4" => RGBColor(255, 127, 0),   // 주황
+        "5" => RGBColor(255, 255, 51),  // 노랑
+        "6" => RGBColor(166, 86, 40),   // 갈색
+        "7" => RGBColor(247, 129, 191), // 분홍
+        _ => RGBColor(50, 50, 50),      // 기타 (8 이상 또는 음수) - 검은색
     }
 }
 
 /// 일반적인 X대비 Y 그래프 생성을 위한 함수
 /// T: 데이터 타입, F: X축 추출 함수, G: Y축 데이터 추출 함수, H: 필터 조건 함수
-/// 
+///
 /// 이 함수는 ChartConfig를 사용하는 create_xy_scatter_chart_with_config의 래퍼 함수입니다.
 #[allow(clippy::too_many_arguments)]
 fn create_xy_scatter_chart<T, F, G, H>(
@@ -215,7 +219,7 @@ where
 
     // Add padding
     let (min_x, max_x) = add_padding_to_range(min_x, max_x, 0.05);
-    
+
     // y축 범위 설정 - 고정 범위가 설정되어 있으면 사용, 없으면 자동 계산
     let (min_y, max_y) = if let Some((fixed_min, fixed_max)) = chart_config.config.y_axis_range {
         (fixed_min, fixed_max)
@@ -249,7 +253,7 @@ where
         .axis_desc_style((
             chart_config.config.font_family,
             chart_config.config.axis_label_font_size,
-            FontStyle::Normal,  // Bold 제거, Normal 스타일 명시적 지정
+            FontStyle::Normal, // Bold 제거, Normal 스타일 명시적 지정
         ))
         .label_style((
             chart_config.config.font_family,
@@ -317,7 +321,7 @@ fn create_ufs_cpu_chart(
     output_prefix: &str,
     config: &PlottersConfig,
     action_filter: &str, // "send_req" 또는 "complete_rsp"
-    chart_type: &str, // "cpu" 또는 "address"
+    chart_type: &str,    // "cpu" 또는 "address"
 ) -> Result<(), String> {
     if data.is_empty() {
         return Err("No UFS data available for generating CPU charts".to_string());
@@ -336,31 +340,41 @@ fn create_ufs_cpu_chart(
     }
 
     if cpu_groups.is_empty() {
-        return Err(format!("No valid data for UFS {} {} chart", action_filter, chart_type));
+        return Err(format!(
+            "No valid data for UFS {action_filter} {chart_type} chart"
+        ));
     }
 
-    let action_label = if action_filter == "send_req" { "Send" } else { "Complete" };
-    
+    let action_label = if action_filter == "send_req" {
+        "Send"
+    } else {
+        "Complete"
+    };
+
     let (title, y_label, png_path, y_range) = match chart_type {
         "cpu" => (
-            format!("UFS {} - CPU Allocation over Time", action_label),
+            format!("UFS {action_label} - CPU Allocation over Time"),
             "CPU",
-            format!("{}_ufs_{}_cpu_time_plotters.png", output_prefix, action_filter),
+            format!(
+                "{output_prefix}_ufs_{action_filter}_cpu_time_plotters.png"
+            ),
             Some((-1.0, 8.0)),
         ),
         "address" => (
-            format!("UFS {} - LBA Distribution over Time (by CPU)", action_label),
+            format!("UFS {action_label} - LBA Distribution over Time (by CPU)"),
             "LBA",
-            format!("{}_ufs_{}_lba_time_plotters.png", output_prefix, action_filter),
+            format!(
+                "{output_prefix}_ufs_{action_filter}_lba_time_plotters.png"
+            ),
             None,
         ),
-        _ => return Err(format!("Unknown chart type: {}", chart_type)),
+        _ => return Err(format!("Unknown chart type: {chart_type}")),
     };
 
     let y_extractor: fn(&UFS) -> f64 = match chart_type {
         "cpu" => |ufs: &UFS| ufs.cpu as f64,
         "address" => |ufs: &UFS| ufs.lba as f64,
-        _ => return Err(format!("Unknown chart type: {}", chart_type)),
+        _ => return Err(format!("Unknown chart type: {chart_type}")),
     };
 
     // y축 범위 설정
@@ -375,14 +389,16 @@ fn create_ufs_cpu_chart(
         &chart_config,
         &title,
         "Time (s)",
-        &y_label,
+        y_label,
         |ufs| ufs.time,
         y_extractor,
         cpu_color_mapper,
         None::<fn(&&UFS) -> bool>,
     )?;
 
-    println!("UFS {} {} chart saved to: {}", action_filter, chart_type, png_path);
+    println!(
+        "UFS {action_filter} {chart_type} chart saved to: {png_path}"
+    );
 
     Ok(())
 }
@@ -436,7 +452,7 @@ fn create_ufs_metric_chart(
             file_suffix: "lba",
             require_positive: false,
         },
-        _ => return Err(format!("Unknown metric: {}", metric)),
+        _ => return Err(format!("Unknown metric: {metric}")),
     };
 
     // opcode별로 데이터 그룹화 (opcode 값 그대로 사용)
@@ -452,18 +468,24 @@ fn create_ufs_metric_chart(
 
         if include_item {
             opcode_groups
-                .entry(item.opcode.clone())  // opcode 값 그대로 사용
+                .entry(item.opcode.clone()) // opcode 값 그대로 사용
                 .or_default()
                 .push(item);
         }
     }
 
     if opcode_groups.is_empty() {
-        return Err(format!("No valid data for UFS {} chart", metric_info.metric_name));
+        return Err(format!(
+            "No valid data for UFS {} chart",
+            metric_info.metric_name
+        ));
     }
 
     // PNG 파일 경로 생성
-    let png_path = format!("{}_ufs_{}_plotters.png", output_prefix, metric_info.file_suffix);
+    let png_path = format!(
+        "{}_ufs_{}_plotters.png",
+        output_prefix, metric_info.file_suffix
+    );
 
     // 필터 조건 생성
     let filter_condition = if metric_info.require_positive {
@@ -481,11 +503,14 @@ fn create_ufs_metric_chart(
         metric_info.metric_label,
         |ufs| ufs.time,
         metric_info.metric_extractor,
-        ufs_opcode_color_mapper,  // 주요 opcode 색상 고정
+        ufs_opcode_color_mapper, // 주요 opcode 색상 고정
         filter_condition,
     )?;
 
-    println!("UFS {} PNG chart saved to: {}", metric_info.metric_name, png_path);
+    println!(
+        "UFS {} PNG chart saved to: {}",
+        metric_info.metric_name, png_path
+    );
 
     Ok(())
 }
@@ -506,7 +531,7 @@ fn create_block_cpu_chart(
     output_prefix: &str,
     config: &PlottersConfig,
     action_filter: &str, // "issue" 또는 "complete"
-    chart_type: &str, // "cpu" 또는 "address"
+    chart_type: &str,    // "cpu" 또는 "address"
 ) -> Result<(), String> {
     if data.is_empty() {
         return Err("No Block data available for generating CPU charts".to_string());
@@ -521,7 +546,7 @@ fn create_block_cpu_chart(
             "complete" => item.action == "block_rq_complete" || item.action == "C",
             _ => false,
         };
-        
+
         if is_match {
             cpu_groups
                 .entry(item.cpu.to_string())
@@ -531,31 +556,43 @@ fn create_block_cpu_chart(
     }
 
     if cpu_groups.is_empty() {
-        return Err(format!("No valid data for Block {} {} chart", action_filter, chart_type));
+        return Err(format!(
+            "No valid data for Block {action_filter} {chart_type} chart"
+        ));
     }
 
-    let action_label = if action_filter == "issue" { "Send" } else { "Complete" };
-    
+    let action_label = if action_filter == "issue" {
+        "Send"
+    } else {
+        "Complete"
+    };
+
     let (title, y_label, png_path, y_range) = match chart_type {
         "cpu" => (
-            format!("Block I/O {} - CPU Allocation over Time", action_label),
+            format!("Block I/O {action_label} - CPU Allocation over Time"),
             "CPU",
-            format!("{}_block_{}_cpu_time_plotters.png", output_prefix, action_filter),
+            format!(
+                "{output_prefix}_block_{action_filter}_cpu_time_plotters.png"
+            ),
             Some((-1.0, 8.0)),
         ),
         "address" => (
-            format!("Block I/O {} - Sector Distribution over Time (by CPU)", action_label),
+            format!(
+                "Block I/O {action_label} - Sector Distribution over Time (by CPU)"
+            ),
             "Sector",
-            format!("{}_block_{}_sector_time_plotters.png", output_prefix, action_filter),
+            format!(
+                "{output_prefix}_block_{action_filter}_sector_time_plotters.png"
+            ),
             None,
         ),
-        _ => return Err(format!("Unknown chart type: {}", chart_type)),
+        _ => return Err(format!("Unknown chart type: {chart_type}")),
     };
 
     let y_extractor: fn(&Block) -> f64 = match chart_type {
         "cpu" => |block: &Block| block.cpu as f64,
         "address" => |block: &Block| block.sector as f64,
-        _ => return Err(format!("Unknown chart type: {}", chart_type)),
+        _ => return Err(format!("Unknown chart type: {chart_type}")),
     };
 
     // y축 범위 설정
@@ -570,14 +607,16 @@ fn create_block_cpu_chart(
         &chart_config,
         &title,
         "Time (s)",
-        &y_label,
+        y_label,
         |block| block.time,
         y_extractor,
         cpu_color_mapper,
         None::<fn(&&Block) -> bool>,
     )?;
 
-    println!("Block {} {} chart saved to: {}", action_filter, chart_type, png_path);
+    println!(
+        "Block {action_filter} {chart_type} chart saved to: {png_path}"
+    );
 
     Ok(())
 }
@@ -631,7 +670,7 @@ fn create_block_metric_chart(
             file_suffix: "lba",
             require_positive: false,
         },
-        _ => return Err(format!("Unknown metric: {}", metric)),
+        _ => return Err(format!("Unknown metric: {metric}")),
     };
 
     // I/O 타입별로 데이터 그룹화
@@ -654,11 +693,17 @@ fn create_block_metric_chart(
     }
 
     if io_type_groups.is_empty() {
-        return Err(format!("No valid data for Block I/O {} chart", metric_info.metric_name));
+        return Err(format!(
+            "No valid data for Block I/O {} chart",
+            metric_info.metric_name
+        ));
     }
 
     // PNG 파일 경로 생성
-    let png_path = format!("{}_block_{}_plotters.png", output_prefix, metric_info.file_suffix);
+    let png_path = format!(
+        "{}_block_{}_plotters.png",
+        output_prefix, metric_info.file_suffix
+    );
 
     // 필터 조건 생성
     let filter_condition = if metric_info.require_positive {
@@ -680,7 +725,10 @@ fn create_block_metric_chart(
         filter_condition,
     )?;
 
-    println!("Block I/O {} PNG chart saved to: {}", metric_info.metric_name, png_path);
+    println!(
+        "Block I/O {} PNG chart saved to: {}",
+        metric_info.metric_name, png_path
+    );
 
     Ok(())
 }
@@ -750,7 +798,7 @@ fn create_ufscustom_metric_chart(
             file_suffix: "lba",
             require_positive: false,
         },
-        _ => return Err(format!("Unknown metric: {}", metric)),
+        _ => return Err(format!("Unknown metric: {metric}")),
     };
 
     // opcode별로 데이터 그룹화 (opcode 값 그대로 사용)
@@ -759,18 +807,24 @@ fn create_ufscustom_metric_chart(
         // 양수 값이 필요한 메트릭은 필터링
         if !metric_info.require_positive || (metric_info.metric_extractor)(item) > 0.0 {
             opcode_groups
-                .entry(item.opcode.clone())  // opcode 값 그대로 사용
+                .entry(item.opcode.clone()) // opcode 값 그대로 사용
                 .or_default()
                 .push(item);
         }
     }
 
     if opcode_groups.is_empty() {
-        return Err(format!("No valid data for UFSCUSTOM {} chart", metric_info.metric_name));
+        return Err(format!(
+            "No valid data for UFSCUSTOM {} chart",
+            metric_info.metric_name
+        ));
     }
 
     // PNG 파일 경로 생성
-    let png_path = format!("{}_ufscustom_{}_plotters.png", output_prefix, metric_info.file_suffix);
+    let png_path = format!(
+        "{}_ufscustom_{}_plotters.png",
+        output_prefix, metric_info.file_suffix
+    );
 
     // 필터 조건 생성
     let filter_condition = if metric_info.require_positive {
@@ -788,11 +842,14 @@ fn create_ufscustom_metric_chart(
         metric_info.metric_label,
         |ufscustom| ufscustom.start_time,
         metric_info.metric_extractor,
-        ufs_opcode_color_mapper,  // 주요 opcode 색상 고정
+        ufs_opcode_color_mapper, // 주요 opcode 색상 고정
         filter_condition,
     )?;
 
-    println!("UFSCUSTOM {} PNG chart saved to: {}", metric_info.metric_name, png_path);
+    println!(
+        "UFSCUSTOM {} PNG chart saved to: {}",
+        metric_info.metric_name, png_path
+    );
 
     Ok(())
 }
@@ -804,7 +861,13 @@ pub fn generate_charts(
     processed_ufscustom: &[UFSCUSTOM],
     output_prefix: &str,
 ) -> Result<(), String> {
-    generate_charts_with_config(processed_ufs, processed_blocks, processed_ufscustom, output_prefix, None)
+    generate_charts_with_config(
+        processed_ufs,
+        processed_blocks,
+        processed_ufscustom,
+        output_prefix,
+        None,
+    )
 }
 
 /// Generate charts with custom y-axis ranges for different metrics.
@@ -825,14 +888,14 @@ pub fn generate_charts_with_config(
     // UFS 차트 생성
     if !processed_ufs.is_empty() {
         let config = PlottersConfig::default();
-        
+
         // UFS Send CPU Time 차트
         match create_ufs_cpu_chart(processed_ufs, output_prefix, &config, "send_req", "cpu") {
             Ok(_) => {
                 println!("UFS send_req CPU time chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFS send_req CPU time chart: {}", e);
+                eprintln!("Error generating UFS send_req CPU time chart: {e}");
             }
         }
 
@@ -842,7 +905,7 @@ pub fn generate_charts_with_config(
                 println!("UFS send_req LBA time chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFS send_req LBA time chart: {}", e);
+                eprintln!("Error generating UFS send_req LBA time chart: {e}");
             }
         }
 
@@ -852,17 +915,23 @@ pub fn generate_charts_with_config(
                 println!("UFS complete_rsp CPU time chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFS complete_rsp CPU time chart: {}", e);
+                eprintln!("Error generating UFS complete_rsp CPU time chart: {e}");
             }
         }
 
         // UFS Complete LBA Time 차트 (CPU별 색상)
-        match create_ufs_cpu_chart(processed_ufs, output_prefix, &config, "complete_rsp", "address") {
+        match create_ufs_cpu_chart(
+            processed_ufs,
+            output_prefix,
+            &config,
+            "complete_rsp",
+            "address",
+        ) {
             Ok(_) => {
                 println!("UFS complete_rsp LBA time chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFS complete_rsp LBA time chart: {}", e);
+                eprintln!("Error generating UFS complete_rsp LBA time chart: {e}");
             }
         }
 
@@ -876,10 +945,10 @@ pub fn generate_charts_with_config(
                 println!("UFS lba trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFS lba trend PNG chart: {}", e);
+                eprintln!("Error generating UFS lba trend PNG chart: {e}");
             }
         }
-        
+
         // UFS DTOC (Dispatch to Complete) 차트
         let config = PlottersConfig {
             y_axis_range: get_y_range_for_metric("ufs_dtoc"),
@@ -890,7 +959,7 @@ pub fn generate_charts_with_config(
                 println!("UFS dtoc trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFS dtoc trend PNG chart: {}", e);
+                eprintln!("Error generating UFS dtoc trend PNG chart: {e}");
             }
         }
 
@@ -904,7 +973,9 @@ pub fn generate_charts_with_config(
                 println!("UFS complete-to-complete trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFS complete-to-complete trend PNG chart: {}", e);
+                eprintln!(
+                    "Error generating UFS complete-to-complete trend PNG chart: {e}"
+                );
             }
         }
 
@@ -918,7 +989,9 @@ pub fn generate_charts_with_config(
                 println!("UFS complete-to-dispatch trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFS complete-to-dispatch trend PNG chart: {}", e);
+                eprintln!(
+                    "Error generating UFS complete-to-dispatch trend PNG chart: {e}"
+                );
             }
         }
 
@@ -932,7 +1005,7 @@ pub fn generate_charts_with_config(
                 println!("UFS queue depth trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFS queue depth trend PNG chart: {}", e);
+                eprintln!("Error generating UFS queue depth trend PNG chart: {e}");
             }
         }
     }
@@ -940,14 +1013,14 @@ pub fn generate_charts_with_config(
     // Block I/O 차트 생성
     if !processed_blocks.is_empty() {
         let config = PlottersConfig::default();
-        
+
         // Block Send CPU Time 차트
         match create_block_cpu_chart(processed_blocks, output_prefix, &config, "issue", "cpu") {
             Ok(_) => {
                 println!("Block I/O issue CPU time chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O issue CPU time chart: {}", e);
+                eprintln!("Error generating Block I/O issue CPU time chart: {e}");
             }
         }
 
@@ -957,7 +1030,7 @@ pub fn generate_charts_with_config(
                 println!("Block I/O issue sector time chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O issue sector time chart: {}", e);
+                eprintln!("Error generating Block I/O issue sector time chart: {e}");
             }
         }
 
@@ -967,17 +1040,25 @@ pub fn generate_charts_with_config(
                 println!("Block I/O complete CPU time chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O complete CPU time chart: {}", e);
+                eprintln!("Error generating Block I/O complete CPU time chart: {e}");
             }
         }
 
         // Block Complete Sector Time 차트 (CPU별 색상)
-        match create_block_cpu_chart(processed_blocks, output_prefix, &config, "complete", "address") {
+        match create_block_cpu_chart(
+            processed_blocks,
+            output_prefix,
+            &config,
+            "complete",
+            "address",
+        ) {
             Ok(_) => {
                 println!("Block I/O complete sector time chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O complete sector time chart: {}", e);
+                eprintln!(
+                    "Error generating Block I/O complete sector time chart: {e}"
+                );
             }
         }
 
@@ -991,10 +1072,10 @@ pub fn generate_charts_with_config(
                 println!("Block I/O lba trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O lba trend PNG chart: {}", e);
+                eprintln!("Error generating Block I/O lba trend PNG chart: {e}");
             }
         }
-        
+
         // Block I/O DTOC (Dispatch to Complete) 차트
         let config = PlottersConfig {
             y_axis_range: get_y_range_for_metric("block_dtoc"),
@@ -1005,7 +1086,7 @@ pub fn generate_charts_with_config(
                 println!("Block I/O dtoc trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O dtoc trend PNG chart: {}", e);
+                eprintln!("Error generating Block I/O dtoc trend PNG chart: {e}");
             }
         }
 
@@ -1019,7 +1100,9 @@ pub fn generate_charts_with_config(
                 println!("Block I/O complete-to-complete trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O complete-to-complete trend PNG chart: {}", e);
+                eprintln!(
+                    "Error generating Block I/O complete-to-complete trend PNG chart: {e}"
+                );
             }
         }
 
@@ -1033,7 +1116,9 @@ pub fn generate_charts_with_config(
                 println!("Block I/O complete-to-dispatch trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O complete-to-dispatch trend PNG chart: {}", e);
+                eprintln!(
+                    "Error generating Block I/O complete-to-dispatch trend PNG chart: {e}"
+                );
             }
         }
 
@@ -1047,7 +1132,9 @@ pub fn generate_charts_with_config(
                 println!("Block I/O queue depth trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating Block I/O queue depth trend PNG chart: {}", e);
+                eprintln!(
+                    "Error generating Block I/O queue depth trend PNG chart: {e}"
+                );
             }
         }
     }
@@ -1064,7 +1151,7 @@ pub fn generate_charts_with_config(
                 println!("UFSCUSTOM lba trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFSCUSTOM lba trend PNG chart: {}", e);
+                eprintln!("Error generating UFSCUSTOM lba trend PNG chart: {e}");
             }
         }
 
@@ -1078,7 +1165,7 @@ pub fn generate_charts_with_config(
                 println!("UFSCUSTOM dtoc trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFSCUSTOM dtoc trend PNG chart: {}", e);
+                eprintln!("Error generating UFSCUSTOM dtoc trend PNG chart: {e}");
             }
         }
 
@@ -1092,7 +1179,9 @@ pub fn generate_charts_with_config(
                 println!("UFSCUSTOM complete-to-complete trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFSCUSTOM complete-to-complete trend PNG chart: {}", e);
+                eprintln!(
+                    "Error generating UFSCUSTOM complete-to-complete trend PNG chart: {e}"
+                );
             }
         }
 
@@ -1106,7 +1195,9 @@ pub fn generate_charts_with_config(
                 println!("UFSCUSTOM complete-to-dispatch trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFSCUSTOM complete-to-dispatch trend PNG chart: {}", e);
+                eprintln!(
+                    "Error generating UFSCUSTOM complete-to-dispatch trend PNG chart: {e}"
+                );
             }
         }
 
@@ -1115,12 +1206,15 @@ pub fn generate_charts_with_config(
             y_axis_range: get_y_range_for_metric("ufscustom_start_qd"),
             ..Default::default()
         };
-        match create_ufscustom_metric_chart(processed_ufscustom, output_prefix, &config, "start_qd") {
+        match create_ufscustom_metric_chart(processed_ufscustom, output_prefix, &config, "start_qd")
+        {
             Ok(_) => {
                 println!("UFSCUSTOM start queue depth trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFSCUSTOM start queue depth trend PNG chart: {}", e);
+                eprintln!(
+                    "Error generating UFSCUSTOM start queue depth trend PNG chart: {e}"
+                );
             }
         }
 
@@ -1134,7 +1228,9 @@ pub fn generate_charts_with_config(
                 println!("UFSCUSTOM end queue depth trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!("Error generating UFSCUSTOM end queue depth trend PNG chart: {}", e);
+                eprintln!(
+                    "Error generating UFSCUSTOM end queue depth trend PNG chart: {e}"
+                );
             }
         }
     }

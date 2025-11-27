@@ -2,14 +2,12 @@ use arrow::array::*;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
-use parquet::file::properties::WriterProperties;
 use parquet::basic::{Compression, ZstdLevel};
+use parquet::file::properties::WriterProperties;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
-
-
 
 /// Parquet 파일 마이그레이션 도구
 pub struct ParquetMigrator {
@@ -18,18 +16,16 @@ pub struct ParquetMigrator {
 
 impl ParquetMigrator {
     pub fn new(_chunk_size: usize, backup_enabled: bool) -> Self {
-        Self {
-            backup_enabled,
-        }
+        Self { backup_enabled }
     }
 
     /// 파일 마이그레이션 실행
     pub fn migrate_file(&self, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let start_time = Instant::now();
-        println!("Starting migration for: {}", file_path);
+        println!("Starting migration for: {file_path}");
 
         if !Path::new(file_path).exists() {
-            return Err(format!("File not found: {}", file_path).into());
+            return Err(format!("File not found: {file_path}").into());
         }
 
         // 백업 생성
@@ -39,7 +35,7 @@ impl ParquetMigrator {
 
         // 파일 타입 감지
         let file_type = self.detect_file_type(file_path)?;
-        println!("Detected file type: {:?}", file_type);
+        println!("Detected file type: {file_type:?}");
 
         // 마이그레이션 실행
         match file_type {
@@ -51,14 +47,17 @@ impl ParquetMigrator {
             }
         }
 
-        println!("Migration completed in {:.2}s", start_time.elapsed().as_secs_f64());
+        println!(
+            "Migration completed in {:.2}s",
+            start_time.elapsed().as_secs_f64()
+        );
         Ok(())
     }
 
     /// 디렉토리 내 모든 Parquet 파일 마이그레이션
     pub fn migrate_directory(&self, dir_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let start_time = Instant::now();
-        println!("Starting directory migration: {}", dir_path);
+        println!("Starting directory migration: {dir_path}");
 
         let mut migrated_count = 0;
         let mut failed_count = 0;
@@ -66,21 +65,21 @@ impl ParquetMigrator {
         for entry in std::fs::read_dir(dir_path)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             if path.is_file() {
                 if let Some(extension) = path.extension() {
                     if extension == "parquet" {
                         let file_path = path.to_string_lossy();
-                        println!("\nMigrating: {}", file_path);
-                        
+                        println!("\nMigrating: {file_path}");
+
                         match self.migrate_file(&file_path) {
                             Ok(_) => {
                                 migrated_count += 1;
-                                println!("✓ Successfully migrated: {}", file_path);
-                            },
+                                println!("✓ Successfully migrated: {file_path}");
+                            }
                             Err(e) => {
                                 failed_count += 1;
-                                println!("✗ Failed to migrate {}: {}", file_path, e);
+                                println!("✗ Failed to migrate {file_path}: {e}");
                             }
                         }
                     }
@@ -88,18 +87,21 @@ impl ParquetMigrator {
             }
         }
 
-        println!("\nDirectory migration completed in {:.2}s", start_time.elapsed().as_secs_f64());
-        println!("Successfully migrated: {}", migrated_count);
-        println!("Failed migrations: {}", failed_count);
+        println!(
+            "\nDirectory migration completed in {:.2}s",
+            start_time.elapsed().as_secs_f64()
+        );
+        println!("Successfully migrated: {migrated_count}");
+        println!("Failed migrations: {failed_count}");
 
         Ok(())
     }
 
     /// 백업 파일 생성
     fn create_backup(&self, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let backup_path = format!("{}.backup", file_path);
+        let backup_path = format!("{file_path}.backup");
         std::fs::copy(file_path, &backup_path)?;
-        println!("Backup created: {}", backup_path);
+        println!("Backup created: {backup_path}");
         Ok(())
     }
 
@@ -124,30 +126,51 @@ impl ParquetMigrator {
     /// Block 스키마 검증
     fn is_block_schema(&self, schema: &Schema) -> bool {
         let _expected_fields = vec![
-            "time", "process", "cpu", "flags", "action", "devmajor", "devminor",
-            "io_type", "extra", "sector", "size", "comm", "qd", "dtoc", "ctoc", "ctod", "continuous"
+            "time",
+            "process",
+            "cpu",
+            "flags",
+            "action",
+            "devmajor",
+            "devminor",
+            "io_type",
+            "extra",
+            "sector",
+            "size",
+            "comm",
+            "qd",
+            "dtoc",
+            "ctoc",
+            "ctod",
+            "continuous",
         ];
 
         // 기본 필드들이 존재하는지 확인
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
-        
+
         // 최소 필수 필드 확인
         let required_fields = ["time", "process", "action", "sector"];
-        required_fields.iter().all(|&field| field_names.contains(&field))
+        required_fields
+            .iter()
+            .all(|&field| field_names.contains(&field))
     }
 
     /// UFS 스키마 검증
     fn is_ufs_schema(&self, schema: &Schema) -> bool {
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
         let required_fields = ["time", "process", "action", "opcode", "lba"];
-        required_fields.iter().all(|&field| field_names.contains(&field))
+        required_fields
+            .iter()
+            .all(|&field| field_names.contains(&field))
     }
 
     /// UFSCustom 스키마 검증
     fn is_ufscustom_schema(&self, schema: &Schema) -> bool {
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
         let required_fields = ["opcode", "lba", "size", "start_time", "end_time", "dtoc"];
-        required_fields.iter().all(|&field| field_names.contains(&field))
+        required_fields
+            .iter()
+            .all(|&field| field_names.contains(&field))
     }
 
     /// Block 파일 마이그레이션
@@ -164,11 +187,11 @@ impl ParquetMigrator {
         }
 
         println!("Migrating Block file schema...");
-        
+
         // 임시 파일 생성
-        let temp_path = format!("{}.tmp", file_path);
+        let temp_path = format!("{file_path}.tmp");
         let temp_file = File::create(&temp_path)?;
-        
+
         // 파일 크기 추정 (평균적으로 Block 레코드 약 250바이트)
         let estimated_size = std::fs::metadata(file_path)?.len() as usize;
         let compression = self.select_compression(estimated_size);
@@ -177,8 +200,8 @@ impl ParquetMigrator {
             Compression::ZSTD(_) => "ZSTD",
             _ => "Other",
         };
-        println!("Using {} compression for migration", compression_name);
-        
+        println!("Using {compression_name} compression for migration");
+
         let props = WriterProperties::builder()
             .set_compression(compression)
             .build();
@@ -191,27 +214,28 @@ impl ParquetMigrator {
         for batch in reader {
             match batch {
                 Ok(batch) => {
-                    let converted_batch = self.convert_block_batch(&batch, &current_schema, &target_schema)?;
+                    let converted_batch =
+                        self.convert_block_batch(&batch, &current_schema, &target_schema)?;
                     writer.write(&converted_batch)?;
                     total_records += converted_batch.num_rows();
-                    
+
                     if total_records % 100000 == 0 {
-                        println!("Processed {} records", total_records);
+                        println!("Processed {total_records} records");
                     }
-                },
+                }
                 Err(e) => {
-                    println!("Error reading batch: {}", e);
+                    println!("Error reading batch: {e}");
                     break;
                 }
             }
         }
 
         writer.close()?;
-        
+
         // 원본 파일 교체
         std::fs::rename(&temp_path, file_path)?;
-        println!("Successfully migrated {} records", total_records);
-        
+        println!("Successfully migrated {total_records} records");
+
         Ok(())
     }
 
@@ -228,10 +252,10 @@ impl ParquetMigrator {
         }
 
         println!("Migrating UFS file schema...");
-        
-        let temp_path = format!("{}.tmp", file_path);
+
+        let temp_path = format!("{file_path}.tmp");
         let temp_file = File::create(&temp_path)?;
-        
+
         // 파일 크기 추정
         let estimated_size = std::fs::metadata(file_path)?.len() as usize;
         let compression = self.select_compression(estimated_size);
@@ -240,8 +264,8 @@ impl ParquetMigrator {
             Compression::ZSTD(_) => "ZSTD",
             _ => "Other",
         };
-        println!("Using {} compression for UFS migration", compression_name);
-        
+        println!("Using {compression_name} compression for UFS migration");
+
         let props = WriterProperties::builder()
             .set_compression(compression)
             .build();
@@ -253,16 +277,17 @@ impl ParquetMigrator {
         for batch in reader {
             match batch {
                 Ok(batch) => {
-                    let converted_batch = self.convert_ufs_batch(&batch, &current_schema, &target_schema)?;
+                    let converted_batch =
+                        self.convert_ufs_batch(&batch, &current_schema, &target_schema)?;
                     writer.write(&converted_batch)?;
                     total_records += converted_batch.num_rows();
-                    
+
                     if total_records % 100000 == 0 {
-                        println!("Processed {} records", total_records);
+                        println!("Processed {total_records} records");
                     }
-                },
+                }
                 Err(e) => {
-                    println!("Error reading batch: {}", e);
+                    println!("Error reading batch: {e}");
                     break;
                 }
             }
@@ -270,8 +295,8 @@ impl ParquetMigrator {
 
         writer.close()?;
         std::fs::rename(&temp_path, file_path)?;
-        println!("Successfully migrated {} records", total_records);
-        
+        println!("Successfully migrated {total_records} records");
+
         Ok(())
     }
 
@@ -289,11 +314,11 @@ impl ParquetMigrator {
         }
 
         println!("Migrating UFSCUSTOM file schema...");
-        
+
         // 임시 파일 생성
-        let temp_path = format!("{}.tmp", file_path);
+        let temp_path = format!("{file_path}.tmp");
         let temp_file = File::create(&temp_path)?;
-        
+
         // 파일 크기 추정 (평균적으로 UFSCUSTOM 레코드 약 200바이트)
         let estimated_size = std::fs::metadata(file_path)?.len() as usize;
         let compression = self.select_compression(estimated_size);
@@ -302,8 +327,10 @@ impl ParquetMigrator {
             Compression::ZSTD(_) => "ZSTD",
             _ => "Other",
         };
-        println!("Using {} compression for UFSCUSTOM migration", compression_name);
-        
+        println!(
+            "Using {compression_name} compression for UFSCUSTOM migration"
+        );
+
         let props = WriterProperties::builder()
             .set_compression(compression)
             .build();
@@ -316,16 +343,17 @@ impl ParquetMigrator {
         for batch in reader {
             match batch {
                 Ok(batch) => {
-                    let converted_batch = self.convert_ufscustom_batch(&batch, &current_schema, &target_schema)?;
+                    let converted_batch =
+                        self.convert_ufscustom_batch(&batch, &current_schema, &target_schema)?;
                     writer.write(&converted_batch)?;
                     total_records += converted_batch.num_rows();
-                    
+
                     if total_records % 50000 == 0 {
-                        println!("Processed {} UFSCUSTOM records", total_records);
+                        println!("Processed {total_records} UFSCUSTOM records");
                     }
-                },
+                }
                 Err(e) => {
-                    eprintln!("Error reading batch: {}", e);
+                    eprintln!("Error reading batch: {e}");
                     continue;
                 }
             }
@@ -333,8 +361,8 @@ impl ParquetMigrator {
 
         writer.close()?;
         std::fs::rename(&temp_path, file_path)?;
-        println!("Successfully migrated {} UFSCUSTOM records", total_records);
-        
+        println!("Successfully migrated {total_records} UFSCUSTOM records");
+
         Ok(())
     }
 
@@ -405,8 +433,9 @@ impl ParquetMigrator {
         }
 
         for (current_field, target_field) in current.fields().iter().zip(target.fields().iter()) {
-            if current_field.name() != target_field.name() ||
-               current_field.data_type() != target_field.data_type() {
+            if current_field.name() != target_field.name()
+                || current_field.data_type() != target_field.data_type()
+            {
                 return false;
             }
         }
@@ -422,24 +451,30 @@ impl ParquetMigrator {
         target_schema: &Schema,
     ) -> Result<RecordBatch, Box<dyn std::error::Error>> {
         let mut columns: Vec<ArrayRef> = Vec::new();
-        
+
         // 타겟 스키마의 각 필드에 대해 데이터 변환
         for target_field in target_schema.fields() {
             let field_name = target_field.name();
-            
-            if let Some(column_index) = current_schema.fields()
+
+            if let Some(column_index) = current_schema
+                .fields()
                 .iter()
-                .position(|f| f.name() == field_name) {
+                .position(|f| f.name() == field_name)
+            {
                 // 기존 필드가 존재하는 경우 그대로 사용
                 columns.push(batch.column(column_index).clone());
             } else {
                 // 새로운 필드인 경우 기본값으로 채움
-                let array = self.create_default_array(target_field.data_type(), batch.num_rows())?;
+                let array =
+                    self.create_default_array(target_field.data_type(), batch.num_rows())?;
                 columns.push(array);
             }
         }
 
-        Ok(RecordBatch::try_new(Arc::new(target_schema.clone()), columns)?)
+        Ok(RecordBatch::try_new(
+            Arc::new(target_schema.clone()),
+            columns,
+        )?)
     }
 
     /// UFS 배치 변환
@@ -450,47 +485,57 @@ impl ParquetMigrator {
         target_schema: &Schema,
     ) -> Result<RecordBatch, Box<dyn std::error::Error>> {
         let mut columns: Vec<ArrayRef> = Vec::new();
-        
+
         for target_field in target_schema.fields() {
             let field_name = target_field.name();
-            
-            if let Some(column_index) = current_schema.fields()
+
+            if let Some(column_index) = current_schema
+                .fields()
                 .iter()
-                .position(|f| f.name() == field_name) {
+                .position(|f| f.name() == field_name)
+            {
                 columns.push(batch.column(column_index).clone());
             } else {
-                let array = self.create_default_array(target_field.data_type(), batch.num_rows())?;
+                let array =
+                    self.create_default_array(target_field.data_type(), batch.num_rows())?;
                 columns.push(array);
             }
         }
 
-        Ok(RecordBatch::try_new(Arc::new(target_schema.clone()), columns)?)
+        Ok(RecordBatch::try_new(
+            Arc::new(target_schema.clone()),
+            columns,
+        )?)
     }
 
     /// 기본값 배열 생성
-    fn create_default_array(&self, data_type: &DataType, length: usize) -> Result<ArrayRef, Box<dyn std::error::Error>> {
+    fn create_default_array(
+        &self,
+        data_type: &DataType,
+        length: usize,
+    ) -> Result<ArrayRef, Box<dyn std::error::Error>> {
         match data_type {
             DataType::Float64 => {
                 let values = vec![0.0_f64; length];
                 Ok(Arc::new(Float64Array::from(values)))
-            },
+            }
             DataType::UInt32 => {
                 let values = vec![0_u32; length];
                 Ok(Arc::new(UInt32Array::from(values)))
-            },
+            }
             DataType::UInt64 => {
                 let values = vec![0_u64; length];
                 Ok(Arc::new(UInt64Array::from(values)))
-            },
+            }
             DataType::Utf8 => {
                 let values = vec![""; length];
                 Ok(Arc::new(StringArray::from(values)))
-            },
+            }
             DataType::Boolean => {
                 let values = vec![false; length];
                 Ok(Arc::new(BooleanArray::from(values)))
-            },
-            _ => Err(format!("Unsupported data type: {:?}", data_type).into())
+            }
+            _ => Err(format!("Unsupported data type: {data_type:?}").into()),
         }
     }
 
@@ -528,7 +573,7 @@ pub fn run_migration(
     let migrator = ParquetMigrator::new(chunk_size, backup_enabled);
 
     let path = Path::new(input_path);
-    
+
     if path.is_file() {
         // 단일 파일 마이그레이션
         migrator.migrate_file(input_path)?;
@@ -554,7 +599,7 @@ fn migrate_directory_recursive(
     for entry in std::fs::read_dir(dir_path)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.is_dir() {
             migrate_directory_recursive(migrator, &path.to_string_lossy())?;
         } else if path.is_file() {
@@ -562,8 +607,8 @@ fn migrate_directory_recursive(
                 if extension == "parquet" {
                     let file_path = path.to_string_lossy();
                     match migrator.migrate_file(&file_path) {
-                        Ok(_) => println!("✓ Successfully migrated: {}", file_path),
-                        Err(e) => println!("✗ Failed to migrate {}: {}", file_path, e),
+                        Ok(_) => println!("✓ Successfully migrated: {file_path}"),
+                        Err(e) => println!("✗ Failed to migrate {file_path}: {e}"),
                     }
                 }
             }
@@ -581,21 +626,27 @@ impl ParquetMigrator {
         target_schema: &Schema,
     ) -> Result<RecordBatch, Box<dyn std::error::Error>> {
         let mut columns: Vec<ArrayRef> = Vec::new();
-        
+
         for target_field in target_schema.fields() {
             let field_name = target_field.name();
-            
-            if let Some(column_index) = current_schema.fields()
+
+            if let Some(column_index) = current_schema
+                .fields()
                 .iter()
-                .position(|f| f.name() == field_name) {
+                .position(|f| f.name() == field_name)
+            {
                 columns.push(batch.column(column_index).clone());
             } else {
                 // 새로운 필드인 경우 기본값으로 채움
-                let array = self.create_default_array(target_field.data_type(), batch.num_rows())?;
+                let array =
+                    self.create_default_array(target_field.data_type(), batch.num_rows())?;
                 columns.push(array);
             }
         }
 
-        Ok(RecordBatch::try_new(Arc::new(target_schema.clone()), columns)?)
+        Ok(RecordBatch::try_new(
+            Arc::new(target_schema.clone()),
+            columns,
+        )?)
     }
 }

@@ -160,11 +160,11 @@ impl TraceItem for UFSCUSTOM {
     fn get_qd(&self) -> u32 {
         self.start_qd // start_qd를 기본 qd로 사용
     }
-    
+
     fn get_start_qd(&self) -> u32 {
         self.start_qd
     }
-    
+
     fn get_end_qd(&self) -> u32 {
         self.end_qd
     }
@@ -199,7 +199,7 @@ impl LatencyStats {
         // 값이 추가되면 캐시 무효화
         self.sorted_values = None;
     }
-    
+
     // 정렬된 값을 가져오거나 생성
     fn get_sorted(&mut self) -> &[f64] {
         if self.sorted_values.is_none() {
@@ -296,7 +296,7 @@ impl LatencyStats {
 
             // 마지막 범위 (마지막 값 이상)
             let last = ranges.last().unwrap();
-            result.push((*last, f64::MAX, format!("> {}ms", last)));
+            result.push((*last, f64::MAX, format!("> {last}ms")));
 
             result
         } else {
@@ -357,7 +357,7 @@ pub fn print_trace_statistics<T: TraceItem + Sync>(traces: &[T], trace_type_name
         log!("{} 트레이스가 비어 있습니다.", trace_type_name);
         return;
     }
-    
+
     log!("Total {} requests: {}", trace_type_name, traces.len());
     log!(
         "Maximum queue depth: {}",
@@ -490,7 +490,7 @@ pub fn print_trace_statistics<T: TraceItem + Sync>(traces: &[T], trace_type_name
         "Dispatch to Complete (dtoc)",
         |trace| trace.get_dtoc(),
     );
-    
+
     if trace_type_name != "UFSCustom" {
         print_generic_latency_stats_by_type(
             &request_type_groups,
@@ -515,7 +515,7 @@ pub fn print_trace_statistics<T: TraceItem + Sync>(traces: &[T], trace_type_name
         "Dispatch to Complete (dtoc)",
         |trace| trace.get_dtoc(),
     );
-    
+
     if trace_type_name != "UFSCustom" {
         log!(
             "\n[{} Complete to Dispatch (ctod) Distribution by Range]",
@@ -617,20 +617,9 @@ fn print_generic_latency_stats_by_type<T: TraceItem + Sync>(
                 let p9999 = stats.percentile(99.99);
                 let p99999 = stats.percentile(99.999);
                 let p999999 = stats.percentile(99.9999);
-                
+
                 let result = format!(
-                    "{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}",
-                    type_name,
-                    avg,
-                    min,
-                    median,
-                    max,
-                    std_dev,
-                    p99,
-                    p999,
-                    p9999,
-                    p99999,
-                    p999999
+                    "{type_name},{avg:.3},{min:.3},{median:.3},{max:.3},{std_dev:.3},{p99:.3},{p999:.3},{p9999:.3},{p99999:.3},{p999999:.3}"
                 );
                 Some((type_name.clone(), result))
             } else {
@@ -662,7 +651,7 @@ fn print_generic_latency_ranges_by_type<T: TraceItem + Sync>(
     // 헤더 출력
     let mut header = String::from("Range,");
     for &type_name in &types {
-        header.push_str(&format!("{},", type_name));
+        header.push_str(&format!("{type_name},"));
     }
     log!("{}", header);
 
@@ -717,7 +706,7 @@ fn print_generic_latency_ranges_by_type<T: TraceItem + Sync>(
                     // "X < v ≤ Y" 패턴에서 X 부분을 추출
                     if let Some(start) = s.find(" < v ≤ ") {
                         let left_part = &s[..start];
-                        
+
                         // "숫자ms" 또는 "숫자s" 패턴에서 숫자 추출
                         if left_part.ends_with("ms") {
                             if let Ok(val) = left_part.replace("ms", "").parse::<f64>() {
@@ -744,7 +733,7 @@ fn print_generic_latency_ranges_by_type<T: TraceItem + Sync>(
 
     // 각 범위에 대한 개수 출력
     for range in range_labels {
-        let mut row = format!("{},", range);
+        let mut row = format!("{range},");
 
         for &type_name in &types {
             if let Some(stats) = all_stats.get(type_name) {
@@ -792,11 +781,11 @@ pub fn print_ufscustom_statistics(ufscustom_traces: &[UFSCUSTOM]) {
 /// UFSCUSTOM 전용 통계 함수
 fn print_ufscustom_specific_statistics(traces: &[UFSCUSTOM]) {
     log!("Total UFSCustom requests: {}", traces.len());
-    
+
     // Queue Depth 통계
     let max_qd = traces.iter().map(|t| t.start_qd).max().unwrap_or(0);
     log!("Maximum queue depth: {}", max_qd);
-    
+
     // 평균 Queue Depth 계산
     let avg_qd = traces.iter().map(|t| t.start_qd as f64).sum::<f64>() / traces.len() as f64;
     log!("Average queue depth: {:.2}", avg_qd);
