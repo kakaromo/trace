@@ -48,9 +48,7 @@ pub fn create_temp_file(prefix: &str) -> io::Result<(File, String)> {
             Ok((file, temp_path))
         }
         Err(e) => {
-            println!(
-                "Failed to create temporary file: {temp_path}, error: {e}"
-            );
+            println!("Failed to create temporary file: {temp_path}, error: {e}");
             Err(e)
         }
     }
@@ -509,9 +507,7 @@ where
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
 
-    println!(
-        "File loaded: {total_lines} lines, preparing for parallel processing"
-    );
+    println!("File loaded: {total_lines} lines, preparing for parallel processing");
 
     // Divide into chunks for parallel processing
     let chunks: Vec<_> = lines
@@ -525,9 +521,7 @@ where
         .collect();
 
     let chunk_count = chunks.len();
-    println!(
-        "Split into {chunk_count} chunks of approximately {chunk_size} lines each"
-    );
+    println!("Split into {chunk_count} chunks of approximately {chunk_size} lines each");
 
     // Process chunks in parallel
     let results: Vec<_> = chunks.into_par_iter().map(&processor).collect();

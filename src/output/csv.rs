@@ -138,9 +138,7 @@ pub fn save_ufscustom_to_csv(
         }
         let start_time = chunk.first().map(|t| t.start_time).unwrap_or(0.0);
         let end_time = chunk.last().map(|t| t.start_time).unwrap_or(0.0);
-        let filename = format!(
-            "{output_prefix}_ufscustom_{start_time}_{end_time}.csv"
-        );
+        let filename = format!("{output_prefix}_ufscustom_{start_time}_{end_time}.csv");
         let file = File::create(&filename)?;
         let mut writer = Writer::from_writer(file);
         writer.write_record([

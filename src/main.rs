@@ -82,9 +82,7 @@ fn parse_alignment_size(input: &str) -> Result<u64, String> {
     } else {
         // 단위가 없으면 bytes로 처리
         input.parse::<u64>().map_err(|_| {
-            format!(
-                "Invalid alignment size: '{input}'. Use format like '64KB', '1MB'"
-            )
+            format!("Invalid alignment size: '{input}'. Use format like '64KB', '1MB'")
         })
     }
 }
@@ -99,9 +97,7 @@ fn print_usage(program: &str) {
     eprintln!("\nOptions:");
     eprintln!("  -p           - Performance benchmark mode: Auto-detects FIO, TIOtest, IOzone results and trace types");
     eprintln!("                 Creates iteration-based folders: <output_prefix>/1/, <output_prefix>/2/, ...");
-    eprintln!(
-        "                 Example: {program} -p benchmark.log fio_result"
-    );
+    eprintln!("                 Example: {program} -p benchmark.log fio_result");
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
     eprintln!("  -f           - Apply filters (time, sector/lba, latency, queue depth) with interactive input");
     eprintln!(
@@ -460,9 +456,7 @@ fn main() -> io::Result<()> {
                 let file_size_mb = file_size as f64 / (1024.0 * 1024.0);
 
                 // 항상 highperf 모드 사용
-                println!(
-                    "File size: {file_size_mb:.2} MB - Using high-performance mode"
-                );
+                println!("File size: {file_size_mb:.2} MB - Using high-performance mode");
                 process_highperf_log_file(
                     &args[log_file_index],
                     &args[output_prefix_index],

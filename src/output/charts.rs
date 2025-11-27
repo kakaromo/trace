@@ -355,17 +355,13 @@ fn create_ufs_cpu_chart(
         "cpu" => (
             format!("UFS {action_label} - CPU Allocation over Time"),
             "CPU",
-            format!(
-                "{output_prefix}_ufs_{action_filter}_cpu_time_plotters.png"
-            ),
+            format!("{output_prefix}_ufs_{action_filter}_cpu_time_plotters.png"),
             Some((-1.0, 8.0)),
         ),
         "address" => (
             format!("UFS {action_label} - LBA Distribution over Time (by CPU)"),
             "LBA",
-            format!(
-                "{output_prefix}_ufs_{action_filter}_lba_time_plotters.png"
-            ),
+            format!("{output_prefix}_ufs_{action_filter}_lba_time_plotters.png"),
             None,
         ),
         _ => return Err(format!("Unknown chart type: {chart_type}")),
@@ -396,9 +392,7 @@ fn create_ufs_cpu_chart(
         None::<fn(&&UFS) -> bool>,
     )?;
 
-    println!(
-        "UFS {action_filter} {chart_type} chart saved to: {png_path}"
-    );
+    println!("UFS {action_filter} {chart_type} chart saved to: {png_path}");
 
     Ok(())
 }
@@ -571,19 +565,13 @@ fn create_block_cpu_chart(
         "cpu" => (
             format!("Block I/O {action_label} - CPU Allocation over Time"),
             "CPU",
-            format!(
-                "{output_prefix}_block_{action_filter}_cpu_time_plotters.png"
-            ),
+            format!("{output_prefix}_block_{action_filter}_cpu_time_plotters.png"),
             Some((-1.0, 8.0)),
         ),
         "address" => (
-            format!(
-                "Block I/O {action_label} - Sector Distribution over Time (by CPU)"
-            ),
+            format!("Block I/O {action_label} - Sector Distribution over Time (by CPU)"),
             "Sector",
-            format!(
-                "{output_prefix}_block_{action_filter}_sector_time_plotters.png"
-            ),
+            format!("{output_prefix}_block_{action_filter}_sector_time_plotters.png"),
             None,
         ),
         _ => return Err(format!("Unknown chart type: {chart_type}")),
@@ -614,9 +602,7 @@ fn create_block_cpu_chart(
         None::<fn(&&Block) -> bool>,
     )?;
 
-    println!(
-        "Block {action_filter} {chart_type} chart saved to: {png_path}"
-    );
+    println!("Block {action_filter} {chart_type} chart saved to: {png_path}");
 
     Ok(())
 }
@@ -973,9 +959,7 @@ pub fn generate_charts_with_config(
                 println!("UFS complete-to-complete trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!(
-                    "Error generating UFS complete-to-complete trend PNG chart: {e}"
-                );
+                eprintln!("Error generating UFS complete-to-complete trend PNG chart: {e}");
             }
         }
 
@@ -989,9 +973,7 @@ pub fn generate_charts_with_config(
                 println!("UFS complete-to-dispatch trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!(
-                    "Error generating UFS complete-to-dispatch trend PNG chart: {e}"
-                );
+                eprintln!("Error generating UFS complete-to-dispatch trend PNG chart: {e}");
             }
         }
 
@@ -1056,9 +1038,7 @@ pub fn generate_charts_with_config(
                 println!("Block I/O complete sector time chart generated.");
             }
             Err(e) => {
-                eprintln!(
-                    "Error generating Block I/O complete sector time chart: {e}"
-                );
+                eprintln!("Error generating Block I/O complete sector time chart: {e}");
             }
         }
 
@@ -1100,9 +1080,7 @@ pub fn generate_charts_with_config(
                 println!("Block I/O complete-to-complete trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!(
-                    "Error generating Block I/O complete-to-complete trend PNG chart: {e}"
-                );
+                eprintln!("Error generating Block I/O complete-to-complete trend PNG chart: {e}");
             }
         }
 
@@ -1116,9 +1094,7 @@ pub fn generate_charts_with_config(
                 println!("Block I/O complete-to-dispatch trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!(
-                    "Error generating Block I/O complete-to-dispatch trend PNG chart: {e}"
-                );
+                eprintln!("Error generating Block I/O complete-to-dispatch trend PNG chart: {e}");
             }
         }
 
@@ -1132,9 +1108,7 @@ pub fn generate_charts_with_config(
                 println!("Block I/O queue depth trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!(
-                    "Error generating Block I/O queue depth trend PNG chart: {e}"
-                );
+                eprintln!("Error generating Block I/O queue depth trend PNG chart: {e}");
             }
         }
     }
@@ -1179,9 +1153,7 @@ pub fn generate_charts_with_config(
                 println!("UFSCUSTOM complete-to-complete trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!(
-                    "Error generating UFSCUSTOM complete-to-complete trend PNG chart: {e}"
-                );
+                eprintln!("Error generating UFSCUSTOM complete-to-complete trend PNG chart: {e}");
             }
         }
 
@@ -1195,9 +1167,7 @@ pub fn generate_charts_with_config(
                 println!("UFSCUSTOM complete-to-dispatch trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!(
-                    "Error generating UFSCUSTOM complete-to-dispatch trend PNG chart: {e}"
-                );
+                eprintln!("Error generating UFSCUSTOM complete-to-dispatch trend PNG chart: {e}");
             }
         }
 
@@ -1212,9 +1182,7 @@ pub fn generate_charts_with_config(
                 println!("UFSCUSTOM start queue depth trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!(
-                    "Error generating UFSCUSTOM start queue depth trend PNG chart: {e}"
-                );
+                eprintln!("Error generating UFSCUSTOM start queue depth trend PNG chart: {e}");
             }
         }
 
@@ -1228,9 +1196,7 @@ pub fn generate_charts_with_config(
                 println!("UFSCUSTOM end queue depth trend PNG chart generated.");
             }
             Err(e) => {
-                eprintln!(
-                    "Error generating UFSCUSTOM end queue depth trend PNG chart: {e}"
-                );
+                eprintln!("Error generating UFSCUSTOM end queue depth trend PNG chart: {e}");
             }
         }
     }

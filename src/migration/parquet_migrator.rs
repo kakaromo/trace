@@ -327,9 +327,7 @@ impl ParquetMigrator {
             Compression::ZSTD(_) => "ZSTD",
             _ => "Other",
         };
-        println!(
-            "Using {compression_name} compression for UFSCUSTOM migration"
-        );
+        println!("Using {compression_name} compression for UFSCUSTOM migration");
 
         let props = WriterProperties::builder()
             .set_compression(compression)
