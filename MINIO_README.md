@@ -45,14 +45,14 @@ mc cp test/input/blktrace_test.csv local/trace/logs/test.csv
 
 ```bash
 # MinIO에서 Parquet 다운로드 후 분석 및 차트 생성
-./target/release/trace --minio-analyze output/parquet/parquet_ufs.parquet test/output/analysis
+./target/release/trace --minio-analyze output/parquet/ufs.parquet test/output/analysis
 ```
 
-## 테스트 스크립트
+## 테스트
 
-```bash
-./test_minio.sh
-```
+상세 테스트는 스크립트를 확인하세요:
+- run_minio.sh: 로그 → Parquet 변환
+- run_minio_analysis.sh: Parquet 분석
 
 ## 상세 문서
 
@@ -71,4 +71,5 @@ mc cp test/input/blktrace_test.csv local/trace/logs/test.csv
 - `src/storage/mod.rs` - Storage 모듈
 - `src/storage/minio_client.rs` - MinIO 클라이언트
 - `doc/minio_integration.md` - 상세 가이드
-- `test_minio.sh` - 테스트 스크립트
+- `run_minio.sh` - 로그 → Parquet 변환 스크립트
+- `run_minio_analysis.sh` - Parquet 분석 스크립트

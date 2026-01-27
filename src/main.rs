@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::time::Instant;
-use trace::output::{save_to_csv, generate_charts_with_config};
+use trace::output::{save_to_csv, generate_charts, generate_charts_with_config};
 use trace::parsers::parse_log_file_high_perf;
 use trace::processors;
 use trace::storage::minio_client::{MinioConfig, download_log_from_minio, upload_parquet_to_minio, download_parquet_from_minio};
@@ -179,12 +179,16 @@ fn handle_minio_log_to_parquet(
             upload_parquet_to_minio(&minio_config, local_parquet, &remote_parquet)?;
             
             // 로컬 임시 파일 삭제
-            let _ = fs::remove_file(local_parquet);
+            if let Err(e) = fs::remove_file(local_parquet) {
+                eprintln!("Warning: failed to remove local temporary parquet file '{}': {}", local_parquet, e);
+            }
         }
     }
 
     // 로컬 임시 로그 파일 삭제
-    let _ = fs::remove_file(temp_log_file);
+    if let Err(e) = fs::remove_file(temp_log_file) {
+        eprintln!("Warning: failed to remove local temporary log file '{}': {}", temp_log_file, e);
+    }
 
     println!(
         "\n===== MinIO Log to Parquet Complete! =====\nTotal time: {:.2}s",
@@ -306,11 +310,52 @@ fn handle_minio_parquet_analysis(
                 chart_start.elapsed().as_secs_f64()
             );
         }
+        "ufscustom" => {
+            let ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
+                .map_err(|e| format!("Failed to read UFSCUSTOM parquet: {}", e))?;
+            println!(
+                "UFSCUSTOM Parquet loaded: {} events (Time: {:.2}s)",
+                ufscustom_traces.len(),
+                load_start.elapsed().as_secs_f64()
+            );
+
+            println!("\n[3/3] Generating statistics and charts...");
+            let stats_start = Instant::now();
+            print_ufscustom_statistics(&ufscustom_traces);
+            println!(
+                "Statistics complete (Time: {:.2}s)",
+                stats_start.elapsed().as_secs_f64()
+            );
+
+            let chart_start = Instant::now();
+            if let Some(ranges) = y_axis_ranges {
+                generate_charts_with_config(
+                    &[],
+                    &[],
+                    &ufscustom_traces,
+                    local_output_prefix,
+                    Some(&ranges),
+                )?;
+            } else {
+                generate_charts(
+                    &[],
+                    &[],
+                    &ufscustom_traces,
+                    local_output_prefix,
+                )?;
+            }
+            println!(
+                "Charts generated (Time: {:.2}s)",
+                chart_start.elapsed().as_secs_f64()
+            );
+        }
         _ => unreachable!(),
     }
 
     // 로컬 임시 파일 삭제
-    let _ = fs::remove_file(&temp_parquet_file);
+    if let Err(e) = fs::remove_file(&temp_parquet_file) {
+        eprintln!("Warning: failed to remove local temporary parquet file '{}': {}", temp_parquet_file, e);
+    }
 
     println!(
         "\n===== MinIO Parquet Analysis Complete! =====\nTotal time: {:.2}s",

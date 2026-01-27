@@ -284,8 +284,8 @@ Error: Cannot detect trace type from file name
 ```
 
 **해결책:**
-- Parquet 파일명에 `_ufs.parquet` 또는 `_block.parquet` 포함 필요
-- 예: `output_ufs.parquet`, `trace_block.parquet`
+- Parquet 파일명에 `ufs.parquet`, `block.parquet` 또는 `ufscustom.parquet` 포함 필요
+- 예: `output_ufs.parquet`, `trace_block.parquet`, `sample_ufscustom.parquet`
 
 ---
 

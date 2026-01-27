@@ -89,10 +89,11 @@ impl MinioClient {
         })?;
 
         // 로컬 파일로 저장
+        let bytes = response.bytes();
         let mut file = File::create(local_path)?;
-        file.write_all(&response.bytes())?;
+        file.write_all(bytes)?;
 
-        println!("Download completed: {} bytes", response.bytes().len());
+        println!("Download completed: {} bytes", bytes.len());
         Ok(())
     }
 
@@ -194,17 +195,21 @@ pub fn download_parquet_from_minio(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     #[test]
     #[ignore] // MinIO 서버가 필요하므로 기본적으로는 무시
     fn test_minio_operations() {
-        let config = MinioConfig::new(
-            "http://localhost:9000".to_string(),
-            "admin".to_string(),
-            "tka123tjd!".to_string(),
-            "trace".to_string(),
-        );
+        let endpoint = env::var("MINIO_ENDPOINT")
+            .unwrap_or_else(|_| "http://localhost:9000".to_string());
+        let access_key = env::var("MINIO_ACCESS_KEY")
+            .unwrap_or_else(|_| "test_access_key".to_string());
+        let secret_key = env::var("MINIO_SECRET_KEY")
+            .unwrap_or_else(|_| "test_secret_key".to_string());
+        let bucket = env::var("MINIO_BUCKET")
+            .unwrap_or_else(|_| "test_bucket".to_string());
 
+        let config = MinioConfig::new(endpoint, access_key, secret_key, bucket);
         let client = MinioClient::new(&config).unwrap();
         
         // 파일 목록 조회 테스트
