@@ -3,6 +3,7 @@ pub mod models;
 pub mod output;
 pub mod parsers;
 pub mod processors;
+pub mod storage; // MinIO/S3 storage 모듈
 pub mod utils; // 마이그레이션 모듈 추가
 
 use std::sync::OnceLock;
@@ -12,7 +13,7 @@ use utils::filter::FilterOptions;
 pub use migration::*;
 pub use models::{Block, TraceType, UFS, UFSCUSTOM};
 pub use output::{
-    generate_charts, print_block_statistics, print_ufs_statistics, print_ufscustom_statistics,
+    generate_charts, generate_charts_with_config, print_block_statistics, print_ufs_statistics, print_ufscustom_statistics,
     read_block_from_parquet, read_ufs_from_parquet, read_ufscustom_from_parquet, save_to_parquet,
 };
 pub use parsers::log::{parse_log_file, parse_ufscustom_file};
