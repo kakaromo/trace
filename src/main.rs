@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::time::Instant;
+use trace::grpc::run_grpc_server;
 use trace::output::{save_to_csv, generate_charts, generate_charts_with_config};
 use trace::parsers::parse_log_file_high_perf;
 use trace::processors;
@@ -13,6 +14,90 @@ use trace::utils::{
 };
 use trace::TraceType;
 use trace::*;
+
+/// gRPC 서버 실행 함수
+#[tokio::main]
+async fn run_grpc_server_mode(args: &[String]) -> io::Result<()> {
+    // 기본값
+    let mut port = "50051";
+    
+    // 옵션 파싱
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--port" | "-p" => {
+                if i + 1 < args.len() {
+                    port = &args[i + 1];
+                    i += 2;
+                } else {
+                    eprintln!("Error: --port requires a value");
+                    print_grpc_usage();
+                    return Ok(());
+                }
+            }
+            "--help" | "-h" => {
+                print_grpc_usage();
+                return Ok(());
+            }
+            _ => {
+                eprintln!("Unknown option: {}", args[i]);
+                print_grpc_usage();
+                return Ok(());
+            }
+        }
+    }
+
+    // MinIO 설정 로드
+    let minio_config = match MinioConfig::from_env() {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Failed to load MinIO configuration: {}", e);
+            eprintln!("\nPlease set the following environment variables:");
+            eprintln!("  MINIO_ENDPOINT     - MinIO server endpoint (e.g., http://localhost:9000)");
+            eprintln!("  MINIO_ACCESS_KEY   - MinIO access key");
+            eprintln!("  MINIO_SECRET_KEY   - MinIO secret key");
+            eprintln!("  MINIO_BUCKET       - Default MinIO bucket name (optional)");
+            return Ok(());
+        }
+    };
+
+    let addr = format!("0.0.0.0:{}", port);
+    
+    println!("Starting gRPC server...");
+    println!("  Address: {}", addr);
+    println!("  MinIO Endpoint: {}", minio_config.endpoint);
+    println!("  Default Bucket: {}", minio_config.bucket);
+    println!();
+
+    if let Err(e) = run_grpc_server(addr, minio_config).await {
+        eprintln!("gRPC server error: {}", e);
+    }
+
+    Ok(())
+}
+
+/// gRPC 서버 사용법 출력
+fn print_grpc_usage() {
+    println!("gRPC Server Usage:");
+    println!("  trace --grpc-server [OPTIONS]");
+    println!();
+    println!("Options:");
+    println!("  --port, -p <PORT>    gRPC server port (default: 50051)");
+    println!("  --help, -h           Show this help message");
+    println!();
+    println!("Environment Variables (required):");
+    println!("  MINIO_ENDPOINT       MinIO server endpoint (e.g., http://localhost:9000)");
+    println!("  MINIO_ACCESS_KEY     MinIO access key");
+    println!("  MINIO_SECRET_KEY     MinIO secret key");
+    println!("  MINIO_BUCKET         Default MinIO bucket name (optional)");
+    println!();
+    println!("Example:");
+    println!("  export MINIO_ENDPOINT=http://localhost:9000");
+    println!("  export MINIO_ACCESS_KEY=minioadmin");
+    println!("  export MINIO_SECRET_KEY=minioadmin");
+    println!("  export MINIO_BUCKET=trace-logs");
+    println!("  trace --grpc-server --port 50051");
+}
 
 /// 파일 크기를 확인하여 처리 방식을 결정하는 함수
 fn get_file_size(file_path: &str) -> io::Result<u64> {
@@ -103,14 +188,17 @@ fn handle_minio_log_to_parquet(
     })?;
 
     println!("[1/4] Downloading log file from MinIO...");
-    let temp_log_file = "/tmp/trace_temp_log.txt";
-    download_log_from_minio(&minio_config, remote_log_path, temp_log_file)?;
+    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    // 원본 파일명 유지 (압축 형식 감지를 위해)
+    let file_name = remote_log_path.split('/').next_back().unwrap_or("log_file");
+    let temp_log_file = format!("{}/{}", home_dir, file_name);
+    let actual_log_path = download_log_from_minio(&minio_config, remote_log_path, &temp_log_file)?;
     println!("Log file downloaded: {remote_log_path}");
 
     println!("\n[2/4] Parsing log file...");
     let parse_start = Instant::now();
     let (ufs_traces, block_traces, ufscustom_traces) =
-        parse_log_file_high_perf(temp_log_file)?;
+        parse_log_file_high_perf(&actual_log_path)?;
     
     // 트레이스 타입 자동 감지
     let detected_trace_type = if !ufs_traces.is_empty() {
@@ -185,9 +273,18 @@ fn handle_minio_log_to_parquet(
         }
     }
 
-    // 로컬 임시 로그 파일 삭제
-    if let Err(e) = fs::remove_file(temp_log_file) {
+    // 로컬 임시 파일 및 압축 해제 디렉토리 정리
+    if let Err(e) = fs::remove_file(&temp_log_file) {
         eprintln!("Warning: failed to remove local temporary log file '{}': {}", temp_log_file, e);
+    }
+    if let Err(e) = fs::remove_file(&actual_log_path) {
+        eprintln!("Warning: failed to remove extracted log file '{}': {}", actual_log_path, e);
+    }
+    // 압축 해제 디렉토리도 삭제 시도
+    if actual_log_path != temp_log_file {
+        if let Some(parent) = std::path::Path::new(&actual_log_path).parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
     }
 
     println!(
@@ -410,6 +507,11 @@ fn main() -> io::Result<()> {
         eprintln!("Error: No arguments provided");
         print_usage(&args[0]);
         return Ok(());
+    }
+
+    // gRPC 서버 모드 체크 (가장 먼저 확인)
+    if args.len() > 1 && args[1] == "--grpc-server" {
+        return run_grpc_server_mode(&args);
     }
 
     // 옵션 파싱
