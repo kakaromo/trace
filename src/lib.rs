@@ -6,6 +6,7 @@ pub mod parsers;
 pub mod processors;
 pub mod storage; // MinIO/S3 storage 모듈
 pub mod utils; // 마이그레이션 모듈 추가
+pub mod commands; // 명령어 처리 모듈
 
 use std::sync::OnceLock;
 use utils::filter::FilterOptions;

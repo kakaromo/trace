@@ -1,0 +1,299 @@
+use std::collections::HashMap;
+use std::fs;
+use std::time::Instant;
+use crate::output::{generate_charts, generate_charts_with_config, save_to_parquet};
+use crate::parsers::parse_log_file_high_perf;
+use crate::processors;
+use crate::storage::minio_client::{MinioConfig, download_log_from_minio, upload_parquet_to_minio, download_parquet_from_minio};
+use crate::{read_ufs_from_parquet, read_block_from_parquet, read_ufscustom_from_parquet};
+use crate::{print_ufs_statistics, print_block_statistics, print_ufscustom_statistics};
+use crate::TraceType;
+
+/// MinIO에서 로그를 읽어서 Parquet로 변환하고 MinIO에 저장 (통계/차트 생성 안함)
+pub fn handle_minio_log_to_parquet(
+    remote_log_path: &str,
+    remote_output_path: &str,
+    chunk_size: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n===== Starting MinIO Log to Parquet =====\n");
+    let total_start = Instant::now();
+
+    // MinIO 설정 로드
+    let minio_config = MinioConfig::from_env().map_err(|e| {
+        format!("Failed to load MinIO configuration. Please set environment variables.\nError: {e}")
+    })?;
+
+    println!("[1/4] Downloading log file from MinIO...");
+    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    // 원본 파일명 유지 (압축 형식 감지를 위해)
+    let file_name = remote_log_path.split('/').next_back().unwrap_or("log_file");
+    let temp_log_file = format!("{}/{}", home_dir, file_name);
+    let actual_log_path = download_log_from_minio(&minio_config, remote_log_path, &temp_log_file)?;
+    println!("Log file downloaded: {remote_log_path}");
+
+    println!("\n[2/4] Parsing log file...");
+    let parse_start = Instant::now();
+    let (ufs_traces, block_traces, ufscustom_traces) =
+        parse_log_file_high_perf(&actual_log_path)?;
+    
+    // 트레이스 타입 자동 감지
+    let detected_trace_type = if !ufs_traces.is_empty() {
+        TraceType::UFS
+    } else if !block_traces.is_empty() {
+        TraceType::Block
+    } else if !ufscustom_traces.is_empty() {
+        TraceType::UFSCUSTOM
+    } else {
+        TraceType::UFS // 기본값
+    };
+    
+    println!(
+        "Parsing completed in {:.2}s (Type: {:?})",
+        parse_start.elapsed().as_secs_f64(),
+        detected_trace_type
+    );
+    println!(
+        "  UFS: {}, Block: {}, UFSCUSTOM: {}",
+        ufs_traces.len(),
+        block_traces.len(),
+        ufscustom_traces.len()
+    );
+
+    println!("\n[3/4] Processing bottom-half latencies...");
+    let process_start = Instant::now();
+    
+    let ufs_traces = if !ufs_traces.is_empty() {
+        processors::ufs_bottom_half_latency_process(ufs_traces)
+    } else {
+        ufs_traces
+    };
+    
+    let block_traces = if !block_traces.is_empty() {
+        processors::block_bottom_half_latency_process(block_traces)
+    } else {
+        block_traces
+    };
+    
+    println!(
+        "Processing completed in {:.2}s",
+        process_start.elapsed().as_secs_f64()
+    );
+
+    println!("\n[4/4] Saving to Parquet and uploading to MinIO...");
+    let temp_output_prefix = "/tmp/trace_temp_output";
+    save_to_parquet(
+        &ufs_traces,
+        &block_traces,
+        &ufscustom_traces,
+        temp_output_prefix,
+        chunk_size,
+    )?;
+
+    // Parquet 파일들을 MinIO에 업로드 (간단한 파일명 사용)
+    let parquet_files = vec![
+        (format!("{temp_output_prefix}_ufs.parquet"), "ufs.parquet"),
+        (format!("{temp_output_prefix}_block.parquet"), "block.parquet"),
+        (format!("{temp_output_prefix}_ufscustom.parquet"), "ufscustom.parquet"),
+    ];
+
+    for (local_parquet, remote_filename) in &parquet_files {
+        if std::path::Path::new(local_parquet).exists() {
+            let remote_parquet = format!("{}/{}", remote_output_path.trim_end_matches('/'), remote_filename);
+            
+            upload_parquet_to_minio(&minio_config, local_parquet, &remote_parquet)?;
+            
+            // 로컬 임시 파일 삭제
+            if let Err(e) = fs::remove_file(local_parquet) {
+                eprintln!("Warning: failed to remove local temporary parquet file '{}': {}", local_parquet, e);
+            }
+        }
+    }
+
+    // 로컬 임시 파일 및 압축 해제 디렉토리 정리
+    if let Err(e) = fs::remove_file(&temp_log_file) {
+        eprintln!("Warning: failed to remove local temporary log file '{}': {}", temp_log_file, e);
+    }
+    if let Err(e) = fs::remove_file(&actual_log_path) {
+        eprintln!("Warning: failed to remove extracted log file '{}': {}", actual_log_path, e);
+    }
+    // 압축 해제 디렉토리도 삭제 시도
+    if actual_log_path != temp_log_file {
+        if let Some(parent) = std::path::Path::new(&actual_log_path).parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    println!(
+        "\n===== MinIO Log to Parquet Complete! =====\nTotal time: {:.2}s",
+        total_start.elapsed().as_secs_f64()
+    );
+
+    Ok(())
+}
+
+/// MinIO에서 Parquet를 다운로드하여 분석하고 차트 생성
+pub fn handle_minio_parquet_analysis(
+    remote_parquet_path: &str,
+    local_output_prefix: &str,
+    y_axis_ranges: Option<HashMap<String, (f64, f64)>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n===== Starting MinIO Parquet Analysis =====\n");
+    let total_start = Instant::now();
+
+    // MinIO 설정 로드
+    let minio_config = MinioConfig::from_env().map_err(|e| {
+        format!("Failed to load MinIO configuration. Please set environment variables.\nError: {e}")
+    })?;
+
+    // Parquet 타입 감지 (파일명에서)
+    let trace_type = if remote_parquet_path.contains("ufs.parquet") {
+        "ufs"
+    } else if remote_parquet_path.contains("block.parquet") {
+        "block"
+    } else if remote_parquet_path.contains("ufscustom.parquet") {
+        "ufscustom"
+    } else {
+        return Err("Cannot detect trace type from file name. Use 'ufs.parquet', 'block.parquet', or 'ufscustom.parquet' in the file name.".into());
+    };
+
+    println!("[1/3] Downloading Parquet file from MinIO...");
+    let temp_parquet_file = format!("/tmp/trace_temp_{trace_type}.parquet");
+    download_parquet_from_minio(&minio_config, remote_parquet_path, &temp_parquet_file)?;
+    println!("Parquet file downloaded: {remote_parquet_path}");
+
+    println!("\n[2/3] Loading Parquet data...");
+    let load_start = Instant::now();
+    
+    match trace_type {
+        "ufs" => {
+            let ufs_traces = read_ufs_from_parquet(&temp_parquet_file)
+                .map_err(|e| format!("Failed to read UFS parquet: {}", e))?;
+            println!(
+                "UFS Parquet loaded: {} events (Time: {:.2}s)",
+                ufs_traces.len(),
+                load_start.elapsed().as_secs_f64()
+            );
+
+            println!("\n[3/3] Generating statistics and charts...");
+            let stats_start = Instant::now();
+            print_ufs_statistics(&ufs_traces);
+            println!(
+                "Statistics complete (Time: {:.2}s)",
+                stats_start.elapsed().as_secs_f64()
+            );
+
+            let chart_start = Instant::now();
+            if let Some(ranges) = y_axis_ranges {
+                generate_charts_with_config(
+                    &ufs_traces,
+                    &[],
+                    &[],
+                    local_output_prefix,
+                    Some(&ranges),
+                )?;
+            } else {
+                generate_charts(
+                    &ufs_traces,
+                    &[],
+                    &[],
+                    local_output_prefix,
+                )?;
+            }
+            println!(
+                "Charts generated (Time: {:.2}s)",
+                chart_start.elapsed().as_secs_f64()
+            );
+        }
+        "block" => {
+            let block_traces = read_block_from_parquet(&temp_parquet_file)
+                .map_err(|e| format!("Failed to read Block parquet: {}", e))?;
+            println!(
+                "Block Parquet loaded: {} events (Time: {:.2}s)",
+                block_traces.len(),
+                load_start.elapsed().as_secs_f64()
+            );
+
+            println!("\n[3/3] Generating statistics and charts...");
+            let stats_start = Instant::now();
+            print_block_statistics(&block_traces);
+            println!(
+                "Statistics complete (Time: {:.2}s)",
+                stats_start.elapsed().as_secs_f64()
+            );
+
+            let chart_start = Instant::now();
+            if let Some(ranges) = y_axis_ranges {
+                generate_charts_with_config(
+                    &[],
+                    &block_traces,
+                    &[],
+                    local_output_prefix,
+                    Some(&ranges),
+                )?;
+            } else {
+                generate_charts(
+                    &[],
+                    &block_traces,
+                    &[],
+                    local_output_prefix,
+                )?;
+            }
+            println!(
+                "Charts generated (Time: {:.2}s)",
+                chart_start.elapsed().as_secs_f64()
+            );
+        }
+        "ufscustom" => {
+            let ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
+                .map_err(|e| format!("Failed to read UFSCUSTOM parquet: {}", e))?;
+            println!(
+                "UFSCUSTOM Parquet loaded: {} events (Time: {:.2}s)",
+                ufscustom_traces.len(),
+                load_start.elapsed().as_secs_f64()
+            );
+
+            println!("\n[3/3] Generating statistics and charts...");
+            let stats_start = Instant::now();
+            print_ufscustom_statistics(&ufscustom_traces);
+            println!(
+                "Statistics complete (Time: {:.2}s)",
+                stats_start.elapsed().as_secs_f64()
+            );
+
+            let chart_start = Instant::now();
+            if let Some(ranges) = y_axis_ranges {
+                generate_charts_with_config(
+                    &[],
+                    &[],
+                    &ufscustom_traces,
+                    local_output_prefix,
+                    Some(&ranges),
+                )?;
+            } else {
+                generate_charts(
+                    &[],
+                    &[],
+                    &ufscustom_traces,
+                    local_output_prefix,
+                )?;
+            }
+            println!(
+                "Charts generated (Time: {:.2}s)",
+                chart_start.elapsed().as_secs_f64()
+            );
+        }
+        _ => unreachable!(),
+    }
+
+    // 로컬 임시 파일 삭제
+    if let Err(e) = fs::remove_file(&temp_parquet_file) {
+        eprintln!("Warning: failed to remove local temporary parquet file '{}': {}", temp_parquet_file, e);
+    }
+
+    println!(
+        "\n===== MinIO Parquet Analysis Complete! =====\nTotal time: {:.2}s",
+        total_start.elapsed().as_secs_f64()
+    );
+
+    Ok(())
+}
