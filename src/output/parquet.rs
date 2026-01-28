@@ -4,7 +4,7 @@ use arrow::record_batch::RecordBatch;
 use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::basic::{Compression, Encoding, ZstdLevel};
 use parquet::file::properties::{EnabledStatistics, WriterProperties};
-use rayon::prelude::*;
+// use rayon::prelude::*;
 use std::fs::File;
 use std::sync::Arc;
 use std::time::Instant;
@@ -127,9 +127,9 @@ fn save_ufs_to_parquet(
     let props = create_writer_properties_with_compression(compression);
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
-    // 병렬 처리로 배치 데이터 준비
+    // 순차 처리로 메모리 안정성 향상 (대용량 데이터 처리 시)
     let batches: Vec<_> = traces
-        .par_chunks(chunk_size)
+        .chunks(chunk_size)
         .enumerate()
         .map(|(chunk_idx, chunk)| {
             if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
@@ -268,9 +268,9 @@ fn save_block_to_parquet(
     let props = create_writer_properties_with_compression(compression);
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
-    // 병렬 처리로 배치 데이터 준비
+    // 순차 처리로 메모리 안정성 향상 (대용량 데이터 처리 시)
     let batches: Vec<_> = traces
-        .par_chunks(chunk_size)
+        .chunks(chunk_size)
         .enumerate()
         .map(|(chunk_idx, chunk)| {
             if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
@@ -410,9 +410,9 @@ fn save_ufscustom_to_parquet(
     let props = create_writer_properties_with_compression(compression);
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
-    // 병렬 처리로 배치 데이터 준비
+    // 순차 처리로 메모리 안정성 향상 (대용량 데이터 처리 시)
     let batches: Vec<_> = traces
-        .par_chunks(chunk_size)
+        .chunks(chunk_size)
         .enumerate()
         .map(|(chunk_idx, chunk)| {
             if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {

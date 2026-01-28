@@ -1,0 +1,36 @@
+[Unit]
+Description=Trace Log gRPC Server
+After=network.target
+
+[Service]
+Type=simple
+User=trace
+Group=trace
+WorkingDirectory=/opt/trace
+ExecStart=/opt/trace/bin/trace --grpc-server
+Restart=always
+RestartSec=5
+
+# 환경 변수 설정
+Environment="MINIO_ENDPOINT=http://localhost:9000"
+Environment="MINIO_ACCESS_KEY=minioadmin"
+Environment="MINIO_SECRET_KEY=minioadmin"
+Environment="MINIO_BUCKET=trace"
+Environment="MINIO_REGION=us-east-1"
+Environment="GRPC_PORT=50051"
+
+# 로그 설정
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trace-grpc
+
+# 보안 설정
+NoNewPrivileges=true
+PrivateTmp=true
+
+# 리소스 제한
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

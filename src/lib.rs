@@ -1,3 +1,4 @@
+pub mod grpc; // gRPC 서버 모듈
 pub mod migration;
 pub mod models;
 pub mod output;

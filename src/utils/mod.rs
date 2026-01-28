@@ -1,3 +1,4 @@
+pub mod compression;
 pub mod constants;
 pub mod encoding;
 pub mod filter;
@@ -38,14 +39,14 @@ pub fn get_alignment_config() -> &'static AlignmentConfig {
 pub fn is_ufs_aligned(lba: u64) -> bool {
     let config = get_alignment_config();
     let alignment_units = config.alignment_size_kb / 4; // Convert KB to 4KB units
-    lba % alignment_units == 0
+    lba.is_multiple_of(alignment_units)
 }
 
 /// Check if sector is aligned for Block (512-byte sectors)
 pub fn is_block_aligned(sector: u64) -> bool {
     let config = get_alignment_config();
     let alignment_sectors = (config.alignment_size_kb * 1024) / 512; // Convert KB to sectors
-    sector % alignment_sectors == 0
+    sector.is_multiple_of(alignment_sectors)
 }
 
 pub use self::encoding::{open_encoded_reader, read_to_string_auto, EncodedBufReader};
