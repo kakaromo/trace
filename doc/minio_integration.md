@@ -6,6 +6,7 @@
 
 1. **MinIO에서 로그 읽기 → Parquet 생성 → MinIO에 저장**: 로그 파일을 MinIO에서 읽어 Parquet로 변환하고 다시 MinIO에 저장 (통계/차트 생성 없음)
 2. **MinIO에서 Parquet 읽기 → 분석 + 차트 생성**: MinIO에 저장된 Parquet 파일을 다운로드하여 기존과 동일하게 분석 및 차트 생성
+3. **MinIO에서 Parquet 읽기 → CSV 변환 → MinIO에 저장**: Parquet 파일을 CSV로 변환하여 MinIO에 저장 (Excel 호환성)
 
 ---
 
@@ -160,6 +161,72 @@ ls -lh test/output/
 
 ---
 
+### 기능 3: MinIO Parquet → CSV 변환 → MinIO 업로드
+
+Parquet 파일을 MinIO에서 다운로드하여 CSV로 변환하고, 다시 MinIO에 저장합니다.  
+**Excel에서 열기 쉽도록 CSV 형식으로 변환** (1,048,575 행 단위로 자동 분할).
+
+#### 사용법
+```bash
+./trace --minio-csv <remote_parquet_path> <remote_csv_path>
+```
+
+- `<remote_parquet_path>`: MinIO에 저장된 Parquet 파일 경로 (파일명에 ufs.parquet, block.parquet, 또는 ufscustom.parquet 포함 필요)
+- `<remote_csv_path>`: CSV 파일을 저장할 MinIO 경로
+- 트레이스 타입은 파일명에서 자동으로 감지됩니다
+
+#### 예제
+
+1. **UFS Parquet를 CSV로 변환:**
+```bash
+./trace --minio-csv output/parquet/ufs.parquet output/csv
+```
+
+2. **Block Parquet를 CSV로 변환:**
+```bash
+./trace --minio-csv output/parquet/block.parquet output/csv
+```
+
+3. **스크립트 사용:**
+```bash
+# 환경 변수 설정
+export MINIO_ENDPOINT="http://localhost:9000"
+export MINIO_ACCESS_KEY="minioadmin"
+export MINIO_SECRET_KEY="minioadmin"
+export MINIO_BUCKET="trace"
+
+# CSV 변환 실행
+./run_minio_csv.sh output/parquet/ufs.parquet output/csv
+```
+
+4. **결과 확인:**
+```bash
+# MinIO에 저장된 CSV 파일 확인
+mc ls local/trace/output/csv/
+
+# 출력 예시:
+# [2026-01-29 10:30:15 KST]  2.5MiB ufs_0.0_1000.5.csv
+# [2026-01-29 10:30:16 KST]  2.3MiB ufs_1000.5_2000.8.csv
+
+# CSV 파일 다운로드
+mc cp local/trace/output/csv/ufs_0.0_1000.5.csv ./
+```
+
+#### 동작 과정
+1. MinIO에서 Parquet 파일 다운로드 → `$HOME/trace_temp.parquet`
+2. Parquet 데이터 로드 (UFS/Block/UFSCUSTOM)
+3. CSV 파일 생성 (시간 범위별로 자동 분할, Excel 행 제한 준수)
+4. CSV 파일들을 MinIO에 업로드
+5. 로컬 임시 파일 삭제
+
+#### 특징
+- **Excel 호환성**: 최대 1,048,575 행으로 자동 분할
+- **시간 범위 파일명**: `ufs_<start_time>_<end_time>.csv`, `block_<start_time>_<end_time>.csv`
+- **대용량 데이터 처리**: 자동으로 여러 파일로 분할하여 저장
+- **효율적인 저장**: MinIO에 직접 업로드하여 로컬 디스크 사용 최소화
+
+---
+
 ## 고급 사용법
 
 ### 옵션과 함께 사용
@@ -227,6 +294,11 @@ trace/                          # 버킷
 │   └── 2026-01-28/
 │       └── parquet/
 │           └── output_ufs.parquet
+├── output/                     # 변환된 CSV 파일
+│   └── csv/
+│       ├── ufs_0.0_1000.5.csv
+│       ├── ufs_1000.5_2000.8.csv
+│       └── block_0.0_1500.2.csv
 └── reports/                    # 분석 보고서 (선택사항)
 ```
 

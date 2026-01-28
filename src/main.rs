@@ -184,6 +184,8 @@ fn print_usage(program: &str) {
     eprintln!("\nMinIO Integration:");
     eprintln!("  {program} --minio-log <remote_log_path> <remote_output_path>        - Read log from MinIO, generate Parquet, upload to MinIO (no stats/charts)");
     eprintln!("  {program} --minio-analyze <remote_parquet_path> <local_output_prefix> - Download Parquet from MinIO, analyze and generate charts");
+    eprintln!("  {program} --minio-csv <remote_parquet_path> <remote_csv_path>       - Download Parquet from MinIO, convert to CSV, upload to MinIO");
+    eprintln!("                 (Type auto-detected from filename: ufs.parquet, block.parquet, ufscustom.parquet)");
     eprintln!("\nOptions:");
     eprintln!("  -p           - Performance benchmark mode: Auto-detects FIO, TIOtest, IOzone results and trace types");
     eprintln!("                 Creates iteration-based folders: <output_prefix>/1/, <output_prefix>/2/, ...");
@@ -445,6 +447,32 @@ fn main() -> io::Result<()> {
                 ) {
                     Ok(_) => println!("MinIO Parquet analysis completed successfully"),
                     Err(e) => eprintln!("MinIO Parquet analysis failed: {e}"),
+                }
+
+                return Ok(());
+            }
+            "--minio-csv" => {
+                // MinIO에서 Parquet 읽기 -> CSV 변환 -> MinIO에 저장
+                if i + 2 >= args.len() {
+                    eprintln!(
+                        "Error: --minio-csv requires <remote_parquet_path> <remote_csv_path>"
+                    );
+                    eprintln!(
+                        "  Type is auto-detected from filename (ufs.parquet, block.parquet, or ufscustom.parquet)"
+                    );
+                    print_usage(&args[0]);
+                    return Ok(());
+                }
+
+                let remote_parquet_path = &args[i + 1];
+                let remote_csv_path = &args[i + 2];
+
+                match trace::commands::minio::handle_minio_parquet_to_csv(
+                    remote_parquet_path,
+                    remote_csv_path,
+                ) {
+                    Ok(_) => println!("MinIO Parquet to CSV completed successfully"),
+                    Err(e) => eprintln!("MinIO Parquet to CSV failed: {e}"),
                 }
 
                 return Ok(());

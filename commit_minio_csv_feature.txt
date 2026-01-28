@@ -1,0 +1,300 @@
+feat: MinIO Parquet to CSV 변환 기능 추가
+
+MinIO에 저장된 Parquet 파일을 CSV로 변환하여 다시 MinIO에 업로드하는
+기능을 추가했습니다. Excel에서 직접 열어볼 수 있도록 CSV 형식을 지원하며,
+트레이스 타입은 파일명에서 자동으로 감지됩니다.
+
+## 새로운 기능
+
+### 1. Parquet → CSV 변환 명령어
+```bash
+./trace --minio-csv <remote_parquet_path> <remote_csv_path>
+```
+
+- MinIO에서 Parquet 다운로드
+- CSV 변환 (Excel 호환)
+- MinIO에 자동 업로드
+- 트레이스 타입 자동 감지 (ufs.parquet, block.parquet, ufscustom.parquet)
+
+### 2. 주요 특징
+
+#### Excel 호환성
+- 최대 1,048,575 행으로 자동 분할
+- 시간 범위별 파일명: `ufs_0.0_1000.5.csv`, `block_0.0_1500.2.csv`
+- 대용량 데이터 자동 처리
+
+#### 자동 타입 감지
+- 파일명에서 ufs/block/ufscustom 자동 인식
+- 수동 타입 지정 불필요
+- 간단한 명령어 구조
+
+#### 효율적인 저장
+- 로컬 임시 파일 자동 삭제
+- MinIO 직접 업로드로 디스크 사용 최소화
+- glob 패턴으로 여러 CSV 파일 일괄 처리
+
+### 3. 사용 예제
+
+```bash
+# 환경 변수 설정
+export MINIO_ENDPOINT="http://localhost:9000"
+export MINIO_ACCESS_KEY="minioadmin"
+export MINIO_SECRET_KEY="minioadmin"
+export MINIO_BUCKET="trace"
+
+# UFS Parquet를 CSV로 변환
+./target/release/trace --minio-csv output/parquet/ufs.parquet output/csv
+
+# Block Parquet를 CSV로 변환
+./target/release/trace --minio-csv output/parquet/block.parquet output/csv
+
+# 스크립트 사용
+./run_minio_csv.sh output/parquet/ufs.parquet output/csv
+```
+
+## 구현 상세
+
+### src/commands/minio.rs (159줄 추가)
+
+**handle_minio_parquet_to_csv() 함수**:
+1. 파일명에서 트레이스 타입 자동 감지
+   - ufs.parquet → "ufs"
+   - block.parquet → "block"
+   - ufscustom.parquet → "ufscustom"
+
+2. MinIO에서 Parquet 다운로드
+   - 임시 파일: `$HOME/trace_temp.parquet`
+
+3. Parquet → CSV 변환
+   - 타입별 전용 reader 사용 (read_ufs_from_parquet 등)
+   - 기존 save_to_csv() 함수 재사용
+   - CSV prefix: `$HOME/{trace_type}`
+   - 결과: `$HOME/ufs_0.0_1000.5.csv`
+
+4. CSV 파일 업로드
+   - glob 패턴: `$HOME/{trace_type}_*.csv`
+   - MinIO 경로: `{remote_csv_path}/{filename}`
+   - 각 파일 개별 업로드
+
+5. 정리
+   - Parquet 임시 파일 삭제
+   - CSV 파일들 삭제
+
+### src/commands/mod.rs
+- `handle_minio_parquet_to_csv` 공개 export
+
+### src/main.rs
+
+**CLI 명령어 처리**:
+```rust
+"--minio-csv" => {
+    if i + 2 >= args.len() {
+        eprintln!("Error: --minio-csv requires <remote_parquet_path> <remote_csv_path>");
+        print_usage(&args[0]);
+        return Ok(());
+    }
+    
+    let remote_parquet_path = &args[i + 1];
+    let remote_csv_path = &args[i + 2];
+    
+    match handle_minio_parquet_to_csv(remote_parquet_path, remote_csv_path) {
+        Ok(_) => println!("MinIO Parquet to CSV completed successfully"),
+        Err(e) => eprintln!("MinIO Parquet to CSV failed: {e}"),
+    }
+}
+```
+
+**사용법 업데이트**:
+```
+--minio-csv <remote_parquet_path> <remote_csv_path>
+  (Type auto-detected from filename: ufs.parquet, block.parquet, ufscustom.parquet)
+```
+
+### Cargo.toml
+- `glob = "0.3"` 의존성 추가 (CSV 파일 검색용)
+
+## 문서 업데이트
+
+### doc/minio_integration.md
+
+**기능 3 섹션 추가**:
+- 사용법 및 예제
+- 동작 과정 상세 설명
+- 특징 (Excel 호환성, 시간 범위 파일명, 대용량 처리)
+- MinIO 버킷 구조에 CSV 디렉토리 추가
+
+**파일 예제**:
+```
+output/
+└── csv/
+    ├── ufs_0.0_1000.5.csv
+    ├── ufs_1000.5_2000.8.csv
+    └── block_0.0_1500.2.csv
+```
+
+### MINIO_README.md
+
+**기능 3 추가**:
+```bash
+# Parquet를 CSV로 변환하여 MinIO에 저장 (Excel 호환)
+# Type은 파일명에서 자동 감지
+./target/release/trace --minio-csv output/parquet/ufs.parquet output/csv
+
+# 스크립트 사용
+./run_minio_csv.sh output/parquet/ufs.parquet output/csv
+```
+
+**주요 변경사항 업데이트**:
+- ✅ Parquet 파일을 CSV로 변환하여 MinIO에 업로드 (Excel 호환)
+
+**테스트 스크립트 추가**:
+- run_minio_csv.sh
+
+## 새로운 파일
+
+### run_minio_csv.sh (56줄)
+
+**기능**:
+- 환경 변수 검증
+- 파일명에서 타입 자동 감지 및 검증
+- trace 명령어 실행
+- 결과 확인 및 다운로드 가이드
+
+**사용법**:
+```bash
+./run_minio_csv.sh [remote_parquet_path] [remote_csv_path]
+```
+
+**기본값**:
+- REMOTE_PARQUET_PATH: output/parquet/ufs.parquet
+- REMOTE_CSV_PATH: output/csv
+
+## 동작 흐름
+
+```
+1. 파일명 검증
+   └─> ufs.parquet, block.parquet, ufscustom.parquet 확인
+
+2. MinIO에서 Parquet 다운로드
+   └─> $HOME/trace_temp.parquet
+
+3. Parquet 데이터 로드
+   ├─> UFS: read_ufs_from_parquet()
+   ├─> Block: read_block_from_parquet()
+   └─> UFSCUSTOM: read_ufscustom_from_parquet()
+
+4. CSV 파일 생성
+   ├─> save_to_csv() 호출
+   ├─> Excel 행 제한 준수 (1,048,575)
+   ├─> 시간 범위별 자동 분할
+   └─> $HOME/ufs_0.0_1000.5.csv, $HOME/ufs_1000.5_2000.8.csv, ...
+
+5. glob 패턴으로 CSV 파일 검색
+   └─> $HOME/{trace_type}_*.csv
+
+6. MinIO 업로드
+   ├─> 각 CSV 파일 개별 업로드
+   ├─> 경로: {remote_csv_path}/{filename}
+   └─> 로그: "Uploaded: output/csv/ufs_0.0_1000.5.csv"
+
+7. 정리
+   ├─> Parquet 임시 파일 삭제
+   └─> CSV 파일들 삭제
+```
+
+## 사용 시나리오
+
+### 시나리오 1: 데이터 분석가를 위한 CSV 제공
+```bash
+# Parquet를 CSV로 변환하여 팀과 공유
+./trace --minio-csv archive/2026-01-29/ufs.parquet shared/csv
+
+# 팀원들은 mc 또는 웹 콘솔에서 CSV 다운로드
+mc cp local/trace/shared/csv/ufs_*.csv ./
+```
+
+### 시나리오 2: Excel 호환 보고서 생성
+```bash
+# 대용량 Parquet를 Excel에서 열 수 있는 크기로 분할
+./trace --minio-csv logs/huge_trace.parquet reports/excel
+```
+
+### 시나리오 3: 전체 파이프라인 자동화
+```bash
+#!/bin/bash
+# 로그 → Parquet → CSV 전체 워크플로우
+
+# 1. 로그를 Parquet로 변환
+./trace --minio-log logs/device.log archive/parquet
+
+# 2. Parquet를 CSV로 변환
+./trace --minio-csv archive/parquet/ufs.parquet reports/csv
+./trace --minio-csv archive/parquet/block.parquet reports/csv
+
+# 3. 결과 확인
+mc ls local/trace/reports/csv/
+```
+
+## 기술적 개선 사항
+
+### 1. 타입 자동 감지
+- **이전**: `--minio-csv path output ufs` (3개 파라미터)
+- **이후**: `--minio-csv path output` (2개 파라미터)
+- 사용자 편의성 향상, 오타 방지
+
+### 2. 파일명 단순화
+- **이전**: `trace_temp_csv_ufs_0.0_1000.5.csv`
+- **이후**: `ufs_0.0_1000.5.csv`
+- 가독성 향상, 파일 관리 용이
+
+### 3. 에러 처리
+- 타입 감지 실패 시 명확한 에러 메시지
+- 파일명에 ufs.parquet, block.parquet, ufscustom.parquet 포함 필요
+- Permission denied 방지를 위한 올바른 경로 사용
+
+## 빌드 및 검증
+
+```bash
+cargo build --release
+✅ 성공
+
+cargo clippy --all-targets -- -D warnings
+✅ 경고 없음
+
+cargo fmt --all -- --check
+✅ 포맷팅 통과
+```
+
+## 변경 파일 요약
+
+- **추가**: src/commands/minio.rs (+159줄)
+- **수정**: src/commands/mod.rs
+- **수정**: src/main.rs
+- **수정**: Cargo.toml
+- **추가**: run_minio_csv.sh (+56줄)
+- **수정**: doc/minio_integration.md
+- **수정**: MINIO_README.md
+
+## 영향 범위
+
+- 기존 기능에 영향 없음 (신규 기능 추가)
+- MinIO 통합 워크플로우 확장
+- CSV export 모듈 재사용 (output/csv.rs)
+- 7개 파일 수정, 1개 파일 추가
+
+## 개선 효과
+
+### 사용자 경험
+- ✅ Excel에서 바로 열어볼 수 있는 CSV 형식
+- ✅ 자동 타입 감지로 명령어 단순화
+- ✅ 대용량 데이터 자동 분할 처리
+
+### 시스템 효율성
+- ✅ 로컬 디스크 사용 최소화 (임시 파일 자동 삭제)
+- ✅ MinIO 직접 저장으로 중간 단계 제거
+- ✅ glob 패턴으로 효율적인 파일 처리
+
+### 확장성
+- ✅ 스크립트를 통한 배치 처리 지원
+- ✅ CI/CD 파이프라인 통합 가능
+- ✅ 다양한 트레이스 타입 지원

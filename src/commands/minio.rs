@@ -1,4 +1,4 @@
-use crate::output::{generate_charts, generate_charts_with_config, save_to_parquet};
+use crate::output::{generate_charts, generate_charts_with_config, save_to_csv, save_to_parquet};
 use crate::parsers::parse_log_file_high_perf;
 use crate::processors;
 use crate::storage::minio_client::{
@@ -300,6 +300,157 @@ pub fn handle_minio_parquet_analysis(
 
     println!(
         "\n===== MinIO Parquet Analysis Complete! =====\nTotal time: {:.2}s",
+        total_start.elapsed().as_secs_f64()
+    );
+
+    Ok(())
+}
+
+/// MinIO에서 Parquet 파일을 다운로드하여 CSV로 변환하고 MinIO에 업로드
+pub fn handle_minio_parquet_to_csv(
+    remote_parquet_path: &str,
+    remote_csv_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n===== Starting MinIO Parquet to CSV =====\n");
+    let total_start = Instant::now();
+
+    // MinIO 설정 로드
+    let minio_config = MinioConfig::from_env().map_err(|e| {
+        format!("Failed to load MinIO configuration. Please set environment variables.\nError: {e}")
+    })?;
+
+    // Parquet 타입 감지 (파일명에서)
+    let trace_type = if remote_parquet_path.contains("ufs.parquet") {
+        "ufs"
+    } else if remote_parquet_path.contains("block.parquet") {
+        "block"
+    } else if remote_parquet_path.contains("ufscustom.parquet") {
+        "ufscustom"
+    } else {
+        return Err("Cannot detect trace type from file name. Use 'ufs.parquet', 'block.parquet', or 'ufscustom.parquet' in the file name.".into());
+    };
+
+    println!("Detected trace type: {}", trace_type);
+
+    println!("[1/3] Downloading Parquet file from MinIO...");
+    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let temp_parquet_file = format!("{}/trace_temp.parquet", home_dir);
+
+    // MinIO에서 Parquet 다운로드
+    download_parquet_from_minio(&minio_config, remote_parquet_path, &temp_parquet_file)?;
+    println!("Download completed");
+
+    println!("\n[2/3] Converting Parquet to CSV...");
+    let load_start = Instant::now();
+
+    // CSV 파일을 저장할 임시 prefix (trace_type을 포함하여 ufs_*.csv, block_*.csv 형태로 생성)
+    let temp_csv_prefix = format!("{}/{}", home_dir, trace_type);
+
+    match trace_type {
+        "ufs" => {
+            let ufs_traces = read_ufs_from_parquet(&temp_parquet_file)
+                .map_err(|e| format!("Failed to read UFS parquet: {e}"))?;
+
+            println!(
+                "Loaded {} UFS records (Time: {:.2}s)",
+                ufs_traces.len(),
+                load_start.elapsed().as_secs_f64()
+            );
+
+            // CSV 저장
+            save_to_csv(&ufs_traces, &[], &[], &temp_csv_prefix)?;
+            println!("CSV conversion completed");
+        }
+        "block" => {
+            let block_traces = read_block_from_parquet(&temp_parquet_file)
+                .map_err(|e| format!("Failed to read Block parquet: {e}"))?;
+
+            println!(
+                "Loaded {} Block records (Time: {:.2}s)",
+                block_traces.len(),
+                load_start.elapsed().as_secs_f64()
+            );
+
+            // CSV 저장
+            save_to_csv(&[], &block_traces, &[], &temp_csv_prefix)?;
+            println!("CSV conversion completed");
+        }
+        "ufscustom" => {
+            let ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
+                .map_err(|e| format!("Failed to read UFSCUSTOM parquet: {e}"))?;
+
+            println!(
+                "Loaded {} UFSCUSTOM records (Time: {:.2}s)",
+                ufscustom_traces.len(),
+                load_start.elapsed().as_secs_f64()
+            );
+
+            // CSV 저장
+            save_to_csv(&[], &[], &ufscustom_traces, &temp_csv_prefix)?;
+            println!("CSV conversion completed");
+        }
+        _ => {
+            return Err(format!("Unsupported trace type: {trace_type}").into());
+        }
+    }
+
+    println!("\n[3/3] Uploading CSV files to MinIO...");
+    let upload_start = Instant::now();
+
+    // 생성된 CSV 파일들 찾기 (type_*.csv 패턴으로 검색)
+    let csv_pattern = format!("{}/{}_*.csv", home_dir, trace_type);
+    let mut uploaded_count = 0;
+
+    // glob 패턴으로 파일 찾기
+    for entry in
+        glob::glob(&csv_pattern).map_err(|e| format!("Failed to parse glob pattern: {e}"))?
+    {
+        match entry {
+            Ok(local_csv_path) => {
+                let filename = local_csv_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or("Invalid filename")?;
+
+                // MinIO 경로 생성 (파일명 그대로 사용)
+                let remote_csv = format!("{}/{}", remote_csv_path.trim_end_matches('/'), filename);
+
+                // MinIO에 업로드
+                let client = crate::storage::minio_client::MinioClient::new(&minio_config)?;
+                client.upload_file(local_csv_path.to_str().unwrap(), &remote_csv)?;
+
+                println!("  Uploaded: {}", remote_csv);
+                uploaded_count += 1;
+
+                // 로컬 임시 파일 삭제
+                if let Err(e) = fs::remove_file(&local_csv_path) {
+                    eprintln!(
+                        "Warning: failed to remove local CSV file '{}': {}",
+                        local_csv_path.display(),
+                        e
+                    );
+                }
+            }
+            Err(e) => eprintln!("Error processing file: {}", e),
+        }
+    }
+
+    println!(
+        "Upload completed: {} CSV files (Time: {:.2}s)",
+        uploaded_count,
+        upload_start.elapsed().as_secs_f64()
+    );
+
+    // 임시 Parquet 파일 삭제
+    if let Err(e) = fs::remove_file(&temp_parquet_file) {
+        eprintln!(
+            "Warning: failed to remove local temporary parquet file '{}': {}",
+            temp_parquet_file, e
+        );
+    }
+
+    println!(
+        "\n===== MinIO Parquet to CSV Complete! =====\nTotal time: {:.2}s",
         total_start.elapsed().as_secs_f64()
     );
 

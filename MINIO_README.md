@@ -48,11 +48,23 @@ mc cp test/input/blktrace_test.csv local/trace/logs/test.csv
 ./target/release/trace --minio-analyze output/parquet/ufs.parquet test/output/analysis
 ```
 
+### 기능 3: MinIO Parquet → CSV 변환 → MinIO 업로드
+
+```bash
+# Parquet를 CSV로 변환하여 MinIO에 저장 (Excel 호환)
+# Type은 파일명에서 자동 감지 (ufs.parquet, block.parquet, ufscustom.parquet)
+./target/release/trace --minio-csv output/parquet/ufs.parquet output/csv
+
+# 또는 스크립트 사용
+./run_minio_csv.sh output/parquet/ufs.parquet output/csv
+```
+
 ## 테스트
 
 상세 테스트는 스크립트를 확인하세요:
 - run_minio.sh: 로그 → Parquet 변환
 - run_minio_analysis.sh: Parquet 분석
+- run_minio_csv.sh: Parquet → CSV 변환
 
 ## 상세 문서
 
@@ -63,6 +75,7 @@ mc cp test/input/blktrace_test.csv local/trace/logs/test.csv
 - ✅ MinIO S3 호환 스토리지 통합
 - ✅ 로그 파일을 MinIO에서 읽고 Parquet로 변환 후 업로드
 - ✅ MinIO의 Parquet 파일을 다운로드하여 분석 및 차트 생성
+- ✅ Parquet 파일을 CSV로 변환하여 MinIO에 업로드 (Excel 호환)
 - ✅ 환경 변수를 통한 MinIO 설정 관리
 - ✅ 동기 방식의 간단한 API
 
