@@ -5,10 +5,10 @@ use std::io;
 use std::time::Instant;
 use trace::commands::minio::{handle_minio_log_to_parquet, handle_minio_parquet_analysis};
 use trace::grpc::run_grpc_server;
-use trace::storage::minio_client::MinioConfig;
-use trace::output::{save_to_csv, generate_charts, generate_charts_with_config};
+use trace::output::save_to_csv;
 use trace::parsers::parse_log_file_high_perf;
 use trace::processors;
+use trace::storage::minio_client::MinioConfig;
 use trace::utils::{
     parse_latency_ranges, read_filter_options, set_alignment_config, set_user_latency_ranges,
     AlignmentConfig, FilterOptions, Logger,
@@ -21,7 +21,7 @@ use trace::*;
 async fn run_grpc_server_mode(args: &[String]) -> io::Result<()> {
     // 기본값
     let mut port = "50051";
-    
+
     // 옵션 파싱
     let mut i = 2;
     while i < args.len() {
@@ -63,7 +63,7 @@ async fn run_grpc_server_mode(args: &[String]) -> io::Result<()> {
     };
 
     let addr = format!("0.0.0.0:{}", port);
-    
+
     println!("Starting gRPC server...");
     println!("  Address: {}", addr);
     println!("  MinIO Endpoint: {}", minio_config.endpoint);
