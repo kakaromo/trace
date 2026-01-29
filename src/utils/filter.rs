@@ -43,7 +43,7 @@ impl Default for FilterOptions {
 impl FilterOptions {
     // 필터 옵션이 활성화되어 있는지 확인
     pub fn is_time_filter_active(&self) -> bool {
-        self.start_time > 0.0 || self.end_time > 0.0
+        self.end_time > self.start_time
     }
 
     pub fn is_sector_filter_active(&self) -> bool {

@@ -174,6 +174,133 @@ fn parse_alignment_size(input: &str) -> Result<u64, String> {
     }
 }
 
+/// Parse filter option from command line
+/// Format: "type:value1:value2" or "type:value1,value2,value3"
+/// Examples:
+///   time:0.0:1000.0       - time range
+///   sector:1000:2000      - sector/LBA range
+///   dtoc:0.0:10.0         - DTOC latency range
+///   ctoc:0.0:10.0         - CTOC latency range
+///   ctod:0.0:10.0         - CTOD latency range
+///   cpu:0-3               - CPU range
+///   cpu:0,4,7             - CPU list
+fn parse_filter_option(
+    filter_str: &str,
+    filter: &mut FilterOptions,
+) -> Result<(), String> {
+    let parts: Vec<&str> = filter_str.split(':').collect();
+    if parts.len() < 2 {
+        return Err(format!(
+            "Invalid filter format: '{}'. Expected format: type:value1:value2 or type:values",
+            filter_str
+        ));
+    }
+
+    let filter_type = parts[0];
+    
+    match filter_type {
+        "time" => {
+            if parts.len() != 3 {
+                return Err(format!("Invalid time filter: '{}'. Expected: time:min:max", filter_str));
+            }
+            let start = parts[1].parse::<f64>()
+                .map_err(|_| format!("Invalid time min value: '{}'", parts[1]))?;
+            let end = parts[2].parse::<f64>()
+                .map_err(|_| format!("Invalid time max value: '{}'", parts[2]))?;
+            
+            if start < 0.0 {
+                return Err(format!("Time start value must be >= 0, got: {}", start));
+            }
+            if end <= start {
+                return Err(format!("Time end value ({}) must be greater than start value ({})", end, start));
+            }
+            
+            filter.start_time = start;
+            filter.end_time = end;
+        }
+        "sector" | "lba" => {
+            if parts.len() != 3 {
+                return Err(format!("Invalid sector filter: '{}'. Expected: sector:min:max", filter_str));
+            }
+            filter.start_sector = parts[1].parse::<u64>()
+                .map_err(|_| format!("Invalid sector min value: '{}'", parts[1]))?;
+            filter.end_sector = parts[2].parse::<u64>()
+                .map_err(|_| format!("Invalid sector max value: '{}'", parts[2]))?;
+        }
+        "dtoc" => {
+            if parts.len() != 3 {
+                return Err(format!("Invalid dtoc filter: '{}'. Expected: dtoc:min:max", filter_str));
+            }
+            filter.min_dtoc = parts[1].parse::<f64>()
+                .map_err(|_| format!("Invalid dtoc min value: '{}'", parts[1]))?;
+            filter.max_dtoc = parts[2].parse::<f64>()
+                .map_err(|_| format!("Invalid dtoc max value: '{}'", parts[2]))?;
+        }
+        "ctoc" => {
+            if parts.len() != 3 {
+                return Err(format!("Invalid ctoc filter: '{}'. Expected: ctoc:min:max", filter_str));
+            }
+            filter.min_ctoc = parts[1].parse::<f64>()
+                .map_err(|_| format!("Invalid ctoc min value: '{}'", parts[1]))?;
+            filter.max_ctoc = parts[2].parse::<f64>()
+                .map_err(|_| format!("Invalid ctoc max value: '{}'", parts[2]))?;
+        }
+        "ctod" => {
+            if parts.len() != 3 {
+                return Err(format!("Invalid ctod filter: '{}'. Expected: ctod:min:max", filter_str));
+            }
+            filter.min_ctod = parts[1].parse::<f64>()
+                .map_err(|_| format!("Invalid ctod min value: '{}'", parts[1]))?;
+            filter.max_ctod = parts[2].parse::<f64>()
+                .map_err(|_| format!("Invalid ctod max value: '{}'", parts[2]))?;
+        }
+        "cpu" => {
+            if parts.len() != 2 {
+                return Err(format!("Invalid cpu filter: '{}'. Expected: cpu:0-3 or cpu:0,4,7", filter_str));
+            }
+            let cpu_spec = parts[1];
+            
+            // Check if it's a range (e.g., "0-3")
+            if cpu_spec.contains('-') {
+                let range_parts: Vec<&str> = cpu_spec.split('-').collect();
+                if range_parts.len() != 2 {
+                    return Err(format!("Invalid CPU range: '{}'. Expected: start-end", cpu_spec));
+                }
+                let start = range_parts[0].parse::<u32>()
+                    .map_err(|_| format!("Invalid CPU range start: '{}'", range_parts[0]))?;
+                let end = range_parts[1].parse::<u32>()
+                    .map_err(|_| format!("Invalid CPU range end: '{}'", range_parts[1]))?;
+                
+                if start > end {
+                    return Err(format!("Invalid CPU range: start ({}) must be <= end ({})", start, end));
+                }
+                
+                filter.cpu_list.extend(start..=end);
+            } else if cpu_spec.contains(',') {
+                // List of CPUs (e.g., "0,4,7")
+                for cpu_str in cpu_spec.split(',') {
+                    let cpu = cpu_str.trim().parse::<u32>()
+                        .map_err(|_| format!("Invalid CPU value: '{}'", cpu_str))?;
+                    filter.cpu_list.push(cpu);
+                }
+            } else {
+                // Single CPU
+                let cpu = cpu_spec.parse::<u32>()
+                    .map_err(|_| format!("Invalid CPU value: '{}'", cpu_spec))?;
+                filter.cpu_list.push(cpu);
+            }
+        }
+        _ => {
+            return Err(format!(
+                "Unknown filter type: '{}'. Supported types: time, sector, lba, dtoc, ctoc, ctod, cpu",
+                filter_type
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn print_usage(program: &str) {
     eprintln!("Usage:");
     eprintln!("  {program} [options] <log_file> <output_prefix>                      - Parse log file and generate statistics");
@@ -192,6 +319,16 @@ fn print_usage(program: &str) {
     eprintln!("                 Example: {program} -p benchmark.log fio_result");
     eprintln!("  -l <values>  - Custom latency ranges in ms (comma-separated). Example: -l 0.1,0.5,1,5,10,50,100");
     eprintln!("  -f           - Apply filters (time, sector/lba, latency, queue depth) with interactive input");
+    eprintln!("  --filter <spec> - Apply specific filter (can be used multiple times)");
+    eprintln!("                 Format: type:value1:value2 or type:values");
+    eprintln!("                 Examples:");
+    eprintln!("                   --filter time:0.0:1000.0     (time range in ms)");
+    eprintln!("                   --filter sector:1000:2000    (sector/LBA range)");
+    eprintln!("                   --filter dtoc:0.0:10.0       (DTOC latency range in ms)");
+    eprintln!("                   --filter ctoc:0.0:10.0       (CTOC latency range in ms)");
+    eprintln!("                   --filter ctod:0.0:10.0       (CTOD latency range in ms)");
+    eprintln!("                   --filter cpu:0-3             (CPU range)");
+    eprintln!("                   --filter cpu:0,4,7           (specific CPUs)");
     eprintln!(
         "  -y <ranges>  - Set y-axis ranges for charts. Format: metric:min:max,metric:min:max"
     );
@@ -236,6 +373,7 @@ fn main() -> io::Result<()> {
     let mut parquet_type_index = 0;
     let mut parquet_path_index = 0;
     let mut use_filter = false;
+    let mut filter_options = FilterOptions::default(); // CLI filter options
     let mut y_axis_ranges: Option<HashMap<String, (f64, f64)>> = None;
     let mut chunk_size: usize = 50_000; // 기본 청크 크기
     let mut export_csv = false; // CSV export 옵션
@@ -272,6 +410,27 @@ fn main() -> io::Result<()> {
             "-f" => {
                 use_filter = true;
                 i += 1;
+            }
+            "--filter" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --filter option requires filter specification");
+                    print_usage(&args[0]);
+                    return Ok(());
+                }
+
+                match parse_filter_option(&args[i + 1], &mut filter_options) {
+                    Ok(_) => {
+                        use_filter = true; // Enable filter mode
+                        log!("Applied filter: {}", &args[i + 1]);
+                    }
+                    Err(e) => {
+                        eprintln!("Error in filter specification: {e}");
+                        print_usage(&args[0]);
+                        return Ok(());
+                    }
+                }
+
+                i += 2; // 옵션과 값을 건너뜀
             }
             "-y" => {
                 if i + 1 >= args.len() {
@@ -508,106 +667,126 @@ fn main() -> io::Result<()> {
 
     // 필터 옵션 처리
     let filter_options = if use_filter {
-        println!("필터 옵션을 입력하세요 (입력하지 않거나 0으로 입력 시 필터링하지 않습니다):");
-        match read_filter_options() {
-            Ok(filter) => {
-                // 필터 정보 출력
-                println!("적용된 필터 옵션:");
-                if filter.start_time > 0.0 && filter.end_time > 0.0 {
-                    println!(
-                        "  시간 필터: {:.3} - {:.3} ms",
-                        filter.start_time, filter.end_time
-                    );
-                } else {
-                    println!("  시간 필터: 사용하지 않음");
+        // CLI에서 --filter 옵션이 사용된 경우
+        let filter = if filter_options.is_time_filter_active() 
+            || filter_options.is_sector_filter_active()
+            || filter_options.is_dtoc_filter_active()
+            || filter_options.is_ctoc_filter_active()
+            || filter_options.is_ctod_filter_active()
+            || filter_options.is_cpu_filter_active() {
+            // CLI 필터 사용
+            filter_options.clone()
+        } else {
+            // 대화형 필터 입력
+            println!("필터 옵션을 입력하세요 (입력하지 않거나 0으로 입력 시 필터링하지 않습니다):");
+            match read_filter_options() {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("필터 옵션 입력 오류: {e}");
+                    return Ok(());
                 }
-
-                if filter.start_sector > 0 && filter.end_sector > 0 {
-                    println!(
-                        "  섹터/LBA 필터: {} - {}",
-                        filter.start_sector, filter.end_sector
-                    );
-                } else {
-                    println!("  섹터/LBA 필터: 사용하지 않음");
-                }
-
-                if filter.is_dtoc_filter_active() {
-                    println!(
-                        "  DTOC 레이턴시 필터: {:.3} - {:.3} ms",
-                        if filter.min_dtoc > 0.0 {
-                            filter.min_dtoc
-                        } else {
-                            0.0
-                        },
-                        if filter.max_dtoc > 0.0 {
-                            filter.max_dtoc
-                        } else {
-                            f64::INFINITY
-                        }
-                    );
-                } else {
-                    println!("  DTOC 레이턴시 필터: 사용하지 않음");
-                }
-
-                if filter.is_ctoc_filter_active() {
-                    println!(
-                        "  CTOC 레이턴시 필터: {:.3} - {:.3} ms",
-                        if filter.min_ctoc > 0.0 {
-                            filter.min_ctoc
-                        } else {
-                            0.0
-                        },
-                        if filter.max_ctoc > 0.0 {
-                            filter.max_ctoc
-                        } else {
-                            f64::INFINITY
-                        }
-                    );
-                } else {
-                    println!("  CTOC 레이턴시 필터: 사용하지 않음");
-                }
-
-                if filter.is_ctod_filter_active() {
-                    println!(
-                        "  CTOD 레이턴시 필터: {:.3} - {:.3} ms",
-                        if filter.min_ctod > 0.0 {
-                            filter.min_ctod
-                        } else {
-                            0.0
-                        },
-                        if filter.max_ctod > 0.0 {
-                            filter.max_ctod
-                        } else {
-                            f64::INFINITY
-                        }
-                    );
-                } else {
-                    println!("  CTOD 레이턴시 필터: 사용하지 않음");
-                }
-
-                if filter.is_qd_filter_active() {
-                    println!(
-                        "  QD 필터: {} - {}",
-                        if filter.min_qd > 0 { filter.min_qd } else { 0 },
-                        if filter.max_qd > 0 {
-                            filter.max_qd
-                        } else {
-                            u32::MAX
-                        }
-                    );
-                } else {
-                    println!("  QD 필터: 사용하지 않음");
-                }
-
-                // 전역 필터 옵션 설정
-                set_filter_options(filter.clone());
-                Some(filter)
             }
-            Err(e) => {
-                eprintln!("필터 옵션 읽기 오류: {e}");
-                None
-            }
+        };
+
+        // 필터 정보 출력
+        println!("적용된 필터 옵션:");
+        if filter.is_time_filter_active() {
+            println!(
+                "  시간 필터: {:.3} - {:.3} ms",
+                filter.start_time, filter.end_time
+            );
+        } else {
+            println!("  시간 필터: 사용하지 않음");
         }
+
+        if filter.is_sector_filter_active() {
+            println!(
+                "  섹터/LBA 필터: {} - {}",
+                filter.start_sector, filter.end_sector
+            );
+        } else {
+            println!("  섹터/LBA 필터: 사용하지 않음");
+        }
+
+        if filter.is_dtoc_filter_active() {
+            println!(
+                "  DTOC 레이턴시 필터: {:.3} - {:.3} ms",
+                if filter.min_dtoc > 0.0 {
+                    filter.min_dtoc
+                } else {
+                    0.0
+                },
+                if filter.max_dtoc > 0.0 {
+                    filter.max_dtoc
+                } else {
+                    f64::INFINITY
+                }
+            );
+        } else {
+            println!("  DTOC 레이턴시 필터: 사용하지 않음");
+        }
+
+        if filter.is_ctoc_filter_active() {
+            println!(
+                "  CTOC 레이턴시 필터: {:.3} - {:.3} ms",
+                if filter.min_ctoc > 0.0 {
+                    filter.min_ctoc
+                } else {
+                    0.0
+                },
+                if filter.max_ctoc > 0.0 {
+                    filter.max_ctoc
+                } else {
+                    f64::INFINITY
+                }
+            );
+        } else {
+            println!("  CTOC 레이턴시 필터: 사용하지 않음");
+        }
+
+        if filter.is_ctod_filter_active() {
+            println!(
+                "  CTOD 레이턴시 필터: {:.3} - {:.3} ms",
+                if filter.min_ctod > 0.0 {
+                    filter.min_ctod
+                } else {
+                    0.0
+                },
+                if filter.max_ctod > 0.0 {
+                    filter.max_ctod
+                } else {
+                    f64::INFINITY
+                }
+            );
+        } else {
+            println!("  CTOD 레이턴시 필터: 사용하지 않음");
+        }
+
+        if filter.is_qd_filter_active() {
+            println!(
+                "  QD 필터: {} - {}",
+                if filter.min_qd > 0 { filter.min_qd } else { 0 },
+                if filter.max_qd > 0 {
+                    filter.max_qd
+                } else {
+                    u32::MAX
+                }
+            );
+        } else {
+            println!("  QD 필터: 사용하지 않음");
+        }
+
+        if filter.is_cpu_filter_active() {
+            print!("  CPU 필터: ");
+            let cpus: Vec<String> = filter.cpu_list.iter().map(|c| c.to_string()).collect();
+            println!("{}", cpus.join(", "));
+        } else {
+            println!("  CPU 필터: 사용하지 않음");
+        }
+
+        // 전역 필터 옵션 설정
+        set_filter_options(filter.clone());
+        Some(filter)
     } else {
         None
     };
