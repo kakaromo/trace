@@ -152,6 +152,84 @@ def list_files(stub: log_processor_pb2_grpc.LogProcessorStub, bucket: str, prefi
         print(f"❌ RPC Error: {e.code()}: {e.details()}")
 
 
+def convert_to_csv(
+    stub: log_processor_pb2_grpc.LogProcessorStub,
+    source_bucket: str,
+    source_parquet_path: str,
+    target_bucket: str,
+    target_csv_path: str,
+    csv_prefix: str = None,
+) -> None:
+    """Parquet를 CSV로 변환 요청 및 진행 상황 모니터링"""
+    
+    request = log_processor_pb2.ConvertToCsvRequest(
+        source_bucket=source_bucket,
+        source_parquet_path=source_parquet_path,
+        target_bucket=target_bucket,
+        target_csv_path=target_csv_path,
+    )
+    
+    # csv_prefix가 지정된 경우에만 설정
+    if csv_prefix:
+        request.csv_prefix = csv_prefix
+
+    print(f"Converting Parquet to CSV:")
+    print(f"  Source: {source_bucket}/{source_parquet_path}")
+    print(f"  Target: {target_bucket}/{target_csv_path}")
+    if csv_prefix:
+        print(f"  CSV Prefix: {csv_prefix}")
+    print()
+
+    try:
+        # 스트리밍 응답 수신
+        responses: Iterator[log_processor_pb2.ConvertToCsvProgress] = stub.ConvertToCsv(request)
+        
+        job_id = None
+        for response in responses:
+            if job_id is None:
+                job_id = response.job_id
+                print(f"Job ID: {job_id}")
+                print("-" * 60)
+
+            # 진행 단계 이름
+            stage_names = {
+                0: "UNKNOWN",
+                1: "DOWNLOADING",
+                2: "CONVERTING",
+                3: "UPLOADING",
+                4: "COMPLETED",
+                5: "FAILED",
+            }
+            
+            stage_name = stage_names.get(response.stage, "UNKNOWN")
+            
+            print(f"[{stage_name:12}] {response.progress_percent:3}% | {response.message}")
+            
+            if response.records_processed > 0:
+                print(f"                    Records: {response.records_processed:,}")
+            
+            # 완료 시 CSV 파일 표시
+            if response.csv_files:
+                print("\nGenerated CSV files:")
+                for file in response.csv_files:
+                    print(f"  - {file}")
+            
+            # 성공/실패 처리
+            if response.stage == 4:  # COMPLETED
+                if response.HasField('success') and response.success:
+                    print("\n✅ CSV conversion completed successfully!")
+                else:
+                    print("\n✅ CSV conversion completed!")
+                break
+            elif response.stage == 5:  # FAILED
+                error_msg = response.error if response.HasField('error') else "Unknown error"
+                print(f"\n❌ CSV conversion failed: {error_msg}")
+                break
+        
+    except grpc.RpcError as e:
+        print(f"\n❌ RPC Error: {e.code()}: {e.details()}")
+
+
 def main():
     # gRPC 서버 주소
     server_address = "localhost:50051"
@@ -161,6 +239,9 @@ def main():
         print("  Process logs:")
         print("    python client.py process <source_bucket> <source_path> <target_bucket> <target_path> [log_type] [chunk_size]")
         print("  ")
+        print("  Convert to CSV:")
+        print("    python client.py csv <source_bucket> <source_parquet_path> <target_bucket> <target_csv_path> [csv_prefix]")
+        print("  ")
         print("  Get job status:")
         print("    python client.py status <job_id>")
         print("  ")
@@ -169,6 +250,8 @@ def main():
         print()
         print("Examples:")
         print("  python client.py process trace-logs logs/trace.csv trace-parquet output/data ufs 100000")
+        print("  python client.py csv trace output/parquet/ufs.parquet trace output/csv")
+        print("  python client.py csv trace output/parquet/ufs.parquet trace output/csv myprefix")
         print("  python client.py status 12345678-1234-1234-1234-123456789abc")
         print("  python client.py list trace-logs logs/")
         sys.exit(1)
@@ -194,6 +277,20 @@ def main():
             
             process_logs(stub, source_bucket, source_path, target_bucket, target_path, log_type, chunk_size)
             
+        elif command == "csv":
+            if len(sys.argv) < 6:
+                print("Error: 'csv' command requires 4 arguments")
+                print("Usage: python client.py csv <source_bucket> <source_parquet_path> <target_bucket> <target_csv_path> [csv_prefix]")
+                sys.exit(1)
+            
+            source_bucket = sys.argv[2]
+            source_parquet_path = sys.argv[3]
+            target_bucket = sys.argv[4]
+            target_csv_path = sys.argv[5]
+            csv_prefix = sys.argv[6] if len(sys.argv) > 6 else None
+            
+            convert_to_csv(stub, source_bucket, source_parquet_path, target_bucket, target_csv_path, csv_prefix)
+            
         elif command == "status":
             if len(sys.argv) < 3:
                 print("Error: 'status' command requires job_id")
@@ -215,7 +312,7 @@ def main():
             
         else:
             print(f"Unknown command: {command}")
-            print("Available commands: process, status, list")
+            print("Available commands: process, csv, status, list")
             sys.exit(1)
 
 

@@ -7,10 +7,11 @@ use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::{transport::Server, Request, Response, Status};
 use uuid::Uuid;
 
-use crate::output::save_to_parquet;
+use crate::output::{save_to_csv, save_to_parquet};
 use crate::parsers::parse_log_file_high_perf;
 use crate::storage::minio_client::{MinioAsyncClient, MinioConfig};
 use crate::utils::compression::{extract_and_find_log, CompressionFormat};
+use crate::{read_block_from_parquet, read_ufs_from_parquet, read_ufscustom_from_parquet};
 use crate::TraceType;
 
 pub mod log_processor {
@@ -19,7 +20,8 @@ pub mod log_processor {
 
 use log_processor::log_processor_server::{LogProcessor, LogProcessorServer};
 use log_processor::{
-    JobStatusRequest, JobStatusResponse, ListFilesRequest, ListFilesResponse, ProcessLogsProgress,
+    ConvertToCsvProgress, ConvertToCsvRequest, CsvConversionStage, JobStatusRequest,
+    JobStatusResponse, ListFilesRequest, ListFilesResponse, ProcessLogsProgress,
     ProcessLogsRequest, ProgressStage,
 };
 
@@ -514,12 +516,276 @@ impl LogProcessorService {
             );
         }
     }
+
+    async fn convert_to_csv_internal(
+        &self,
+        job_id: String,
+        request: ConvertToCsvRequest,
+        tx: mpsc::Sender<Result<ConvertToCsvProgress, Status>>,
+    ) {
+        let result: Result<Vec<String>, String> = async {
+            // 1단계: MinIO에서 Parquet 파일 다운로드
+            println!("[CSV JOB: {}] Starting CSV conversion...", job_id);
+            if tx
+                .send(Ok(ConvertToCsvProgress {
+                    job_id: job_id.clone(),
+                    stage: CsvConversionStage::CsvStageDownloading as i32,
+                    message: format!(
+                        "Downloading Parquet from {}/{}",
+                        request.source_bucket, request.source_parquet_path
+                    ),
+                    progress_percent: 10,
+                    records_processed: 0,
+                    success: None,
+                    error: None,
+                    csv_files: vec![],
+                }))
+                .await
+                .is_err()
+            {
+                return Err("Client disconnected during download".to_string());
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+            // Parquet 타입 감지 (파일명에서)
+            let trace_type = if request.source_parquet_path.contains("ufs.parquet") {
+                "ufs"
+            } else if request.source_parquet_path.contains("block.parquet") {
+                "block"
+            } else if request.source_parquet_path.contains("ufscustom.parquet") {
+                "ufscustom"
+            } else {
+                return Err(
+                    "Cannot detect trace type. Use ufs.parquet, block.parquet, or ufscustom.parquet in filename"
+                        .to_string(),
+                );
+            };
+
+            let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            let temp_parquet_file = format!("{}/trace_temp_{}.parquet", home_dir, job_id);
+
+            // MinIO에서 Parquet 다운로드
+            let source_config = MinioConfig {
+                endpoint: self.minio_config.endpoint.clone(),
+                access_key: self.minio_config.access_key.clone(),
+                secret_key: self.minio_config.secret_key.clone(),
+                bucket: request.source_bucket.clone(),
+                region: self.minio_config.region.clone(),
+            };
+
+            let client = MinioAsyncClient::new(&source_config).map_err(|e| e.to_string())?;
+            client
+                .download_file(&request.source_parquet_path, &temp_parquet_file)
+                .await
+                .map_err(|e| format!("Failed to download Parquet: {}", e))?;
+
+            if tx
+                .send(Ok(ConvertToCsvProgress {
+                    job_id: job_id.clone(),
+                    stage: CsvConversionStage::CsvStageDownloading as i32,
+                    message: "Download completed".to_string(),
+                    progress_percent: 30,
+                    records_processed: 0,
+                    success: None,
+                    error: None,
+                    csv_files: vec![],
+                }))
+                .await
+                .is_err()
+            {
+                return Err("Client disconnected".to_string());
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+            // 2단계: Parquet을 CSV로 변환
+            if tx
+                .send(Ok(ConvertToCsvProgress {
+                    job_id: job_id.clone(),
+                    stage: CsvConversionStage::CsvStageConverting as i32,
+                    message: format!("Converting {} Parquet to CSV", trace_type),
+                    progress_percent: 40,
+                    records_processed: 0,
+                    success: None,
+                    error: None,
+                    csv_files: vec![],
+                }))
+                .await
+                .is_err()
+            {
+                return Err("Client disconnected".to_string());
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+            // CSV 디렉토리 생성
+            let temp_csv_dir = format!("{}/trace_csv_{}", home_dir, job_id);
+            tokio::fs::create_dir_all(&temp_csv_dir)
+                .await
+                .map_err(|e| format!("Failed to create CSV directory: {}", e))?;
+
+            // CSV 파일 prefix 결정 (사용자 지정 또는 trace_type 사용)
+            let csv_prefix = request.csv_prefix.unwrap_or_else(|| trace_type.to_string());
+            let temp_csv_prefix = format!("{}/{}", temp_csv_dir, csv_prefix);
+            
+            let records_count = match trace_type {
+                "ufs" => {
+                    let ufs_traces = read_ufs_from_parquet(&temp_parquet_file)
+                        .map_err(|e| format!("Failed to read UFS parquet: {}", e))?;
+                    let count = ufs_traces.len() as i64;
+                    save_to_csv(&ufs_traces, &[], &[], &temp_csv_prefix)
+                        .map_err(|e| format!("Failed to save CSV: {}", e))?;
+                    count
+                }
+                "block" => {
+                    let block_traces = read_block_from_parquet(&temp_parquet_file)
+                        .map_err(|e| format!("Failed to read Block parquet: {}", e))?;
+                    let count = block_traces.len() as i64;
+                    save_to_csv(&[], &block_traces, &[], &temp_csv_prefix)
+                        .map_err(|e| format!("Failed to save CSV: {}", e))?;
+                    count
+                }
+                "ufscustom" => {
+                    let ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
+                        .map_err(|e| format!("Failed to read UFSCUSTOM parquet: {}", e))?;
+                    let count = ufscustom_traces.len() as i64;
+                    save_to_csv(&[], &[], &ufscustom_traces, &temp_csv_prefix)
+                        .map_err(|e| format!("Failed to save CSV: {}", e))?;
+                    count
+                }
+                _ => return Err(format!("Unsupported trace type: {}", trace_type)),
+            };
+
+            if tx
+                .send(Ok(ConvertToCsvProgress {
+                    job_id: job_id.clone(),
+                    stage: CsvConversionStage::CsvStageConverting as i32,
+                    message: "CSV conversion completed".to_string(),
+                    progress_percent: 60,
+                    records_processed: records_count,
+                    success: None,
+                    error: None,
+                    csv_files: vec![],
+                }))
+                .await
+                .is_err()
+            {
+                return Err("Client disconnected".to_string());
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+            // 3단계: CSV 파일들을 MinIO에 업로드
+            if tx
+                .send(Ok(ConvertToCsvProgress {
+                    job_id: job_id.clone(),
+                    stage: CsvConversionStage::CsvStageUploading as i32,
+                    message: "Uploading CSV files to MinIO".to_string(),
+                    progress_percent: 70,
+                    records_processed: records_count,
+                    success: None,
+                    error: None,
+                    csv_files: vec![],
+                }))
+                .await
+                .is_err()
+            {
+                return Err("Client disconnected".to_string());
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+            let target_config = MinioConfig {
+                endpoint: self.minio_config.endpoint.clone(),
+                access_key: self.minio_config.access_key.clone(),
+                secret_key: self.minio_config.secret_key.clone(),
+                bucket: request.target_bucket.clone(),
+                region: self.minio_config.region.clone(),
+            };
+
+            let target_client =
+                MinioAsyncClient::new(&target_config).map_err(|e| e.to_string())?;
+
+            // 생성된 모든 CSV 파일들을 찾아서 업로드
+            let csv_pattern = format!("{}/*.csv", temp_csv_dir);
+            let mut uploaded_files = vec![];
+
+            for entry in glob::glob(&csv_pattern)
+                .map_err(|e| format!("Failed to parse glob pattern: {}", e))?
+            {
+                match entry {
+                    Ok(csv_path) => {
+                        let filename = csv_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .ok_or("Invalid filename")?;
+
+                        let remote_csv_path = format!(
+                            "{}/{}",
+                            request.target_csv_path.trim_end_matches('/'),
+                            filename
+                        );
+
+                        target_client
+                            .upload_file(csv_path.to_str().unwrap(), &remote_csv_path)
+                            .await
+                            .map_err(|e| format!("Failed to upload CSV: {}", e))?;
+
+                        println!("  Uploaded: {}", remote_csv_path);
+                        uploaded_files.push(remote_csv_path);
+                    }
+                    Err(e) => eprintln!("Error processing CSV file: {}", e),
+                }
+            }
+
+            // 임시 CSV 디렉토리 삭제
+            let _ = tokio::fs::remove_dir_all(&temp_csv_dir).await;
+
+            // 임시 Parquet 파일 삭제
+            let _ = tokio::fs::remove_file(&temp_parquet_file).await;
+
+            Ok(uploaded_files)
+        }
+        .await;
+
+        // 결과 전송
+        match result {
+            Ok(csv_files) => {
+                println!("[CSV JOB: {}] CSV conversion completed successfully", job_id);
+                let _ = tx
+                    .send(Ok(ConvertToCsvProgress {
+                        job_id: job_id.clone(),
+                        stage: CsvConversionStage::CsvStageCompleted as i32,
+                        message: "CSV conversion completed successfully".to_string(),
+                        progress_percent: 100,
+                        records_processed: 0,
+                        success: Some(true),
+                        error: None,
+                        csv_files,
+                    }))
+                    .await;
+            }
+            Err(error_msg) => {
+                eprintln!("[CSV JOB: {}] CSV conversion failed: {}", job_id, error_msg);
+                let _ = tx
+                    .send(Ok(ConvertToCsvProgress {
+                        job_id: job_id.clone(),
+                        stage: CsvConversionStage::CsvStageFailed as i32,
+                        message: "CSV conversion failed".to_string(),
+                        progress_percent: 0,
+                        records_processed: 0,
+                        success: Some(false),
+                        error: Some(error_msg),
+                        csv_files: vec![],
+                    }))
+                    .await;
+            }
+        }
+    }
 }
 
 #[tonic::async_trait]
 impl LogProcessor for LogProcessorService {
     type ProcessLogsStream =
         Pin<Box<dyn Stream<Item = Result<ProcessLogsProgress, Status>> + Send>>;
+    type ConvertToCsvStream =
+        Pin<Box<dyn Stream<Item = Result<ConvertToCsvProgress, Status>> + Send>>;
 
     async fn process_logs(
         &self,
@@ -608,6 +874,37 @@ impl LogProcessor for LogProcessorService {
             .map_err(|e| Status::internal(format!("Failed to list files: {}", e)))?;
 
         Ok(Response::new(ListFilesResponse { files }))
+    }
+
+    async fn convert_to_csv(
+        &self,
+        request: Request<ConvertToCsvRequest>,
+    ) -> Result<Response<Self::ConvertToCsvStream>, Status> {
+        let req = request.into_inner();
+        let job_id = Uuid::new_v4().to_string();
+
+        // 채널 생성 (버퍼 크기 1로 백프레셔 제어)
+        let (tx, rx) = mpsc::channel(1);
+
+        println!(
+            "[Job: {}] CSV conversion request received: {} -> {}",
+            job_id, req.source_parquet_path, req.target_csv_path
+        );
+
+        // 백그라운드에서 처리
+        let service = self.clone();
+        let job_id_clone = job_id.clone();
+        tokio::spawn(async move {
+            service
+                .convert_to_csv_internal(job_id_clone, req, tx)
+                .await;
+        });
+
+        // 스트림 반환
+        let output_stream = ReceiverStream::new(rx);
+        Ok(Response::new(
+            Box::pin(output_stream) as Self::ConvertToCsvStream
+        ))
     }
 }
 

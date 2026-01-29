@@ -7,6 +7,9 @@ service LogProcessor {
   // 로그 파일을 파싱하고 Parquet으로 변환하여 업로드 (스트리밍 응답으로 진행상황 전달)
   rpc ProcessLogs(ProcessLogsRequest) returns (stream ProcessLogsProgress);
   
+  // Parquet 파일을 CSV로 변환하여 업로드 (스트리밍 응답으로 진행상황 전달)
+  rpc ConvertToCsv(ConvertToCsvRequest) returns (stream ConvertToCsvProgress);
+  
   // 작업 상태 조회
   rpc GetJobStatus(JobStatusRequest) returns (JobStatusResponse);
   
@@ -99,4 +102,59 @@ message ListFilesRequest {
 // 파일 목록 응답
 message ListFilesResponse {
   repeated string files = 1;
+}
+
+// CSV 변환 요청
+message ConvertToCsvRequest {
+  // 소스 버킷 이름
+  string source_bucket = 1;
+  
+  // 소스 Parquet 파일 경로
+  string source_parquet_path = 2;
+  
+  // 타겟 버킷 이름
+  string target_bucket = 3;
+  
+  // CSV가 저장될 경로
+  string target_csv_path = 4;
+  
+  // CSV 파일 prefix (옵션, 기본값: trace_type)
+  optional string csv_prefix = 5;
+}
+
+// CSV 변환 진행 상황 (스트리밍)
+message ConvertToCsvProgress {
+  // 작업 ID
+  string job_id = 1;
+  
+  // 진행 단계
+  CsvConversionStage stage = 2;
+  
+  // 진행 메시지
+  string message = 3;
+  
+  // 진행률 (0-100)
+  int32 progress_percent = 4;
+  
+  // 처리된 레코드 수
+  int64 records_processed = 5;
+  
+  // 성공 여부 (완료시에만)
+  optional bool success = 6;
+  
+  // 에러 메시지 (실패시에만)
+  optional string error = 7;
+  
+  // 생성된 CSV 파일 경로들
+  repeated string csv_files = 8;
+}
+
+// CSV 변환 진행 단계
+enum CsvConversionStage {
+  CSV_STAGE_UNKNOWN = 0;
+  CSV_STAGE_DOWNLOADING = 1;
+  CSV_STAGE_CONVERTING = 2;
+  CSV_STAGE_UPLOADING = 3;
+  CSV_STAGE_COMPLETED = 4;
+  CSV_STAGE_FAILED = 5;
 }
