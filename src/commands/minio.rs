@@ -4,6 +4,7 @@ use crate::processors;
 use crate::storage::minio_client::{
     download_log_from_minio, download_parquet_from_minio, upload_parquet_to_minio, MinioConfig,
 };
+use crate::utils::filter::FilterOptions;
 use crate::TraceType;
 use crate::{print_block_statistics, print_ufs_statistics, print_ufscustom_statistics};
 use crate::{read_block_from_parquet, read_ufs_from_parquet, read_ufscustom_from_parquet};
@@ -16,6 +17,7 @@ pub fn handle_minio_log_to_parquet(
     remote_log_path: &str,
     remote_output_path: &str,
     chunk_size: usize,
+    filter_options: Option<FilterOptions>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n===== Starting MinIO Log to Parquet =====\n");
     let total_start = Instant::now();
@@ -60,16 +62,34 @@ pub fn handle_minio_log_to_parquet(
         ufscustom_traces.len()
     );
 
+    // 필터 적용
+    let (ufs_traces, block_traces, ufscustom_traces) = if let Some(ref filter) = filter_options {
+        println!("\n[Applying Filters]...");
+        use crate::utils::filter::{filter_ufs_data, filter_block_data, filter_ufscustom_data};
+        let filtered_ufs = filter_ufs_data(ufs_traces, filter);
+        let filtered_block = filter_block_data(block_traces, filter);
+        let filtered_ufscustom = filter_ufscustom_data(ufscustom_traces, filter);
+        println!(
+            "  After filtering - UFS: {}, Block: {}, UFSCUSTOM: {}",
+            filtered_ufs.len(),
+            filtered_block.len(),
+            filtered_ufscustom.len()
+        );
+        (filtered_ufs, filtered_block, filtered_ufscustom)
+    } else {
+        (ufs_traces, block_traces, ufscustom_traces)
+    };
+
     println!("\n[3/4] Processing bottom-half latencies...");
     let process_start = Instant::now();
 
-    let ufs_traces = if !ufs_traces.is_empty() {
+    let ufs_traces_processed = if !ufs_traces.is_empty() {
         processors::ufs_bottom_half_latency_process(ufs_traces)
     } else {
         ufs_traces
     };
 
-    let block_traces = if !block_traces.is_empty() {
+    let block_traces_processed = if !block_traces.is_empty() {
         processors::block_bottom_half_latency_process(block_traces)
     } else {
         block_traces
@@ -83,8 +103,8 @@ pub fn handle_minio_log_to_parquet(
     println!("\n[4/4] Saving to Parquet and uploading to MinIO...");
     let temp_output_prefix = "/tmp/trace_temp_output";
     save_to_parquet(
-        &ufs_traces,
-        &block_traces,
+        &ufs_traces_processed,
+        &block_traces_processed,
         &ufscustom_traces,
         temp_output_prefix,
         chunk_size,
@@ -156,6 +176,7 @@ pub fn handle_minio_parquet_analysis(
     remote_parquet_path: &str,
     local_output_prefix: &str,
     y_axis_ranges: Option<HashMap<String, (f64, f64)>>,
+    filter_options: Option<FilterOptions>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n===== Starting MinIO Parquet Analysis =====\n");
     let total_start = Instant::now();
@@ -186,13 +207,21 @@ pub fn handle_minio_parquet_analysis(
 
     match trace_type {
         "ufs" => {
-            let ufs_traces = read_ufs_from_parquet(&temp_parquet_file)
+            let mut ufs_traces = read_ufs_from_parquet(&temp_parquet_file)
                 .map_err(|e| format!("Failed to read UFS parquet: {}", e))?;
             println!(
                 "UFS Parquet loaded: {} events (Time: {:.2}s)",
                 ufs_traces.len(),
                 load_start.elapsed().as_secs_f64()
             );
+
+            // 필터 적용
+            if let Some(ref filter) = filter_options {
+                println!("\n[Applying Filters]...");
+                use crate::utils::filter::filter_ufs_data;
+                ufs_traces = filter_ufs_data(ufs_traces, filter);
+                println!("  After filtering - UFS: {} events", ufs_traces.len());
+            }
 
             println!("\n[3/3] Generating statistics and charts...");
             let stats_start = Instant::now();
@@ -220,13 +249,21 @@ pub fn handle_minio_parquet_analysis(
             );
         }
         "block" => {
-            let block_traces = read_block_from_parquet(&temp_parquet_file)
+            let mut block_traces = read_block_from_parquet(&temp_parquet_file)
                 .map_err(|e| format!("Failed to read Block parquet: {}", e))?;
             println!(
                 "Block Parquet loaded: {} events (Time: {:.2}s)",
                 block_traces.len(),
                 load_start.elapsed().as_secs_f64()
             );
+
+            // 필터 적용
+            if let Some(ref filter) = filter_options {
+                println!("\n[Applying Filters]...");
+                use crate::utils::filter::filter_block_data;
+                block_traces = filter_block_data(block_traces, filter);
+                println!("  After filtering - Block: {} events", block_traces.len());
+            }
 
             println!("\n[3/3] Generating statistics and charts...");
             let stats_start = Instant::now();
@@ -254,13 +291,21 @@ pub fn handle_minio_parquet_analysis(
             );
         }
         "ufscustom" => {
-            let ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
+            let mut ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
                 .map_err(|e| format!("Failed to read UFSCUSTOM parquet: {}", e))?;
             println!(
                 "UFSCUSTOM Parquet loaded: {} events (Time: {:.2}s)",
                 ufscustom_traces.len(),
                 load_start.elapsed().as_secs_f64()
             );
+
+            // 필터 적용
+            if let Some(ref filter) = filter_options {
+                println!("\n[Applying Filters]...");
+                use crate::utils::filter::filter_ufscustom_data;
+                ufscustom_traces = filter_ufscustom_data(ufscustom_traces, filter);
+                println!("  After filtering - UFSCUSTOM: {} events", ufscustom_traces.len());
+            }
 
             println!("\n[3/3] Generating statistics and charts...");
             let stats_start = Instant::now();
@@ -310,6 +355,7 @@ pub fn handle_minio_parquet_analysis(
 pub fn handle_minio_parquet_to_csv(
     remote_parquet_path: &str,
     remote_csv_path: &str,
+    filter_options: Option<FilterOptions>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n===== Starting MinIO Parquet to CSV =====\n");
     let total_start = Instant::now();
@@ -348,7 +394,7 @@ pub fn handle_minio_parquet_to_csv(
 
     match trace_type {
         "ufs" => {
-            let ufs_traces = read_ufs_from_parquet(&temp_parquet_file)
+            let mut ufs_traces = read_ufs_from_parquet(&temp_parquet_file)
                 .map_err(|e| format!("Failed to read UFS parquet: {e}"))?;
 
             println!(
@@ -357,12 +403,20 @@ pub fn handle_minio_parquet_to_csv(
                 load_start.elapsed().as_secs_f64()
             );
 
+            // 필터 적용
+            if let Some(ref filter) = filter_options {
+                println!("\n[Applying Filters]...");
+                use crate::utils::filter::filter_ufs_data;
+                ufs_traces = filter_ufs_data(ufs_traces, filter);
+                println!("  After filtering - UFS: {} records", ufs_traces.len());
+            }
+
             // CSV 저장
             save_to_csv(&ufs_traces, &[], &[], &temp_csv_prefix)?;
             println!("CSV conversion completed");
         }
         "block" => {
-            let block_traces = read_block_from_parquet(&temp_parquet_file)
+            let mut block_traces = read_block_from_parquet(&temp_parquet_file)
                 .map_err(|e| format!("Failed to read Block parquet: {e}"))?;
 
             println!(
@@ -371,12 +425,20 @@ pub fn handle_minio_parquet_to_csv(
                 load_start.elapsed().as_secs_f64()
             );
 
+            // 필터 적용
+            if let Some(ref filter) = filter_options {
+                println!("\n[Applying Filters]...");
+                use crate::utils::filter::filter_block_data;
+                block_traces = filter_block_data(block_traces, filter);
+                println!("  After filtering - Block: {} records", block_traces.len());
+            }
+
             // CSV 저장
             save_to_csv(&[], &block_traces, &[], &temp_csv_prefix)?;
             println!("CSV conversion completed");
         }
         "ufscustom" => {
-            let ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
+            let mut ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
                 .map_err(|e| format!("Failed to read UFSCUSTOM parquet: {e}"))?;
 
             println!(
@@ -384,6 +446,14 @@ pub fn handle_minio_parquet_to_csv(
                 ufscustom_traces.len(),
                 load_start.elapsed().as_secs_f64()
             );
+
+            // 필터 적용
+            if let Some(ref filter) = filter_options {
+                println!("\n[Applying Filters]...");
+                use crate::utils::filter::filter_ufscustom_data;
+                ufscustom_traces = filter_ufscustom_data(ufscustom_traces, filter);
+                println!("  After filtering - UFSCUSTOM: {} records", ufscustom_traces.len());
+            }
 
             // CSV 저장
             save_to_csv(&[], &[], &ufscustom_traces, &temp_csv_prefix)?;

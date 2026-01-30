@@ -308,7 +308,7 @@ fn print_usage(program: &str) {
     eprintln!("    where <type> is one of: 'ufs', 'block'");
 
     eprintln!("  {program} --migrate <path> [migration_options]                      - Migrate existing Parquet files to new schema");
-    eprintln!("\nMinIO Integration:");
+    eprintln!("\nMinIO Integration (supports --filter options):");
     eprintln!("  {program} --minio-log <remote_log_path> <remote_output_path>        - Read log from MinIO, generate Parquet, upload to MinIO (no stats/charts)");
     eprintln!("  {program} --minio-analyze <remote_parquet_path> <local_output_prefix> - Download Parquet from MinIO, analyze and generate charts");
     eprintln!("  {program} --minio-csv <remote_parquet_path> <remote_csv_path>       - Download Parquet from MinIO, convert to CSV, upload to MinIO");
@@ -581,7 +581,17 @@ fn main() -> io::Result<()> {
                 let remote_log_path = &args[i + 1];
                 let remote_output_path = &args[i + 2];
 
-                match handle_minio_log_to_parquet(remote_log_path, remote_output_path, chunk_size) {
+                // 필터 옵션이 있으면 출력
+                if use_filter {
+                    println!("\nApplying filters to MinIO log processing...");
+                }
+
+                match handle_minio_log_to_parquet(
+                    remote_log_path,
+                    remote_output_path,
+                    chunk_size,
+                    if use_filter { Some(filter_options.clone()) } else { None },
+                ) {
                     Ok(_) => println!("MinIO log to Parquet completed successfully"),
                     Err(e) => eprintln!("MinIO log to Parquet failed: {e}"),
                 }
@@ -599,10 +609,16 @@ fn main() -> io::Result<()> {
                 let remote_parquet_path = &args[i + 1];
                 let local_output_prefix = &args[i + 2];
 
+                // 필터 옵션이 있으면 출력
+                if use_filter {
+                    println!("\nApplying filters to MinIO analysis...");
+                }
+
                 match handle_minio_parquet_analysis(
                     remote_parquet_path,
                     local_output_prefix,
                     y_axis_ranges,
+                    if use_filter { Some(filter_options.clone()) } else { None },
                 ) {
                     Ok(_) => println!("MinIO Parquet analysis completed successfully"),
                     Err(e) => eprintln!("MinIO Parquet analysis failed: {e}"),
@@ -626,9 +642,15 @@ fn main() -> io::Result<()> {
                 let remote_parquet_path = &args[i + 1];
                 let remote_csv_path = &args[i + 2];
 
+                // 필터 옵션이 있으면 출력
+                if use_filter {
+                    println!("\nApplying filters to MinIO CSV export...");
+                }
+
                 match trace::commands::minio::handle_minio_parquet_to_csv(
                     remote_parquet_path,
                     remote_csv_path,
+                    if use_filter { Some(filter_options.clone()) } else { None },
                 ) {
                     Ok(_) => println!("MinIO Parquet to CSV completed successfully"),
                     Err(e) => eprintln!("MinIO Parquet to CSV failed: {e}"),
