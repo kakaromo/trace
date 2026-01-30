@@ -11,6 +11,7 @@ use crate::output::{save_to_csv, save_to_parquet};
 use crate::parsers::parse_log_file_high_perf;
 use crate::storage::minio_client::{MinioAsyncClient, MinioConfig};
 use crate::utils::compression::{extract_and_find_log, CompressionFormat};
+use crate::utils::filter::FilterOptions;
 use crate::{read_block_from_parquet, read_ufs_from_parquet, read_ufscustom_from_parquet};
 use crate::TraceType;
 
@@ -55,6 +56,27 @@ impl LogProcessorService {
     fn update_job_status(&self, job_id: &str, status: JobStatus) {
         let mut jobs = self.jobs.lock().unwrap();
         jobs.insert(job_id.to_string(), status);
+    }
+
+    // proto FilterOptions를 Rust FilterOptions로 변환
+    fn convert_filter_options(
+        proto_filter: Option<log_processor::FilterOptions>,
+    ) -> Option<FilterOptions> {
+        proto_filter.map(|f| FilterOptions {
+            start_time: f.start_time,
+            end_time: f.end_time,
+            start_sector: f.start_sector,
+            end_sector: f.end_sector,
+            min_dtoc: f.min_dtoc,
+            max_dtoc: f.max_dtoc,
+            min_ctoc: f.min_ctoc,
+            max_ctoc: f.max_ctoc,
+            min_ctod: f.min_ctod,
+            max_ctod: f.max_ctod,
+            min_qd: f.min_qd,
+            max_qd: f.max_qd,
+            cpu_list: f.cpu_list,
+        })
     }
 
     async fn process_logs_internal(
@@ -282,6 +304,29 @@ impl LogProcessorService {
             println!("[PROGRESS] Parsing completed message sent successfully");
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
+            // 필터 적용
+            let filter_options = Self::convert_filter_options(request.filter);
+            let (ufs_traces, block_traces, ufscustom_traces) =
+                if let Some(ref filter) = filter_options {
+                    println!("[FILTER] Applying filters...");
+                    use crate::utils::filter::{
+                        filter_block_data, filter_ufs_data, filter_ufscustom_data,
+                    };
+                    let filtered_ufs = filter_ufs_data(ufs_traces, filter);
+                    let filtered_block = filter_block_data(block_traces, filter);
+                    let filtered_ufscustom = filter_ufscustom_data(ufscustom_traces, filter);
+                    let filtered_count = filtered_ufs.len() + filtered_block.len() + filtered_ufscustom.len();
+                    println!(
+                        "[FILTER] After filtering - Total: {} (UFS: {}, Block: {}, UFSCUSTOM: {})",
+                        filtered_count, filtered_ufs.len(), filtered_block.len(), filtered_ufscustom.len()
+                    );
+                    (filtered_ufs, filtered_block, filtered_ufscustom)
+                } else {
+                    (ufs_traces, block_traces, ufscustom_traces)
+                };
+
+            let filtered_records = ufs_traces.len() + block_traces.len() + ufscustom_traces.len();
+
             self.update_job_status(
                 &job_id,
                 JobStatus {
@@ -289,7 +334,7 @@ impl LogProcessorService {
                     stage: ProgressStage::StageParsing as i32,
                     message: "Parsing completed".to_string(),
                     progress_percent: 50,
-                    records_processed: total_records as i64,
+                    records_processed: filtered_records as i64,
                     is_completed: false,
                     success: None,
                     error: None,
@@ -626,26 +671,53 @@ impl LogProcessorService {
             let csv_prefix = request.csv_prefix.unwrap_or_else(|| trace_type.to_string());
             let temp_csv_prefix = format!("{}/{}", temp_csv_dir, csv_prefix);
             
+            // 필터 옵션 변환
+            let filter_options = Self::convert_filter_options(request.filter);
+            
             let records_count = match trace_type {
                 "ufs" => {
-                    let ufs_traces = read_ufs_from_parquet(&temp_parquet_file)
+                    let mut ufs_traces = read_ufs_from_parquet(&temp_parquet_file)
                         .map_err(|e| format!("Failed to read UFS parquet: {}", e))?;
+                    
+                    // 필터 적용
+                    if let Some(ref filter) = filter_options {
+                        use crate::utils::filter::filter_ufs_data;
+                        ufs_traces = filter_ufs_data(ufs_traces, filter);
+                        println!("[FILTER] After filtering - UFS: {}", ufs_traces.len());
+                    }
+                    
                     let count = ufs_traces.len() as i64;
                     save_to_csv(&ufs_traces, &[], &[], &temp_csv_prefix)
                         .map_err(|e| format!("Failed to save CSV: {}", e))?;
                     count
                 }
                 "block" => {
-                    let block_traces = read_block_from_parquet(&temp_parquet_file)
+                    let mut block_traces = read_block_from_parquet(&temp_parquet_file)
                         .map_err(|e| format!("Failed to read Block parquet: {}", e))?;
+                    
+                    // 필터 적용
+                    if let Some(ref filter) = filter_options {
+                        use crate::utils::filter::filter_block_data;
+                        block_traces = filter_block_data(block_traces, filter);
+                        println!("[FILTER] After filtering - Block: {}", block_traces.len());
+                    }
+                    
                     let count = block_traces.len() as i64;
                     save_to_csv(&[], &block_traces, &[], &temp_csv_prefix)
                         .map_err(|e| format!("Failed to save CSV: {}", e))?;
                     count
                 }
                 "ufscustom" => {
-                    let ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
+                    let mut ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
                         .map_err(|e| format!("Failed to read UFSCUSTOM parquet: {}", e))?;
+                    
+                    // 필터 적용
+                    if let Some(ref filter) = filter_options {
+                        use crate::utils::filter::filter_ufscustom_data;
+                        ufscustom_traces = filter_ufscustom_data(ufscustom_traces, filter);
+                        println!("[FILTER] After filtering - UFSCUSTOM: {}", ufscustom_traces.len());
+                    }
+                    
                     let count = ufscustom_traces.len() as i64;
                     save_to_csv(&[], &[], &ufscustom_traces, &temp_csv_prefix)
                         .map_err(|e| format!("Failed to save CSV: {}", e))?;

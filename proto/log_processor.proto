@@ -36,6 +36,9 @@ message ProcessLogsRequest {
   
   // 청크 크기 (옵션, 기본값: 100000)
   optional int32 chunk_size = 6;
+  
+  // 필터 옵션 (옵션)
+  optional FilterOptions filter = 7;
 }
 
 // 로그 처리 진행 상황 (스트리밍)
@@ -120,6 +123,9 @@ message ConvertToCsvRequest {
   
   // CSV 파일 prefix (옵션, 기본값: trace_type)
   optional string csv_prefix = 5;
+  
+  // 필터 옵션 (옵션)
+  optional FilterOptions filter = 6;
 }
 
 // CSV 변환 진행 상황 (스트리밍)
@@ -157,4 +163,46 @@ enum CsvConversionStage {
   CSV_STAGE_UPLOADING = 3;
   CSV_STAGE_COMPLETED = 4;
   CSV_STAGE_FAILED = 5;
+}
+
+// 필터링 옵션
+message FilterOptions {
+  // 시작 시간 (ms)
+  double start_time = 1;
+  
+  // 종료 시간 (ms)
+  double end_time = 2;
+  
+  // 시작 섹터/LBA
+  uint64 start_sector = 3;
+  
+  // 종료 섹터/LBA
+  uint64 end_sector = 4;
+  
+  // 최소 Device to Complete 레이턴시 (ms)
+  double min_dtoc = 5;
+  
+  // 최대 Device to Complete 레이턴시 (ms)
+  double max_dtoc = 6;
+  
+  // 최소 Complete to Complete 레이턴시 (ms)
+  double min_ctoc = 7;
+  
+  // 최대 Complete to Complete 레이턴시 (ms)
+  double max_ctoc = 8;
+  
+  // 최소 Complete to Device 레이턴시 (ms)
+  double min_ctod = 9;
+  
+  // 최대 Complete to Device 레이턴시 (ms)
+  double max_ctod = 10;
+  
+  // 최소 Queue Depth
+  uint32 min_qd = 11;
+  
+  // 최대 Queue Depth
+  uint32 max_qd = 12;
+  
+  // 필터링할 CPU 번호 목록
+  repeated uint32 cpu_list = 13;
 }

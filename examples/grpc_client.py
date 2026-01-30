@@ -14,6 +14,41 @@ import log_processor_pb2
 import log_processor_pb2_grpc
 
 
+def create_filter_options(
+    start_time: float = 0.0,
+    end_time: float = 0.0,
+    start_sector: int = 0,
+    end_sector: int = 0,
+    min_dtoc: float = 0.0,
+    max_dtoc: float = 0.0,
+    min_ctoc: float = 0.0,
+    max_ctoc: float = 0.0,
+    min_ctod: float = 0.0,
+    max_ctod: float = 0.0,
+    min_qd: int = 0,
+    max_qd: int = 0,
+    cpu_list: list = None,
+) -> log_processor_pb2.FilterOptions:
+    """필터 옵션 생성 헬퍼 함수"""
+    filter_opts = log_processor_pb2.FilterOptions(
+        start_time=start_time,
+        end_time=end_time,
+        start_sector=start_sector,
+        end_sector=end_sector,
+        min_dtoc=min_dtoc,
+        max_dtoc=max_dtoc,
+        min_ctoc=min_ctoc,
+        max_ctoc=max_ctoc,
+        min_ctod=min_ctod,
+        max_ctod=max_ctod,
+        min_qd=min_qd,
+        max_qd=max_qd,
+    )
+    if cpu_list:
+        filter_opts.cpu_list.extend(cpu_list)
+    return filter_opts
+
+
 def process_logs(
     stub: log_processor_pb2_grpc.LogProcessorStub,
     source_bucket: str,
@@ -22,6 +57,7 @@ def process_logs(
     target_path: str,
     log_type: str = "auto",
     chunk_size: int = 100000,
+    filter_options: log_processor_pb2.FilterOptions = None,
 ) -> None:
     """로그 파일 처리 요청 및 진행 상황 모니터링"""
     
@@ -33,12 +69,18 @@ def process_logs(
         log_type=log_type,
         chunk_size=chunk_size,
     )
+    
+    # 필터 옵션이 지정된 경우에만 설정
+    if filter_options:
+        request.filter.CopyFrom(filter_options)
 
     print(f"Processing logs:")
     print(f"  Source: {source_bucket}/{source_path}")
     print(f"  Target: {target_bucket}/{target_path}")
     print(f"  Type: {log_type}")
     print(f"  Chunk Size: {chunk_size}")
+    if filter_options:
+        print(f"  Filter: Applied")
     print()
 
     try:
@@ -159,6 +201,7 @@ def convert_to_csv(
     target_bucket: str,
     target_csv_path: str,
     csv_prefix: str = None,
+    filter_options: log_processor_pb2.FilterOptions = None,
 ) -> None:
     """Parquet를 CSV로 변환 요청 및 진행 상황 모니터링"""
     
@@ -172,12 +215,18 @@ def convert_to_csv(
     # csv_prefix가 지정된 경우에만 설정
     if csv_prefix:
         request.csv_prefix = csv_prefix
+    
+    # 필터 옵션이 지정된 경우에만 설정
+    if filter_options:
+        request.filter.CopyFrom(filter_options)
 
     print(f"Converting Parquet to CSV:")
     print(f"  Source: {source_bucket}/{source_parquet_path}")
     print(f"  Target: {target_bucket}/{target_csv_path}")
     if csv_prefix:
         print(f"  CSV Prefix: {csv_prefix}")
+    if filter_options:
+        print(f"  Filter: Applied")
     print()
 
     try:
@@ -249,9 +298,20 @@ def main():
         print("    python client.py list <bucket> [prefix]")
         print()
         print("Examples:")
+        print("  # Process logs")
         print("  python client.py process trace-logs logs/trace.csv trace-parquet output/data ufs 100000")
+        print()
+        print("  # Convert to CSV")
         print("  python client.py csv trace output/parquet/ufs.parquet trace output/csv")
         print("  python client.py csv trace output/parquet/ufs.parquet trace output/csv myprefix")
+        print()
+        print("  # Filter examples (edit the code to use create_filter_options)")
+        print("  # Time filter: start_time=100.0, end_time=500.0")
+        print("  # Sector filter: start_sector=0, end_sector=1000000")
+        print("  # Latency filter: min_dtoc=1.0, max_dtoc=10.0")
+        print("  # QD filter: min_qd=1, max_qd=32")
+        print("  # CPU filter: cpu_list=[0, 1, 2, 3]")
+        print()
         print("  python client.py status 12345678-1234-1234-1234-123456789abc")
         print("  python client.py list trace-logs logs/")
         sys.exit(1)
