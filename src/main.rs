@@ -16,6 +16,422 @@ use trace::utils::{
 use trace::TraceType;
 use trace::*;
 
+/// gRPC 클라이언트 모드 실행 함수
+#[tokio::main]
+async fn run_grpc_client_mode(args: &[String]) -> io::Result<()> {
+    use trace::grpc::client;
+    use trace::grpc::FilterOptions;
+
+    // 기본값
+    let mut server_addr = "localhost:50051";
+    let mut command = "";
+    let mut source_bucket = "";
+    let mut source_path = "";
+    let mut target_bucket = "";
+    let mut target_path = "";
+    let mut log_type = "ufs";
+    let mut chunk_size: Option<i32> = None;
+    let mut csv_prefix: Option<String> = None;
+    let mut filter: Option<FilterOptions> = None;
+
+    // CLI 필터 파라미터
+    let mut start_time = 0.0;
+    let mut end_time = f64::MAX;
+    let mut start_sector = 0;
+    let mut end_sector = u64::MAX;
+    let mut min_dtoc = 0.0;
+    let mut max_dtoc = f64::MAX;
+    let mut min_ctoc = 0.0;
+    let mut max_ctoc = f64::MAX;
+    let mut min_ctod = 0.0;
+    let mut max_ctod = f64::MAX;
+    let mut min_qd = 0;
+    let mut max_qd = u32::MAX;
+    let mut cpu_list: Vec<u32> = Vec::new();
+    let mut has_filter = false;
+
+    // 옵션 파싱
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--server" | "-s" => {
+                if i + 1 < args.len() {
+                    server_addr = &args[i + 1];
+                    i += 2;
+                } else {
+                    eprintln!("Error: --server requires a value");
+                    print_client_usage();
+                    return Ok(());
+                }
+            }
+            "process" => {
+                command = "process";
+                i += 1;
+            }
+            "csv" => {
+                command = "csv";
+                i += 1;
+            }
+            "print" => {
+                command = "print";
+                i += 1;
+            }
+            "list" => {
+                command = "list";
+                i += 1;
+            }
+            "--source-bucket" => {
+                if i + 1 < args.len() {
+                    source_bucket = &args[i + 1];
+                    i += 2;
+                } else {
+                    eprintln!("Error: --source-bucket requires a value");
+                    return Ok(());
+                }
+            }
+            "--source-path" => {
+                if i + 1 < args.len() {
+                    source_path = &args[i + 1];
+                    i += 2;
+                } else {
+                    eprintln!("Error: --source-path requires a value");
+                    return Ok(());
+                }
+            }
+            "--target-bucket" => {
+                if i + 1 < args.len() {
+                    target_bucket = &args[i + 1];
+                    i += 2;
+                } else {
+                    eprintln!("Error: --target-bucket requires a value");
+                    return Ok(());
+                }
+            }
+            "--target-path" => {
+                if i + 1 < args.len() {
+                    target_path = &args[i + 1];
+                    i += 2;
+                } else {
+                    eprintln!("Error: --target-path requires a value");
+                    return Ok(());
+                }
+            }
+            "--log-type" | "-t" => {
+                if i + 1 < args.len() {
+                    log_type = &args[i + 1];
+                    i += 2;
+                } else {
+                    eprintln!("Error: --log-type requires a value");
+                    return Ok(());
+                }
+            }
+            "--chunk-size" => {
+                if i + 1 < args.len() {
+                    chunk_size = Some(args[i + 1].parse().unwrap_or(50000));
+                    i += 2;
+                } else {
+                    eprintln!("Error: --chunk-size requires a value");
+                    return Ok(());
+                }
+            }
+            "--csv-prefix" => {
+                if i + 1 < args.len() {
+                    csv_prefix = Some(args[i + 1].to_string());
+                    i += 2;
+                } else {
+                    eprintln!("Error: --csv-prefix requires a value");
+                    return Ok(());
+                }
+            }
+            "--max-records" => {
+                if i + 1 < args.len() {
+                    chunk_size = Some(args[i + 1].parse().unwrap_or(100));
+                    i += 2;
+                } else {
+                    eprintln!("Error: --max-records requires a value");
+                    return Ok(());
+                }
+            }
+            "--time" => {
+                if i + 2 < args.len() {
+                    start_time = args[i + 1].parse().unwrap_or(0.0);
+                    end_time = args[i + 2].parse().unwrap_or(f64::MAX);
+                    has_filter = true;
+                    i += 3;
+                } else {
+                    eprintln!("Error: --time requires start and end values");
+                    return Ok(());
+                }
+            }
+            "--sector" => {
+                if i + 2 < args.len() {
+                    start_sector = args[i + 1].parse().unwrap_or(0);
+                    end_sector = args[i + 2].parse().unwrap_or(u64::MAX);
+                    has_filter = true;
+                    i += 3;
+                } else {
+                    eprintln!("Error: --sector requires start and end values");
+                    return Ok(());
+                }
+            }
+            "--dtoc" => {
+                if i + 2 < args.len() {
+                    min_dtoc = args[i + 1].parse().unwrap_or(0.0);
+                    max_dtoc = args[i + 2].parse().unwrap_or(f64::MAX);
+                    has_filter = true;
+                    i += 3;
+                } else {
+                    eprintln!("Error: --dtoc requires min and max values");
+                    return Ok(());
+                }
+            }
+            "--ctoc" => {
+                if i + 2 < args.len() {
+                    min_ctoc = args[i + 1].parse().unwrap_or(0.0);
+                    max_ctoc = args[i + 2].parse().unwrap_or(f64::MAX);
+                    has_filter = true;
+                    i += 3;
+                } else {
+                    eprintln!("Error: --ctoc requires min and max values");
+                    return Ok(());
+                }
+            }
+            "--ctod" => {
+                if i + 2 < args.len() {
+                    min_ctod = args[i + 1].parse().unwrap_or(0.0);
+                    max_ctod = args[i + 2].parse().unwrap_or(f64::MAX);
+                    has_filter = true;
+                    i += 3;
+                } else {
+                    eprintln!("Error: --ctod requires min and max values");
+                    return Ok(());
+                }
+            }
+            "--qd" => {
+                if i + 2 < args.len() {
+                    min_qd = args[i + 1].parse().unwrap_or(0);
+                    max_qd = args[i + 2].parse().unwrap_or(u32::MAX);
+                    has_filter = true;
+                    i += 3;
+                } else {
+                    eprintln!("Error: --qd requires min and max values");
+                    return Ok(());
+                }
+            }
+            "--cpu" => {
+                if i + 1 < args.len() {
+                    cpu_list = args[i + 1]
+                        .split(',')
+                        .filter_map(|s| s.parse().ok())
+                        .collect();
+                    has_filter = true;
+                    i += 2;
+                } else {
+                    eprintln!("Error: --cpu requires a comma-separated list");
+                    return Ok(());
+                }
+            }
+            "--help" | "-h" => {
+                print_client_usage();
+                return Ok(());
+            }
+            _ => {
+                eprintln!("Unknown option: {}", args[i]);
+                print_client_usage();
+                return Ok(());
+            }
+        }
+    }
+
+    // 필터 생성
+    if has_filter {
+        filter = Some(client::create_filter(
+            start_time,
+            end_time,
+            start_sector,
+            end_sector,
+            min_dtoc,
+            max_dtoc,
+            min_ctoc,
+            max_ctoc,
+            min_ctod,
+            max_ctod,
+            min_qd,
+            max_qd,
+            cpu_list,
+        ));
+    }
+
+    // 명령 실행
+    match command {
+        "process" => {
+            if source_bucket.is_empty()
+                || source_path.is_empty()
+                || target_bucket.is_empty()
+                || target_path.is_empty()
+            {
+                eprintln!("Error: process command requires --source-bucket, --source-path, --target-bucket, --target-path");
+                print_client_usage();
+                return Ok(());
+            }
+
+            if let Err(e) = client::process_logs(
+                server_addr,
+                source_bucket,
+                source_path,
+                target_bucket,
+                target_path,
+                log_type,
+                chunk_size,
+                filter,
+            )
+            .await
+            {
+                eprintln!("Process logs failed: {}", e);
+            }
+        }
+        "csv" => {
+            if source_bucket.is_empty()
+                || source_path.is_empty()
+                || target_bucket.is_empty()
+                || target_path.is_empty()
+            {
+                eprintln!("Error: csv command requires --source-bucket, --source-path, --target-bucket, --target-path");
+                print_client_usage();
+                return Ok(());
+            }
+
+            if let Err(e) = client::convert_to_csv(
+                server_addr,
+                source_bucket,
+                source_path,
+                target_bucket,
+                target_path,
+                csv_prefix,
+                filter,
+            )
+            .await
+            {
+                eprintln!("Convert to CSV failed: {}", e);
+            }
+        }
+        "print" => {
+            if source_bucket.is_empty() || source_path.is_empty() {
+                eprintln!("Error: print command requires --source-bucket, --source-path");
+                print_client_usage();
+                return Ok(());
+            }
+
+            if let Err(e) =
+                client::read_parquet(server_addr, source_bucket, source_path, chunk_size, filter)
+                    .await
+            {
+                eprintln!("Read parquet failed: {}", e);
+            }
+        }
+        "list" => {
+            if source_bucket.is_empty() {
+                eprintln!("Error: list command requires --source-bucket");
+                print_client_usage();
+                return Ok(());
+            }
+
+            let prefix = if source_path.is_empty() {
+                ""
+            } else {
+                source_path
+            };
+
+            if let Err(e) = client::list_files(server_addr, source_bucket, prefix).await {
+                eprintln!("List files failed: {}", e);
+            }
+        }
+        _ => {
+            eprintln!("Error: No command specified (use 'process', 'csv', 'print', or 'list')");
+            print_client_usage();
+        }
+    }
+
+    Ok(())
+}
+
+/// gRPC 클라이언트 사용법 출력
+fn print_client_usage() {
+    println!("gRPC Client Usage:");
+    println!("  trace --client [COMMAND] [OPTIONS]");
+    println!();
+    println!("Commands:");
+    println!("  process              Process logs (log -> parquet)");
+    println!("  csv                  Convert parquet to CSV");
+    println!("  print                Read and display parquet contents");
+    println!("  list                 List files in MinIO bucket");
+    println!();
+    println!("Common Options:");
+    println!("  --server, -s <ADDR>  gRPC server address (default: localhost:50051)");
+    println!("  --help, -h           Show this help message");
+    println!();
+    println!("Process Command Options:");
+    println!("  --source-bucket      Source MinIO bucket");
+    println!("  --source-path        Source log file path");
+    println!("  --target-bucket      Target MinIO bucket");
+    println!("  --target-path        Target parquet path");
+    println!("  --log-type, -t       Log type: ufs, block, ufscustom (default: ufs)");
+    println!("  --chunk-size         Chunk size for processing (default: 50000)");
+    println!();
+    println!("CSV Command Options:");
+    println!("  --source-bucket      Source MinIO bucket");
+    println!("  --source-path        Source parquet file path");
+    println!("  --target-bucket      Target MinIO bucket");
+    println!("  --target-path        Target CSV path");
+    println!("  --csv-prefix         CSV file prefix (optional)");
+    println!();
+    println!("Print Command Options:");
+    println!("  --source-bucket      Source MinIO bucket");
+    println!("  --source-path        Source parquet file path");
+    println!("  --max-records        Maximum records to display (optional, default: all)");
+    println!();
+    println!("List Command Options:");
+    println!("  --source-bucket      MinIO bucket to list");
+    println!("  --source-path        Path prefix to filter (optional)");
+    println!();
+    println!("Filter Options (apply to both process and csv):");
+    println!("  --time <start> <end>        Time range (ms)");
+    println!("  --sector <start> <end>      Sector/LBA range");
+    println!("  --dtoc <min> <max>          DTOC latency range (ms)");
+    println!("  --ctoc <min> <max>          CTOC latency range (ms)");
+    println!("  --ctod <min> <max>          CTOD latency range (ms)");
+    println!("  --qd <min> <max>            Queue depth range");
+    println!("  --cpu <list>                CPU list (comma-separated, e.g., 0,1,2)");
+    println!();
+    println!("Examples:");
+    println!("  # Process logs");
+    println!("  trace --client process --source-bucket logs --source-path trace.log \\");
+    println!("    --target-bucket output --target-path result");
+    println!();
+    println!("  # Convert to CSV with time filter");
+    println!("  trace --client csv --source-bucket output --source-path result/ufs.parquet \\");
+    println!("    --target-bucket csv --target-path filtered --time 100 500");
+    println!();
+    println!("  # Process with multiple filters");
+    println!("  trace --client process --source-bucket logs --source-path trace.log \\");
+    println!("    --target-bucket output --target-path result \\");
+    println!("    --time 0 1000 --dtoc 0 10 --cpu 0,1,2");
+    println!();
+    println!("  # Print parquet contents");
+    println!("  trace --client print --source-bucket output --source-path result/ufs.parquet \\");
+    println!("    --max-records 50");
+    println!();
+    println!("  # Print with filter");
+    println!("  trace --client print --source-bucket output --source-path result/ufs.parquet \\");
+    println!("    --time 100 500 --max-records 20");
+    println!();
+    println!("  # List files in bucket");
+    println!("  trace --client list --source-bucket logs");
+    println!();
+    println!("  # List files with prefix");
+    println!("  trace --client list --source-bucket logs --source-path trace/");
+}
+
 /// gRPC 서버 실행 함수
 #[tokio::main]
 async fn run_grpc_server_mode(args: &[String]) -> io::Result<()> {
@@ -184,10 +600,7 @@ fn parse_alignment_size(input: &str) -> Result<u64, String> {
 ///   ctod:0.0:10.0         - CTOD latency range
 ///   cpu:0-3               - CPU range
 ///   cpu:0,4,7             - CPU list
-fn parse_filter_option(
-    filter_str: &str,
-    filter: &mut FilterOptions,
-) -> Result<(), String> {
+fn parse_filter_option(filter_str: &str, filter: &mut FilterOptions) -> Result<(), String> {
     let parts: Vec<&str> = filter_str.split(':').collect();
     if parts.len() < 2 {
         return Err(format!(
@@ -197,95 +610,137 @@ fn parse_filter_option(
     }
 
     let filter_type = parts[0];
-    
+
     match filter_type {
         "time" => {
             if parts.len() != 3 {
-                return Err(format!("Invalid time filter: '{}'. Expected: time:min:max", filter_str));
+                return Err(format!(
+                    "Invalid time filter: '{}'. Expected: time:min:max",
+                    filter_str
+                ));
             }
-            let start = parts[1].parse::<f64>()
+            let start = parts[1]
+                .parse::<f64>()
                 .map_err(|_| format!("Invalid time min value: '{}'", parts[1]))?;
-            let end = parts[2].parse::<f64>()
+            let end = parts[2]
+                .parse::<f64>()
                 .map_err(|_| format!("Invalid time max value: '{}'", parts[2]))?;
-            
+
             if start < 0.0 {
                 return Err(format!("Time start value must be >= 0, got: {}", start));
             }
             if end <= start {
-                return Err(format!("Time end value ({}) must be greater than start value ({})", end, start));
+                return Err(format!(
+                    "Time end value ({}) must be greater than start value ({})",
+                    end, start
+                ));
             }
-            
+
             filter.start_time = start;
             filter.end_time = end;
         }
         "sector" | "lba" => {
             if parts.len() != 3 {
-                return Err(format!("Invalid sector filter: '{}'. Expected: sector:min:max", filter_str));
+                return Err(format!(
+                    "Invalid sector filter: '{}'. Expected: sector:min:max",
+                    filter_str
+                ));
             }
-            filter.start_sector = parts[1].parse::<u64>()
+            filter.start_sector = parts[1]
+                .parse::<u64>()
                 .map_err(|_| format!("Invalid sector min value: '{}'", parts[1]))?;
-            filter.end_sector = parts[2].parse::<u64>()
+            filter.end_sector = parts[2]
+                .parse::<u64>()
                 .map_err(|_| format!("Invalid sector max value: '{}'", parts[2]))?;
         }
         "dtoc" => {
             if parts.len() != 3 {
-                return Err(format!("Invalid dtoc filter: '{}'. Expected: dtoc:min:max", filter_str));
+                return Err(format!(
+                    "Invalid dtoc filter: '{}'. Expected: dtoc:min:max",
+                    filter_str
+                ));
             }
-            filter.min_dtoc = parts[1].parse::<f64>()
+            filter.min_dtoc = parts[1]
+                .parse::<f64>()
                 .map_err(|_| format!("Invalid dtoc min value: '{}'", parts[1]))?;
-            filter.max_dtoc = parts[2].parse::<f64>()
+            filter.max_dtoc = parts[2]
+                .parse::<f64>()
                 .map_err(|_| format!("Invalid dtoc max value: '{}'", parts[2]))?;
         }
         "ctoc" => {
             if parts.len() != 3 {
-                return Err(format!("Invalid ctoc filter: '{}'. Expected: ctoc:min:max", filter_str));
+                return Err(format!(
+                    "Invalid ctoc filter: '{}'. Expected: ctoc:min:max",
+                    filter_str
+                ));
             }
-            filter.min_ctoc = parts[1].parse::<f64>()
+            filter.min_ctoc = parts[1]
+                .parse::<f64>()
                 .map_err(|_| format!("Invalid ctoc min value: '{}'", parts[1]))?;
-            filter.max_ctoc = parts[2].parse::<f64>()
+            filter.max_ctoc = parts[2]
+                .parse::<f64>()
                 .map_err(|_| format!("Invalid ctoc max value: '{}'", parts[2]))?;
         }
         "ctod" => {
             if parts.len() != 3 {
-                return Err(format!("Invalid ctod filter: '{}'. Expected: ctod:min:max", filter_str));
+                return Err(format!(
+                    "Invalid ctod filter: '{}'. Expected: ctod:min:max",
+                    filter_str
+                ));
             }
-            filter.min_ctod = parts[1].parse::<f64>()
+            filter.min_ctod = parts[1]
+                .parse::<f64>()
                 .map_err(|_| format!("Invalid ctod min value: '{}'", parts[1]))?;
-            filter.max_ctod = parts[2].parse::<f64>()
+            filter.max_ctod = parts[2]
+                .parse::<f64>()
                 .map_err(|_| format!("Invalid ctod max value: '{}'", parts[2]))?;
         }
         "cpu" => {
             if parts.len() != 2 {
-                return Err(format!("Invalid cpu filter: '{}'. Expected: cpu:0-3 or cpu:0,4,7", filter_str));
+                return Err(format!(
+                    "Invalid cpu filter: '{}'. Expected: cpu:0-3 or cpu:0,4,7",
+                    filter_str
+                ));
             }
             let cpu_spec = parts[1];
-            
+
             // Check if it's a range (e.g., "0-3")
             if cpu_spec.contains('-') {
                 let range_parts: Vec<&str> = cpu_spec.split('-').collect();
                 if range_parts.len() != 2 {
-                    return Err(format!("Invalid CPU range: '{}'. Expected: start-end", cpu_spec));
+                    return Err(format!(
+                        "Invalid CPU range: '{}'. Expected: start-end",
+                        cpu_spec
+                    ));
                 }
-                let start = range_parts[0].parse::<u32>()
+                let start = range_parts[0]
+                    .parse::<u32>()
                     .map_err(|_| format!("Invalid CPU range start: '{}'", range_parts[0]))?;
-                let end = range_parts[1].parse::<u32>()
+                let end = range_parts[1]
+                    .parse::<u32>()
                     .map_err(|_| format!("Invalid CPU range end: '{}'", range_parts[1]))?;
-                
+
                 if start > end {
-                    return Err(format!("Invalid CPU range: start ({}) must be <= end ({})", start, end));
+                    return Err(format!(
+                        "Invalid CPU range: start ({}) must be <= end ({})",
+                        start, end
+                    ));
                 }
-                
+
                 filter.cpu_list.extend(start..=end);
             } else if cpu_spec.contains(',') {
                 // List of CPUs (e.g., "0,4,7")
                 for cpu_str in cpu_spec.split(',') {
-                    let cpu = cpu_str.trim().parse::<u32>()
+                    let cpu = cpu_str
+                        .trim()
+                        .parse::<u32>()
                         .map_err(|_| format!("Invalid CPU value: '{}'", cpu_str))?;
                     filter.cpu_list.push(cpu);
                 }
             } else {
                 // Single CPU
-                let cpu = cpu_spec.parse::<u32>()
+                let cpu = cpu_spec
+                    .parse::<u32>()
                     .map_err(|_| format!("Invalid CPU value: '{}'", cpu_spec))?;
                 filter.cpu_list.push(cpu);
             }
@@ -363,6 +818,11 @@ fn main() -> io::Result<()> {
     // gRPC 서버 모드 체크 (가장 먼저 확인)
     if args.len() > 1 && args[1] == "--grpc-server" {
         return run_grpc_server_mode(&args);
+    }
+
+    // gRPC 클라이언트 모드 체크
+    if args.len() > 1 && args[1] == "--client" {
+        return run_grpc_client_mode(&args);
     }
 
     // 옵션 파싱
@@ -590,7 +1050,11 @@ fn main() -> io::Result<()> {
                     remote_log_path,
                     remote_output_path,
                     chunk_size,
-                    if use_filter { Some(filter_options.clone()) } else { None },
+                    if use_filter {
+                        Some(filter_options.clone())
+                    } else {
+                        None
+                    },
                 ) {
                     Ok(_) => println!("MinIO log to Parquet completed successfully"),
                     Err(e) => eprintln!("MinIO log to Parquet failed: {e}"),
@@ -618,7 +1082,11 @@ fn main() -> io::Result<()> {
                     remote_parquet_path,
                     local_output_prefix,
                     y_axis_ranges,
-                    if use_filter { Some(filter_options.clone()) } else { None },
+                    if use_filter {
+                        Some(filter_options.clone())
+                    } else {
+                        None
+                    },
                 ) {
                     Ok(_) => println!("MinIO Parquet analysis completed successfully"),
                     Err(e) => eprintln!("MinIO Parquet analysis failed: {e}"),
@@ -650,7 +1118,11 @@ fn main() -> io::Result<()> {
                 match trace::commands::minio::handle_minio_parquet_to_csv(
                     remote_parquet_path,
                     remote_csv_path,
-                    if use_filter { Some(filter_options.clone()) } else { None },
+                    if use_filter {
+                        Some(filter_options.clone())
+                    } else {
+                        None
+                    },
                 ) {
                     Ok(_) => println!("MinIO Parquet to CSV completed successfully"),
                     Err(e) => eprintln!("MinIO Parquet to CSV failed: {e}"),
@@ -690,12 +1162,13 @@ fn main() -> io::Result<()> {
     // 필터 옵션 처리
     let filter_options = if use_filter {
         // CLI에서 --filter 옵션이 사용된 경우
-        let filter = if filter_options.is_time_filter_active() 
+        let filter = if filter_options.is_time_filter_active()
             || filter_options.is_sector_filter_active()
             || filter_options.is_dtoc_filter_active()
             || filter_options.is_ctoc_filter_active()
             || filter_options.is_ctod_filter_active()
-            || filter_options.is_cpu_filter_active() {
+            || filter_options.is_cpu_filter_active()
+        {
             // CLI 필터 사용
             filter_options.clone()
         } else {

@@ -65,7 +65,7 @@ pub fn handle_minio_log_to_parquet(
     // 필터 적용
     let (ufs_traces, block_traces, ufscustom_traces) = if let Some(ref filter) = filter_options {
         println!("\n[Applying Filters]...");
-        use crate::utils::filter::{filter_ufs_data, filter_block_data, filter_ufscustom_data};
+        use crate::utils::filter::{filter_block_data, filter_ufs_data, filter_ufscustom_data};
         let filtered_ufs = filter_ufs_data(ufs_traces, filter);
         let filtered_block = filter_block_data(block_traces, filter);
         let filtered_ufscustom = filter_ufscustom_data(ufscustom_traces, filter);
@@ -304,7 +304,10 @@ pub fn handle_minio_parquet_analysis(
                 println!("\n[Applying Filters]...");
                 use crate::utils::filter::filter_ufscustom_data;
                 ufscustom_traces = filter_ufscustom_data(ufscustom_traces, filter);
-                println!("  After filtering - UFSCUSTOM: {} events", ufscustom_traces.len());
+                println!(
+                    "  After filtering - UFSCUSTOM: {} events",
+                    ufscustom_traces.len()
+                );
             }
 
             println!("\n[3/3] Generating statistics and charts...");
@@ -452,7 +455,10 @@ pub fn handle_minio_parquet_to_csv(
                 println!("\n[Applying Filters]...");
                 use crate::utils::filter::filter_ufscustom_data;
                 ufscustom_traces = filter_ufscustom_data(ufscustom_traces, filter);
-                println!("  After filtering - UFSCUSTOM: {} records", ufscustom_traces.len());
+                println!(
+                    "  After filtering - UFSCUSTOM: {} records",
+                    ufscustom_traces.len()
+                );
             }
 
             // CSV 저장

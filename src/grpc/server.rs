@@ -12,8 +12,8 @@ use crate::parsers::parse_log_file_high_perf;
 use crate::storage::minio_client::{MinioAsyncClient, MinioConfig};
 use crate::utils::compression::{extract_and_find_log, CompressionFormat};
 use crate::utils::filter::FilterOptions;
-use crate::{read_block_from_parquet, read_ufs_from_parquet, read_ufscustom_from_parquet};
 use crate::TraceType;
+use crate::{read_block_from_parquet, read_ufs_from_parquet, read_ufscustom_from_parquet};
 
 pub mod log_processor {
     tonic::include_proto!("log_processor");
@@ -23,7 +23,7 @@ use log_processor::log_processor_server::{LogProcessor, LogProcessorServer};
 use log_processor::{
     ConvertToCsvProgress, ConvertToCsvRequest, CsvConversionStage, JobStatusRequest,
     JobStatusResponse, ListFilesRequest, ListFilesResponse, ProcessLogsProgress,
-    ProcessLogsRequest, ProgressStage,
+    ProcessLogsRequest, ProgressStage, ReadParquetRequest, ReadParquetResponse,
 };
 
 type JobMap = Arc<Mutex<HashMap<String, JobStatus>>>;
@@ -91,7 +91,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ProcessLogsProgress {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageDownloading as i32,
+                    stage: ProgressStage::Downloading as i32,
                     message: format!(
                         "Downloading log file from {}/{}",
                         request.source_bucket, request.source_path
@@ -140,7 +140,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ProcessLogsProgress {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageDownloading as i32,
+                    stage: ProgressStage::Downloading as i32,
                     message: "Download completed".to_string(),
                     progress_percent: 20,
                     records_processed: 0,
@@ -163,7 +163,7 @@ impl LogProcessorService {
                 &job_id,
                 JobStatus {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageDownloading as i32,
+                    stage: ProgressStage::Downloading as i32,
                     message: "Download completed".to_string(),
                     progress_percent: 20,
                     records_processed: 0,
@@ -185,7 +185,7 @@ impl LogProcessorService {
                 if tx
                     .send(Ok(ProcessLogsProgress {
                         job_id: job_id.clone(),
-                        stage: ProgressStage::StageDownloading as i32,
+                        stage: ProgressStage::Downloading as i32,
                         message: format!("Extracting compressed file ({:?})...", format),
                         progress_percent: 25,
                         records_processed: 0,
@@ -218,7 +218,7 @@ impl LogProcessorService {
                 if tx
                     .send(Ok(ProcessLogsProgress {
                         job_id: job_id.clone(),
-                        stage: ProgressStage::StageDownloading as i32,
+                        stage: ProgressStage::Downloading as i32,
                         message: "Extraction completed".to_string(),
                         progress_percent: 28,
                         records_processed: 0,
@@ -248,7 +248,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ProcessLogsProgress {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageParsing as i32,
+                    stage: ProgressStage::Parsing as i32,
                     message: "Parsing log file".to_string(),
                     progress_percent: 30,
                     records_processed: 0,
@@ -287,7 +287,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ProcessLogsProgress {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageParsing as i32,
+                    stage: ProgressStage::Parsing as i32,
                     message: format!("Parsing completed: {} records", total_records),
                     progress_percent: 50,
                     records_processed: total_records as i64,
@@ -315,10 +315,14 @@ impl LogProcessorService {
                     let filtered_ufs = filter_ufs_data(ufs_traces, filter);
                     let filtered_block = filter_block_data(block_traces, filter);
                     let filtered_ufscustom = filter_ufscustom_data(ufscustom_traces, filter);
-                    let filtered_count = filtered_ufs.len() + filtered_block.len() + filtered_ufscustom.len();
+                    let filtered_count =
+                        filtered_ufs.len() + filtered_block.len() + filtered_ufscustom.len();
                     println!(
                         "[FILTER] After filtering - Total: {} (UFS: {}, Block: {}, UFSCUSTOM: {})",
-                        filtered_count, filtered_ufs.len(), filtered_block.len(), filtered_ufscustom.len()
+                        filtered_count,
+                        filtered_ufs.len(),
+                        filtered_block.len(),
+                        filtered_ufscustom.len()
                     );
                     (filtered_ufs, filtered_block, filtered_ufscustom)
                 } else {
@@ -331,7 +335,7 @@ impl LogProcessorService {
                 &job_id,
                 JobStatus {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageParsing as i32,
+                    stage: ProgressStage::Parsing as i32,
                     message: "Parsing completed".to_string(),
                     progress_percent: 50,
                     records_processed: filtered_records as i64,
@@ -346,7 +350,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ProcessLogsProgress {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageConverting as i32,
+                    stage: ProgressStage::Converting as i32,
                     message: "Converting to Parquet format".to_string(),
                     progress_percent: 60,
                     records_processed: total_records as i64,
@@ -384,7 +388,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ProcessLogsProgress {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageConverting as i32,
+                    stage: ProgressStage::Converting as i32,
                     message: "Conversion completed".to_string(),
                     progress_percent: 70,
                     records_processed: total_records as i64,
@@ -408,7 +412,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ProcessLogsProgress {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageUploading as i32,
+                    stage: ProgressStage::Uploading as i32,
                     message: "Uploading Parquet files to MinIO".to_string(),
                     progress_percent: 75,
                     records_processed: total_records as i64,
@@ -443,7 +447,7 @@ impl LogProcessorService {
             let _ = tx
                 .send(Ok(ProcessLogsProgress {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageUploading as i32,
+                    stage: ProgressStage::Uploading as i32,
                     message: "Starting upload to MinIO".to_string(),
                     progress_percent: 80,
                     records_processed: total_records as i64,
@@ -492,7 +496,7 @@ impl LogProcessorService {
             let send_result = tx
                 .send(Ok(ProcessLogsProgress {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageCompleted as i32,
+                    stage: ProgressStage::Completed as i32,
                     message: format!(
                         "Processing completed successfully. Uploaded {} files",
                         uploaded_files.len()
@@ -515,7 +519,7 @@ impl LogProcessorService {
                 &job_id,
                 JobStatus {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageCompleted as i32,
+                    stage: ProgressStage::Completed as i32,
                     message: "Completed".to_string(),
                     progress_percent: 100,
                     records_processed: total_records as i64,
@@ -536,7 +540,7 @@ impl LogProcessorService {
             let _ = tx
                 .send(Ok(ProcessLogsProgress {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageFailed as i32,
+                    stage: ProgressStage::Failed as i32,
                     message: error_msg.clone(),
                     progress_percent: 0,
                     records_processed: 0,
@@ -550,7 +554,7 @@ impl LogProcessorService {
                 &job_id,
                 JobStatus {
                     job_id: job_id.clone(),
-                    stage: ProgressStage::StageFailed as i32,
+                    stage: ProgressStage::Failed as i32,
                     message: "Failed".to_string(),
                     progress_percent: 0,
                     records_processed: 0,
@@ -574,7 +578,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ConvertToCsvProgress {
                     job_id: job_id.clone(),
-                    stage: CsvConversionStage::CsvStageDownloading as i32,
+                    stage: CsvConversionStage::CsvDownloading as i32,
                     message: format!(
                         "Downloading Parquet from {}/{}",
                         request.source_bucket, request.source_parquet_path
@@ -627,7 +631,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ConvertToCsvProgress {
                     job_id: job_id.clone(),
-                    stage: CsvConversionStage::CsvStageDownloading as i32,
+                    stage: CsvConversionStage::CsvDownloading as i32,
                     message: "Download completed".to_string(),
                     progress_percent: 30,
                     records_processed: 0,
@@ -646,7 +650,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ConvertToCsvProgress {
                     job_id: job_id.clone(),
-                    stage: CsvConversionStage::CsvStageConverting as i32,
+                    stage: CsvConversionStage::CsvConverting as i32,
                     message: format!("Converting {} Parquet to CSV", trace_type),
                     progress_percent: 40,
                     records_processed: 0,
@@ -670,22 +674,22 @@ impl LogProcessorService {
             // CSV 파일 prefix 결정 (사용자 지정 또는 trace_type 사용)
             let csv_prefix = request.csv_prefix.unwrap_or_else(|| trace_type.to_string());
             let temp_csv_prefix = format!("{}/{}", temp_csv_dir, csv_prefix);
-            
+
             // 필터 옵션 변환
             let filter_options = Self::convert_filter_options(request.filter);
-            
+
             let records_count = match trace_type {
                 "ufs" => {
                     let mut ufs_traces = read_ufs_from_parquet(&temp_parquet_file)
                         .map_err(|e| format!("Failed to read UFS parquet: {}", e))?;
-                    
+
                     // 필터 적용
                     if let Some(ref filter) = filter_options {
                         use crate::utils::filter::filter_ufs_data;
                         ufs_traces = filter_ufs_data(ufs_traces, filter);
                         println!("[FILTER] After filtering - UFS: {}", ufs_traces.len());
                     }
-                    
+
                     let count = ufs_traces.len() as i64;
                     save_to_csv(&ufs_traces, &[], &[], &temp_csv_prefix)
                         .map_err(|e| format!("Failed to save CSV: {}", e))?;
@@ -694,14 +698,14 @@ impl LogProcessorService {
                 "block" => {
                     let mut block_traces = read_block_from_parquet(&temp_parquet_file)
                         .map_err(|e| format!("Failed to read Block parquet: {}", e))?;
-                    
+
                     // 필터 적용
                     if let Some(ref filter) = filter_options {
                         use crate::utils::filter::filter_block_data;
                         block_traces = filter_block_data(block_traces, filter);
                         println!("[FILTER] After filtering - Block: {}", block_traces.len());
                     }
-                    
+
                     let count = block_traces.len() as i64;
                     save_to_csv(&[], &block_traces, &[], &temp_csv_prefix)
                         .map_err(|e| format!("Failed to save CSV: {}", e))?;
@@ -710,14 +714,14 @@ impl LogProcessorService {
                 "ufscustom" => {
                     let mut ufscustom_traces = read_ufscustom_from_parquet(&temp_parquet_file)
                         .map_err(|e| format!("Failed to read UFSCUSTOM parquet: {}", e))?;
-                    
+
                     // 필터 적용
                     if let Some(ref filter) = filter_options {
                         use crate::utils::filter::filter_ufscustom_data;
                         ufscustom_traces = filter_ufscustom_data(ufscustom_traces, filter);
                         println!("[FILTER] After filtering - UFSCUSTOM: {}", ufscustom_traces.len());
                     }
-                    
+
                     let count = ufscustom_traces.len() as i64;
                     save_to_csv(&[], &[], &ufscustom_traces, &temp_csv_prefix)
                         .map_err(|e| format!("Failed to save CSV: {}", e))?;
@@ -729,7 +733,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ConvertToCsvProgress {
                     job_id: job_id.clone(),
-                    stage: CsvConversionStage::CsvStageConverting as i32,
+                    stage: CsvConversionStage::CsvConverting as i32,
                     message: "CSV conversion completed".to_string(),
                     progress_percent: 60,
                     records_processed: records_count,
@@ -748,7 +752,7 @@ impl LogProcessorService {
             if tx
                 .send(Ok(ConvertToCsvProgress {
                     job_id: job_id.clone(),
-                    stage: CsvConversionStage::CsvStageUploading as i32,
+                    stage: CsvConversionStage::CsvUploading as i32,
                     message: "Uploading CSV files to MinIO".to_string(),
                     progress_percent: 70,
                     records_processed: records_count,
@@ -819,11 +823,14 @@ impl LogProcessorService {
         // 결과 전송
         match result {
             Ok(csv_files) => {
-                println!("[CSV JOB: {}] CSV conversion completed successfully", job_id);
+                println!(
+                    "[CSV JOB: {}] CSV conversion completed successfully",
+                    job_id
+                );
                 let _ = tx
                     .send(Ok(ConvertToCsvProgress {
                         job_id: job_id.clone(),
-                        stage: CsvConversionStage::CsvStageCompleted as i32,
+                        stage: CsvConversionStage::CsvCompleted as i32,
                         message: "CSV conversion completed successfully".to_string(),
                         progress_percent: 100,
                         records_processed: 0,
@@ -838,7 +845,7 @@ impl LogProcessorService {
                 let _ = tx
                     .send(Ok(ConvertToCsvProgress {
                         job_id: job_id.clone(),
-                        stage: CsvConversionStage::CsvStageFailed as i32,
+                        stage: CsvConversionStage::CsvFailed as i32,
                         message: "CSV conversion failed".to_string(),
                         progress_percent: 0,
                         records_processed: 0,
@@ -858,6 +865,8 @@ impl LogProcessor for LogProcessorService {
         Pin<Box<dyn Stream<Item = Result<ProcessLogsProgress, Status>> + Send>>;
     type ConvertToCsvStream =
         Pin<Box<dyn Stream<Item = Result<ConvertToCsvProgress, Status>> + Send>>;
+    type ReadParquetStream =
+        Pin<Box<dyn Stream<Item = Result<ReadParquetResponse, Status>> + Send>>;
 
     async fn process_logs(
         &self,
@@ -876,7 +885,7 @@ impl LogProcessor for LogProcessorService {
             &job_id,
             JobStatus {
                 job_id: job_id.clone(),
-                stage: ProgressStage::StageDownloading as i32,
+                stage: ProgressStage::Downloading as i32,
                 message: "Starting".to_string(),
                 progress_percent: 0,
                 records_processed: 0,
@@ -967,15 +976,184 @@ impl LogProcessor for LogProcessorService {
         let service = self.clone();
         let job_id_clone = job_id.clone();
         tokio::spawn(async move {
-            service
-                .convert_to_csv_internal(job_id_clone, req, tx)
-                .await;
+            service.convert_to_csv_internal(job_id_clone, req, tx).await;
         });
 
         // 스트림 반환
         let output_stream = ReceiverStream::new(rx);
         Ok(Response::new(
             Box::pin(output_stream) as Self::ConvertToCsvStream
+        ))
+    }
+
+    async fn read_parquet(
+        &self,
+        request: Request<ReadParquetRequest>,
+    ) -> Result<Response<Self::ReadParquetStream>, Status> {
+        use crate::output::reader::{
+            read_block_from_parquet, read_ufs_from_parquet, read_ufscustom_from_parquet,
+        };
+        use serde_json;
+
+        let req = request.into_inner();
+        let (tx, rx) = mpsc::channel(100);
+
+        println!(
+            "[ReadParquet] Request: {}/{}",
+            req.source_bucket, req.source_parquet_path
+        );
+
+        let service = self.clone();
+        tokio::spawn(async move {
+            let result: Result<(), String> = async {
+                // MinIO 클라이언트 생성
+                let config = MinioConfig {
+                    endpoint: service.minio_config.endpoint.clone(),
+                    access_key: service.minio_config.access_key.clone(),
+                    secret_key: service.minio_config.secret_key.clone(),
+                    bucket: req.source_bucket.clone(),
+                    region: service.minio_config.region.clone(),
+                };
+
+                let client = MinioAsyncClient::new(&config)
+                    .map_err(|e| format!("Failed to create MinIO client: {}", e))?;
+
+                // 임시 파일로 다운로드
+                let temp_dir = std::env::temp_dir();
+                let temp_file = temp_dir.join(format!("read_parquet_{}.parquet", Uuid::new_v4()));
+                let temp_file_str = temp_file.to_string_lossy().to_string();
+
+                client
+                    .download_file(&req.source_parquet_path, &temp_file_str)
+                    .await
+                    .map_err(|e| format!("Failed to download parquet: {}", e))?;
+
+                // 타입 감지 (파일명에서)
+                let trace_type = if req.source_parquet_path.contains("ufs.parquet") {
+                    "ufs"
+                } else if req.source_parquet_path.contains("block.parquet") {
+                    "block"
+                } else if req.source_parquet_path.contains("ufscustom.parquet") {
+                    "ufscustom"
+                } else {
+                    "ufs" // 기본값
+                };
+
+                // 필터 옵션 변환
+                let filter_options = Self::convert_filter_options(req.filter);
+
+                // max_records가 None이면 전체 출력, Some이면 해당 개수만큼 출력
+                let max_records = req.max_records.map(|m| m as usize);
+
+                match trace_type {
+                    "ufs" => {
+                        let mut traces = read_ufs_from_parquet(&temp_file_str)
+                            .map_err(|e| format!("Failed to read UFS parquet: {}", e))?;
+
+                        // 필터 적용
+                        if let Some(ref filter) = filter_options {
+                            use crate::utils::filter::filter_ufs_data;
+                            traces = filter_ufs_data(traces, filter);
+                        }
+
+                        let total = traces.len() as i64;
+                        let traces_to_send: Vec<_> = if let Some(max) = max_records {
+                            traces.iter().take(max).collect()
+                        } else {
+                            traces.iter().collect()
+                        };
+
+                        for (idx, trace) in traces_to_send.iter().enumerate() {
+                            let json = serde_json::to_string_pretty(trace)
+                                .unwrap_or_else(|_| "{}".to_string());
+
+                            let _ = tx
+                                .send(Ok(ReadParquetResponse {
+                                    record_json: json,
+                                    total_records: total,
+                                    sent_records: (idx + 1) as i64,
+                                }))
+                                .await;
+                        }
+                    }
+                    "block" => {
+                        let mut traces = read_block_from_parquet(&temp_file_str)
+                            .map_err(|e| format!("Failed to read Block parquet: {}", e))?;
+
+                        // 필터 적용
+                        if let Some(ref filter) = filter_options {
+                            use crate::utils::filter::filter_block_data;
+                            traces = filter_block_data(traces, filter);
+                        }
+
+                        let total = traces.len() as i64;
+                        let traces_to_send: Vec<_> = if let Some(max) = max_records {
+                            traces.iter().take(max).collect()
+                        } else {
+                            traces.iter().collect()
+                        };
+
+                        for (idx, trace) in traces_to_send.iter().enumerate() {
+                            let json = serde_json::to_string_pretty(trace)
+                                .unwrap_or_else(|_| "{}".to_string());
+
+                            let _ = tx
+                                .send(Ok(ReadParquetResponse {
+                                    record_json: json,
+                                    total_records: total,
+                                    sent_records: (idx + 1) as i64,
+                                }))
+                                .await;
+                        }
+                    }
+                    "ufscustom" => {
+                        let mut traces = read_ufscustom_from_parquet(&temp_file_str)
+                            .map_err(|e| format!("Failed to read UFSCUSTOM parquet: {}", e))?;
+
+                        // 필터 적용
+                        if let Some(ref filter) = filter_options {
+                            use crate::utils::filter::filter_ufscustom_data;
+                            traces = filter_ufscustom_data(traces, filter);
+                        }
+
+                        let total = traces.len() as i64;
+                        let traces_to_send: Vec<_> = if let Some(max) = max_records {
+                            traces.iter().take(max).collect()
+                        } else {
+                            traces.iter().collect()
+                        };
+
+                        for (idx, trace) in traces_to_send.iter().enumerate() {
+                            let json = serde_json::to_string_pretty(trace)
+                                .unwrap_or_else(|_| "{}".to_string());
+
+                            let _ = tx
+                                .send(Ok(ReadParquetResponse {
+                                    record_json: json,
+                                    total_records: total,
+                                    sent_records: (idx + 1) as i64,
+                                }))
+                                .await;
+                        }
+                    }
+                    _ => return Err(format!("Unsupported trace type: {}", trace_type)),
+                }
+
+                // 임시 파일 삭제
+                let _ = tokio::fs::remove_file(temp_file).await;
+
+                Ok(())
+            }
+            .await;
+
+            if let Err(e) = result {
+                eprintln!("[ReadParquet] Error: {}", e);
+            }
+        });
+
+        let output_stream = ReceiverStream::new(rx);
+        Ok(Response::new(
+            Box::pin(output_stream) as Self::ReadParquetStream
         ))
     }
 }
