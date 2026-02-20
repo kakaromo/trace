@@ -331,7 +331,7 @@ fn create_ufs_cpu_chart(
     let mut cpu_groups: HashMap<String, Vec<&UFS>> = HashMap::new();
     for item in data {
         // 지정된 action만 포함
-        if item.action == action_filter {
+        if &*item.action == action_filter {
             cpu_groups
                 .entry(item.cpu.to_string())
                 .or_default()
@@ -454,7 +454,7 @@ fn create_ufs_metric_chart(
     for item in data {
         // LBA와 QD 메트릭의 경우 send_req만 포함
         let include_item = if metric == "lba" || metric == "qd" {
-            item.action == "send_req"
+            &*item.action == "send_req"
         } else {
             // 다른 메트릭은 기존 로직 유지
             !metric_info.require_positive || (metric_info.metric_extractor)(item) > 0.0
@@ -462,7 +462,7 @@ fn create_ufs_metric_chart(
 
         if include_item {
             opcode_groups
-                .entry(item.opcode.clone()) // opcode 값 그대로 사용
+                .entry(item.opcode.to_string()) // opcode 값 그대로 사용
                 .or_default()
                 .push(item);
         }
@@ -536,8 +536,8 @@ fn create_block_cpu_chart(
     for item in data {
         // action_filter에 따라 필터링
         let is_match = match action_filter {
-            "issue" => item.action == "block_rq_issue" || item.action == "Q",
-            "complete" => item.action == "block_rq_complete" || item.action == "C",
+            "issue" => &*item.action == "block_rq_issue" || &*item.action == "Q",
+            "complete" => &*item.action == "block_rq_complete" || &*item.action == "C",
             _ => false,
         };
 
@@ -664,7 +664,7 @@ fn create_block_metric_chart(
     for block in data {
         // LBA와 QD 메트릭의 경우 issue만 포함 (block_rq_issue 또는 Q)
         let include_item = if metric == "lba" || metric == "qd" {
-            block.action == "block_rq_issue" || block.action == "Q"
+            &*block.action == "block_rq_issue" || &*block.action == "Q"
         } else {
             // 다른 메트릭은 기존 로직 유지
             !metric_info.require_positive || (metric_info.metric_extractor)(block) > 0.0
@@ -672,7 +672,7 @@ fn create_block_metric_chart(
 
         if include_item {
             io_type_groups
-                .entry(block.io_type.clone())
+                .entry(block.io_type.to_string())
                 .or_default()
                 .push(block);
         }
@@ -793,7 +793,7 @@ fn create_ufscustom_metric_chart(
         // 양수 값이 필요한 메트릭은 필터링
         if !metric_info.require_positive || (metric_info.metric_extractor)(item) > 0.0 {
             opcode_groups
-                .entry(item.opcode.clone()) // opcode 값 그대로 사용
+                .entry(item.opcode.to_string()) // opcode 값 그대로 사용
                 .or_default()
                 .push(item);
         }

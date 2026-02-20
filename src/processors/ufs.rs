@@ -28,10 +28,10 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     // 메모리 효율성을 위한 용량 최적화 - 더 큰 초기 용량 설정
     // 더 보수적인 예상을 위해 전체 크기의 1/3을 사용
     let estimated_capacity = ufs_list.len() / 3;
-    let mut req_times: HashMap<(u32, String), f64> = HashMap::with_capacity(estimated_capacity);
+    let mut req_times: HashMap<(u32, Box<str>), f64> = HashMap::with_capacity(estimated_capacity);
 
     // 자주 사용되는 opcode 문자열을 저장하는 캐시 생성
-    let mut opcode_cache: HashMap<String, String> = HashMap::with_capacity(32);
+    let mut opcode_cache: HashMap<Box<str>, Box<str>> = HashMap::with_capacity(32);
 
     let mut current_qd: u32 = 0;
     let mut last_complete_time: Option<f64> = None;
@@ -40,12 +40,12 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
     let mut first_complete_time: f64 = 0.0;
 
     // 이전 send_req의 정보를 저장할 변수들
-    let mut prev_send_req: Option<(u64, u32, String)> = None; // (lba, size, opcode)
+    let mut prev_send_req: Option<(u64, u32, Box<str>)> = None; // (lba, size, opcode)
 
     // send_req와 complete_rsp의 쌍을 추적하기 위한 집합
     let send_req_indices: HashSet<usize> = HashSet::new();
     let complete_rsp_indices: HashSet<usize> = HashSet::new();
-    let paired_tags: HashMap<(u32, String), usize> = HashMap::new(); // (tag, opcode) -> send_req index
+    let paired_tags: HashMap<(u32, Box<str>), usize> = HashMap::new(); // (tag, opcode) -> send_req index
 
     log!("  Calculating UFS Latency and continuity...");
 
@@ -76,7 +76,7 @@ pub fn ufs_bottom_half_latency_process(mut ufs_list: Vec<UFS>) -> Vec<UFS> {
                 last_reported = idx;
             }
 
-            match ufs.action.as_str() {
+            match &*ufs.action {
                 "send_req" => {
                     // 연속성 체크: 이전 send_req가 있는 경우
                     if let Some((prev_lba, prev_size, ref prev_opcode)) = prev_send_req {

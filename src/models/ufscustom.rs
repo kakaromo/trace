@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Serialize, Deserialize, Debug, Clone, Encode, Decode)]
 pub struct UFSCUSTOM {
-    pub opcode: String,
+    pub opcode: Box<str>,
     pub lba: u64,
     pub size: u32,
     pub start_time: f64,

@@ -73,11 +73,11 @@ pub fn parse_ufs_event(line: &str) -> Result<UFS, &'static str> {
 
         let ufs = UFS {
             time: caps["time"].parse().unwrap_or(0.0),
-            process: caps["process"].to_string(),
+            process: caps["process"].to_string().into_boxed_str(),
             cpu: caps["cpu"].parse().unwrap_or(0),
-            action: caps["command"].to_string(),
+            action: caps["command"].to_string().into_boxed_str(),
             tag: caps["tag"].parse().unwrap_or(0),
-            opcode: caps["opcode"].to_string(),
+            opcode: caps["opcode"].to_string().into_boxed_str(),
             lba,
             size: size_in_4kb,
             groupid: u32::from_str_radix(&caps["group_id"], 16).unwrap_or(0),
@@ -101,19 +101,19 @@ pub fn parse_block_io_event(line: &str) -> Result<Block, &'static str> {
     if let Some(caps) = BLOCK_RE.captures(line) {
         let block = Block {
             time: caps["time"].parse().unwrap_or(0.0),
-            process: caps["process"].to_string(),
+            process: caps["process"].to_string().into_boxed_str(),
             cpu: caps["cpu"].parse().unwrap_or(0),
-            flags: caps["flags"].to_string(),
-            action: caps["action"].to_string(),
+            flags: caps["flags"].to_string().into_boxed_str(),
+            action: caps["action"].to_string().into_boxed_str(),
             devmajor: caps["devmajor"].parse().unwrap_or(0),
             devminor: caps["devminor"].parse().unwrap_or(0),
-            io_type: caps["io_type"].to_string(),
+            io_type: caps["io_type"].to_string().into_boxed_str(),
             extra: caps
                 .name("extra")
                 .map_or(0, |m| m.as_str().parse().unwrap_or(0)),
             sector: caps["sector"].parse().unwrap_or(0),
             size: caps["size"].parse().unwrap_or(0),
-            comm: caps["comm"].to_string(),
+            comm: caps["comm"].to_string().into_boxed_str(),
             qd: 0,
             dtoc: 0.0,
             ctoc: 0.0,
@@ -144,17 +144,17 @@ pub fn parse_blktrace_csv_event(line: &str) -> Result<Block, &'static str> {
     if let Some(caps) = BLKTRACE_CSV_RE.captures(line) {
         let block = Block {
             time: caps["time"].parse().unwrap_or(0.0),
-            process: caps["pid"].to_string(), // PID as process identifier
+            process: caps["pid"].to_string().into_boxed_str(),
             cpu: caps["cpu"].parse().unwrap_or(0),
-            flags: String::new(), // Not available in CSV format
-            action: caps["action"].to_string(),
+            flags: String::new().into_boxed_str(),
+            action: caps["action"].to_string().into_boxed_str(),
             devmajor: caps["major"].parse().unwrap_or(0),
             devminor: caps["minor"].parse().unwrap_or(0),
-            io_type: caps["rwds"].to_string(), // Read/Write/Discard/Sync flags
-            extra: 0,                          // Not available in CSV format
+            io_type: caps["rwds"].to_string().into_boxed_str(),
+            extra: 0,
             sector: caps["sector"].parse().unwrap_or(0),
             size: caps["size"].parse().unwrap_or(0),
-            comm: caps["comm"].to_string(),
+            comm: caps["comm"].to_string().into_boxed_str(),
             qd: 0,
             dtoc: 0.0,
             ctoc: 0.0,
@@ -183,7 +183,7 @@ pub fn parse_ufscustom_event(line: &str) -> Result<UFSCUSTOM, &'static str> {
 
     if let Some(caps) = UFSCUSTOM_RE.captures(line) {
         // Use string references to reduce copying
-        let opcode = caps["opcode"].to_string();
+        let opcode = caps["opcode"].to_string().into_boxed_str();
         let raw_lba: u64 = caps["lba"].parse().unwrap_or(0);
         let size: u32 = caps["size"].parse().unwrap_or(0);
         let start_time: f64 = caps["start_time"].parse().unwrap_or(0.0);
@@ -657,10 +657,10 @@ pub fn calculate_block_latency_advanced(blocks: &mut [Block]) {
 
     // Simple Q (dispatch) to C (complete) mapping
     // Key: (devmajor, devminor, sector, size, comm)
-    let mut dispatch_map: HashMap<(u32, u32, u64, u32, String), f64> = HashMap::new();
+    let mut dispatch_map: HashMap<(u32, u32, u64, u32, Box<str>), f64> = HashMap::new();
 
     for block in blocks.iter_mut() {
-        match block.action.as_str() {
+        match &*block.action {
             "Q" => {
                 // Q acts as dispatch (issue) - store dispatch time
                 let key = (

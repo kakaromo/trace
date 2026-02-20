@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone, Encode, Decode)]
 pub struct UFS {
     pub time: f64,
-    pub process: String,
+    pub process: Box<str>,
     pub cpu: u32,
-    pub action: String,
+    pub action: Box<str>,
     pub tag: u32,
-    pub opcode: String,
+    pub opcode: Box<str>,
     pub lba: u64,
     pub size: u32,
     pub groupid: u32,

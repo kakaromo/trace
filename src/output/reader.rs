@@ -130,11 +130,11 @@ fn convert_batch_to_ufs(
     for i in 0..num_rows {
         let ufs = UFS {
             time: time_array.value(i),
-            process: process_array.value(i).to_string(),
+            process: process_array.value(i).to_string().into_boxed_str(),
             cpu: cpu_array.value(i),
-            action: action_array.value(i).to_string(),
+            action: action_array.value(i).to_string().into_boxed_str(),
             tag: tag_array.value(i),
-            opcode: opcode_array.value(i).to_string(),
+            opcode: opcode_array.value(i).to_string().into_boxed_str(),
             lba: lba_array.value(i),
             size: size_array.value(i),
             groupid: groupid_array.value(i),
@@ -205,17 +205,17 @@ fn convert_batch_to_block(
     for i in 0..num_rows {
         let block = Block {
             time: time_array.value(i),
-            process: process_array.value(i).to_string(),
+            process: process_array.value(i).to_string().into_boxed_str(),
             cpu: cpu_array.value(i),
-            flags: flags_array.value(i).to_string(),
-            action: action_array.value(i).to_string(),
+            flags: flags_array.value(i).to_string().into_boxed_str(),
+            action: action_array.value(i).to_string().into_boxed_str(),
             devmajor: devmajor_array.value(i),
             devminor: devminor_array.value(i),
-            io_type: io_type_array.value(i).to_string(),
+            io_type: io_type_array.value(i).to_string().into_boxed_str(),
             extra: extra_array.value(i),
             sector: sector_array.value(i),
             size: size_array.value(i),
-            comm: comm_array.value(i).to_string(),
+            comm: comm_array.value(i).to_string().into_boxed_str(),
             qd: qd_array.value(i),
             dtoc: dtoc_array.value(i),
             ctoc: ctoc_array.value(i),
@@ -280,7 +280,7 @@ fn convert_batch_to_ufscustom(
     // 각 행을 UFSCUSTOM 구조체로 변환
     for i in 0..num_rows {
         let ufscustom = UFSCUSTOM {
-            opcode: opcode_array.value(i).to_string(),
+            opcode: opcode_array.value(i).to_string().into_boxed_str(),
             lba: lba_array.value(i),
             size: size_array.value(i),
             start_time: start_time_array.value(i),

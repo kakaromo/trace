@@ -1,4 +1,20 @@
+use lazy_static::lazy_static;
 use regex::Regex;
+
+lazy_static! {
+    static ref FIO_ITERATION_RE: Regex =
+        Regex::new(r"---\s+FIO.*\(Iteration\s+(\d+)\)\s+---").unwrap();
+    static ref FIO_RESULT_RE: Regex =
+        Regex::new(r"(WRITE|READ):\s+bw=(\d+\.?\d*)MiB/s").unwrap();
+    static ref TIOTEST_RESULT_RE: Regex =
+        Regex::new(r"\|\s+(Write|Read|Random Write|Random Read)\s+\d+\s+MBs\s+\|.*\|\s+(\d+\.?\d*)\s+MB/s\s+\|").unwrap();
+    static ref IOZONE_SEQ_RE: Regex =
+        Regex::new(r"^\s+\d+\s+\d+\s+(\d+)\s+\d+\s+(\d+)").unwrap();
+    static ref IOZONE_RAND_RE: Regex =
+        Regex::new(r"Parent sees throughput for \d+ random (readers|writers)\s+=\s+(\d+\.?\d*)\s+kB/sec").unwrap();
+    static ref UFSCUSTOM_TRACE_RE: Regex =
+        Regex::new(r"^0x[0-9a-f]+,\d+,\d+,").unwrap();
+}
 
 /// 벤치마크 로그 라인의 타입
 #[derive(Debug, Clone, PartialEq)]
@@ -32,43 +48,17 @@ pub enum LogLineType {
 }
 
 /// 벤치마크 로그 파서
-pub struct BenchmarkParser {
-    fio_iteration_regex: Regex,
-    fio_result_regex: Regex,
-    tiotest_result_regex: Regex,
-    iozone_seq_regex: Regex,
-    iozone_rand_regex: Regex,
-    ufs_trace_regex: Regex,
-    block_trace_regex: Regex,
-    ufscustom_trace_regex: Regex,
-}
+pub struct BenchmarkParser;
 
 impl BenchmarkParser {
     pub fn new() -> Self {
-        Self {
-            // FIO iteration 감지: "--- FIO 1GB Sequential Write Test (Iteration 1) ---"
-            fio_iteration_regex: Regex::new(r"---\s+FIO.*\(Iteration\s+(\d+)\)\s+---").unwrap(),
-            // FIO 결과 감지: "WRITE: bw=604MiB/s" 또는 "READ: bw=3190MiB/s"
-            fio_result_regex: Regex::new(r"(WRITE|READ):\s+bw=(\d+\.?\d*)MiB/s").unwrap(),
-            // TIOtest 결과 감지: "| Write        1024 MBs |    0.5 s | 1938.124 MB/s |"
-            tiotest_result_regex: Regex::new(r"\|\s+(Write|Read|Random Write|Random Read)\s+\d+\s+MBs\s+\|.*\|\s+(\d+\.?\d*)\s+MB/s\s+\|").unwrap(),
-            // IOzone sequential 결과 감지: "         1048576    1024   2226634         0   9045852"
-            iozone_seq_regex: Regex::new(r"^\s+\d+\s+\d+\s+(\d+)\s+\d+\s+(\d+)").unwrap(),
-            // IOzone random 결과 감지: "Parent sees throughput for 8 random readers = 257470.02 kB/sec"
-            iozone_rand_regex: Regex::new(r"Parent sees throughput for \d+ random (readers|writers)\s+=\s+(\d+\.?\d*)\s+kB/sec").unwrap(),
-            // UFS trace 감지: "ufshcd_command:"
-            ufs_trace_regex: Regex::new(r"ufshcd_command:").unwrap(),
-            // Block trace 감지: "block_rq_"
-            block_trace_regex: Regex::new(r"block_rq_").unwrap(),
-            // UFSCustom trace 감지: CSV 형식 "0x[opcode],[lba],[size],[start_time],[end_time]"
-            ufscustom_trace_regex: Regex::new(r"^0x[0-9a-f]+,\d+,\d+,").unwrap(),
-        }
+        Self
     }
 
     /// 로그 라인 타입 감지
     pub fn detect_line_type(&self, line: &str, current_iteration: &mut usize) -> LogLineType {
         // FIO iteration 감지
-        if let Some(caps) = self.fio_iteration_regex.captures(line) {
+        if let Some(caps) = FIO_ITERATION_RE.captures(line) {
             if let Ok(iter) = caps[1].parse::<usize>() {
                 *current_iteration = iter;
             }
@@ -76,7 +66,7 @@ impl BenchmarkParser {
         }
 
         // FIO 결과 감지
-        if let Some(caps) = self.fio_result_regex.captures(line) {
+        if let Some(caps) = FIO_RESULT_RE.captures(line) {
             let test_type = caps[1].to_string();
             if let Ok(bandwidth) = caps[2].parse::<f64>() {
                 return LogLineType::FioResult {
@@ -88,7 +78,7 @@ impl BenchmarkParser {
         }
 
         // TIOtest 결과 감지
-        if let Some(caps) = self.tiotest_result_regex.captures(line) {
+        if let Some(caps) = TIOTEST_RESULT_RE.captures(line) {
             let test_type = caps[1].to_string();
             if let Ok(bandwidth) = caps[2].parse::<f64>() {
                 // TIOtest는 모든 테스트를 순차적으로 수행하므로
@@ -105,21 +95,21 @@ impl BenchmarkParser {
         }
 
         // IOzone sequential 결과 감지
-        if let Some(caps) = self.iozone_seq_regex.captures(line) {
-            if let (Ok(write_bw), Ok(_read_bw)) = (caps[1].parse::<f64>(), caps[2].parse::<f64>()) {
+        if let Some(caps) = IOZONE_SEQ_RE.captures(line) {
+            if let (Ok(write_bw), Ok(_read_bw)) = (caps[1].parse::<f64>(), caps[2].parse::<f64>())
+            {
                 *current_iteration += 1;
-                // Sequential write와 read를 하나의 iteration으로 처리
                 return LogLineType::IOzoneResult {
                     iteration: *current_iteration,
                     test_type: "Sequential".to_string(),
-                    bandwidth: write_bw, // write 성능만 저장 (필요시 둘 다 저장 가능)
+                    bandwidth: write_bw,
                 };
             }
         }
 
         // IOzone random 결과 감지
-        if let Some(caps) = self.iozone_rand_regex.captures(line) {
-            let test_type = if caps[1].to_string() == "readers" {
+        if let Some(caps) = IOZONE_RAND_RE.captures(line) {
+            let test_type = if &caps[1] == "readers" {
                 "Random Read"
             } else {
                 "Random Write"
@@ -128,21 +118,21 @@ impl BenchmarkParser {
                 return LogLineType::IOzoneResult {
                     iteration: *current_iteration,
                     test_type: test_type.to_string(),
-                    bandwidth: bandwidth / 1024.0, // kB/sec to MB/sec
+                    bandwidth: bandwidth / 1024.0,
                 };
             }
         }
 
-        // Trace 라인 감지
-        if self.ufs_trace_regex.is_match(line) {
+        // Trace 라인 감지 (단순 문자열 검색으로 충분)
+        if line.contains("ufshcd_command:") {
             return LogLineType::UfsTrace;
         }
 
-        if self.block_trace_regex.is_match(line) {
+        if line.contains("block_rq_") {
             return LogLineType::BlockTrace;
         }
 
-        if self.ufscustom_trace_regex.is_match(line) {
+        if UFSCUSTOM_TRACE_RE.is_match(line) {
             return LogLineType::UfsCustomTrace;
         }
 
@@ -261,18 +251,15 @@ mod tests {
         let result = parser.detect_line_type(ufs_line, &mut current_iter);
         assert_eq!(result, LogLineType::UfsTrace);
 
-        // Test block trace detection
         let block_line =
             "  test-123   [000] ..... 12345.678901: block_rq_issue: 8,0 R 4096 () 1000 + 8 [test]";
         let result = parser.detect_line_type(block_line, &mut current_iter);
         assert_eq!(result, LogLineType::BlockTrace);
 
-        // Test UFSCUSTOM trace detection
         let ufscustom_line = "0x28,1000,8,123.456,123.789";
         let result = parser.detect_line_type(ufscustom_line, &mut current_iter);
         assert_eq!(result, LogLineType::UfsCustomTrace);
 
-        // Test another UFSCUSTOM format
         let ufscustom_line2 = "0x2a,2048,16,456.123,456.567";
         let result = parser.detect_line_type(ufscustom_line2, &mut current_iter);
         assert_eq!(result, LogLineType::UfsCustomTrace);

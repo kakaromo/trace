@@ -157,11 +157,11 @@ fn save_ufs_to_parquet(
 
         for t in chunk {
             time_vec.push(t.time);
-            process_vec.push(t.process.as_str());
+            process_vec.push(&*t.process);
             cpu_vec.push(t.cpu);
-            action_vec.push(t.action.as_str());
+            action_vec.push(&*t.action);
             tag_vec.push(t.tag);
-            opcode_vec.push(t.opcode.as_str());
+            opcode_vec.push(&*t.opcode);
             lba_vec.push(t.lba);
             size_vec.push(t.size);
             groupid_vec.push(t.groupid);
@@ -290,17 +290,17 @@ fn save_block_to_parquet(
 
         for t in chunk {
             time_vec.push(t.time);
-            process_vec.push(t.process.as_str());
+            process_vec.push(&*t.process);
             cpu_vec.push(t.cpu);
-            flags_vec.push(t.flags.as_str());
-            action_vec.push(t.action.as_str());
+            flags_vec.push(&*t.flags);
+            action_vec.push(&*t.action);
             devmajor_vec.push(t.devmajor);
             devminor_vec.push(t.devminor);
-            io_type_vec.push(t.io_type.as_str());
+            io_type_vec.push(&*t.io_type);
             extra_vec.push(t.extra);
             sector_vec.push(t.sector);
             size_vec.push(t.size);
-            comm_vec.push(t.comm.as_str());
+            comm_vec.push(&*t.comm);
             qd_vec.push(t.qd);
             dtoc_vec.push(t.dtoc);
             ctoc_vec.push(t.ctoc);
@@ -415,7 +415,7 @@ fn save_ufscustom_to_parquet(
         let mut continuous_vec = Vec::with_capacity(len);
 
         for t in chunk {
-            opcode_vec.push(t.opcode.as_str());
+            opcode_vec.push(&*t.opcode);
             lba_vec.push(t.lba);
             size_vec.push(t.size);
             start_time_vec.push(t.start_time);

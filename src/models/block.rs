@@ -4,17 +4,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone, Encode, Decode)]
 pub struct Block {
     pub time: f64,
-    pub process: String,
+    pub process: Box<str>,
     pub cpu: u32,
-    pub flags: String,
-    pub action: String,
+    pub flags: Box<str>,
+    pub action: Box<str>,
     pub devmajor: u32,
     pub devminor: u32,
-    pub io_type: String,
+    pub io_type: Box<str>,
     pub extra: u32,
     pub sector: u64,
     pub size: u32,
-    pub comm: String,
+    pub comm: Box<str>,
     pub qd: u32,   // Queue Depth
     pub dtoc: f64, // Device to Complete latency
     pub ctoc: f64, // Complete to Complete latency

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 // UFS 타입에 대한 TraceItem 구현
 impl TraceItem for UFS {
     fn get_type(&self) -> String {
-        self.opcode.clone() // UFS는 opcode를 타입으로 사용
+        self.opcode.to_string() // UFS는 opcode를 타입으로 사용
     }
 
     fn get_time(&self) -> f64 {
@@ -72,7 +72,7 @@ impl TraceItem for Block {
 
     fn get_io_type(&self) -> String {
         // Block은 io_type을 직접 사용
-        self.io_type.clone()
+        self.io_type.to_string()
     }
 
     fn get_dtoc(&self) -> f64 {
@@ -111,7 +111,7 @@ impl TraceItem for Block {
 // UFSCUSTOM 타입에 대한 TraceItem 구현
 impl TraceItem for UFSCUSTOM {
     fn get_type(&self) -> String {
-        self.opcode.clone() // UFSCUSTOM도 UFS와 같이 opcode를 타입으로 사용
+        self.opcode.to_string() // UFSCUSTOM도 UFS와 같이 opcode를 타입으로 사용
     }
 
     fn get_time(&self) -> f64 {
@@ -831,7 +831,7 @@ fn print_ufscustom_specific_statistics(traces: &[UFSCUSTOM]) {
     // 타입별 요청 수 집계
     let mut type_groups: HashMap<String, usize> = HashMap::new();
     for trace in traces {
-        *type_groups.entry(trace.opcode.clone()).or_insert(0) += 1;
+        *type_groups.entry(trace.opcode.to_string()).or_insert(0) += 1;
     }
 
     // 타입별 비율 출력

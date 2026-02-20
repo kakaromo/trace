@@ -24,24 +24,15 @@ fn action_sort_key(action: &str) -> u8 {
     }
 }
 
-// SIMD-optimized line splitting function
+// memchr 기반 라인 경계 탐색 (SIMD 자동 활용)
 fn find_line_boundaries(data: &[u8]) -> Vec<usize> {
-    let mut boundaries = Vec::new();
+    let mut boundaries = Vec::with_capacity(data.len() / 80); // 평균 라인 길이 80바이트 추정
     boundaries.push(0);
 
-    // Use SIMD-like approach for finding newlines
-    let mut i = 0;
-    while i < data.len() {
-        // Process 64 bytes at a time for better cache performance
-        let end = std::cmp::min(i + 64, data.len());
-        let chunk = &data[i..end];
-
-        for (offset, &byte) in chunk.iter().enumerate() {
-            if byte == b'\n' {
-                boundaries.push(i + offset + 1);
-            }
-        }
-        i = end;
+    let mut pos = 0;
+    while let Some(offset) = memchr::memchr(b'\n', &data[pos..]) {
+        boundaries.push(pos + offset + 1);
+        pos += offset + 1;
     }
 
     boundaries

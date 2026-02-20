@@ -638,7 +638,7 @@ fn process_ufscustom_content(content: &str) -> io::Result<Vec<UFSCUSTOM>> {
 
                 // Parse line using regex
                 if let Some(caps) = UFSCUSTOM_RE.captures(line) {
-                    let opcode = caps["opcode"].to_string();
+                    let opcode = caps["opcode"].to_string().into_boxed_str();
                     let lba: u64 = caps["lba"].parse().unwrap_or(0);
                     let size: u32 = caps["size"].parse().unwrap_or(0);
                     let start_time: f64 = caps["start_time"].parse().unwrap_or(0.0);

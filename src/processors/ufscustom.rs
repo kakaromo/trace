@@ -79,7 +79,7 @@ pub fn ufscustom_bottom_half_latency_process(mut ufscustom_list: Vec<UFSCUSTOM>)
     }
 
     // CTOC, CTOD, continuous 계산
-    let mut prev_request: Option<(u64, u32, String)> = None;
+    let mut prev_request: Option<(u64, u32, Box<str>)> = None;
     let mut last_complete_time: Option<f64> = None;
     let mut last_qd_zero_complete_time: Option<f64> = None; // QD가 0이 될 때의 완료 시간
 

@@ -67,7 +67,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
                 last_reported = idx;
             }
 
-            if block.action == "block_rq_issue" {
+            if &*block.action == "block_rq_issue" {
                 // 문자열 참조 사용하여 불필요한 할당 제거
                 let io_operation = if block.io_type.starts_with('R') {
                     &read_str
@@ -88,7 +88,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
 
                 processed_issues.insert(key);
                 deduplicated_blocks.push(block.clone());
-            } else if block.action == "block_rq_complete" {
+            } else if &*block.action == "block_rq_complete" {
                 // Remove from duplicate check list for complete
                 let io_operation = if block.io_type.starts_with('R') {
                     &read_str
@@ -193,7 +193,7 @@ pub fn block_bottom_half_latency_process(block_list: Vec<Block>) -> Vec<Block> {
 
             let key = (block.sector, io_operation.clone());
 
-            match block.action.as_str() {
+            match &*block.action {
                 "block_rq_issue" | "Q" => {
                     // Check continuity
                     if io_operation != &other_str {
