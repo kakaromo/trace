@@ -470,21 +470,30 @@ pub fn parse_log_file_streaming(
     // 중복 이벤트 제거 (청크 간 경계에서 발생할 수 있는 중복)
     println!("Removing duplicate events...");
 
-    // UFS 중복 제거 - f64를 문자열로 변환하여 hashable 하게 만듦
+    // UFS 중복 제거 - f64::to_bits()로 hashable하게 변환 (format!() 할당 제거)
     let ufs_dedup_start = Instant::now();
-    let mut ufs_unique = Vec::with_capacity(ufs_traces.len());
-    let mut ufs_dedup_map: HashSet<(String, u32, String, String)> = HashSet::new();
-
-    for ufs in ufs_traces.iter() {
-        let time_str = format!("{:.6}", ufs.time); // 소수점 6자리까지 정밀도 유지
-        let key = (time_str, ufs.tag, ufs.action.clone(), ufs.opcode.clone());
-        if ufs_dedup_map.insert(key) {
-            ufs_unique.push(ufs.clone());
-        }
+    let ufs_total = ufs_traces.len();
+    let mut ufs_dedup_map: HashSet<(u64, u32, u64, u64)> =
+        HashSet::with_capacity(ufs_total);
+    // retain()으로 in-place 중복 제거 (clone/collect 없음)
+    {
+        use std::hash::{Hash, Hasher};
+        ufs_traces.retain(|ufs| {
+            let action_hash = {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                ufs.action.hash(&mut h);
+                h.finish()
+            };
+            let opcode_hash = {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                ufs.opcode.hash(&mut h);
+                h.finish()
+            };
+            let key = (ufs.time.to_bits(), ufs.tag, action_hash, opcode_hash);
+            ufs_dedup_map.insert(key)
+        });
     }
-
-    let ufs_duplicates = ufs_traces.len() - ufs_unique.len();
-    ufs_traces = ufs_unique;
+    let ufs_duplicates = ufs_total - ufs_traces.len();
 
     println!(
         "UFS duplicate events removed: {} (in {:.2}s)",
@@ -492,21 +501,24 @@ pub fn parse_log_file_streaming(
         ufs_dedup_start.elapsed().as_secs_f64()
     );
 
-    // Block 중복 제거
+    // Block 중복 제거 - f64::to_bits()로 hashable하게 변환
     let block_dedup_start = Instant::now();
-    let mut block_unique = Vec::with_capacity(block_traces.len());
-    let mut block_dedup_map: HashSet<(String, u64, u32, String)> = HashSet::new();
-
-    for block in block_traces.iter() {
-        let time_str = format!("{:.6}", block.time);
-        let key = (time_str, block.sector, block.size, block.io_type.clone());
-        if block_dedup_map.insert(key) {
-            block_unique.push(block.clone());
-        }
+    let block_total = block_traces.len();
+    let mut block_dedup_map: HashSet<(u64, u64, u32, u64)> =
+        HashSet::with_capacity(block_total);
+    {
+        use std::hash::{Hash, Hasher};
+        block_traces.retain(|block| {
+            let io_type_hash = {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                block.io_type.hash(&mut h);
+                h.finish()
+            };
+            let key = (block.time.to_bits(), block.sector, block.size, io_type_hash);
+            block_dedup_map.insert(key)
+        });
     }
-
-    let block_duplicates = block_traces.len() - block_unique.len();
-    block_traces = block_unique;
+    let block_duplicates = block_total - block_traces.len();
 
     println!(
         "Block duplicate events removed: {} (in {:.2}s)",
@@ -514,22 +526,17 @@ pub fn parse_log_file_streaming(
         block_dedup_start.elapsed().as_secs_f64()
     );
 
-    // UFSCustom 중복 제거
+    // UFSCustom 중복 제거 - f64::to_bits()로 hashable하게 변환
     if !ufscustom_traces.is_empty() {
         let ufscustom_dedup_start = Instant::now();
-        let mut ufscustom_unique = Vec::with_capacity(ufscustom_traces.len());
-        let mut ufscustom_dedup_map: HashSet<(String, u64, u32)> = HashSet::new();
-
-        for ufsc in ufscustom_traces.iter() {
-            let time_str = format!("{:.6}", ufsc.start_time);
-            let key = (time_str, ufsc.lba, ufsc.size);
-            if ufscustom_dedup_map.insert(key) {
-                ufscustom_unique.push(ufsc.clone());
-            }
-        }
-
-        let ufscustom_duplicates = ufscustom_traces.len() - ufscustom_unique.len();
-        ufscustom_traces = ufscustom_unique;
+        let ufscustom_total = ufscustom_traces.len();
+        let mut ufscustom_dedup_map: HashSet<(u64, u64, u32)> =
+            HashSet::with_capacity(ufscustom_total);
+        ufscustom_traces.retain(|ufsc| {
+            let key = (ufsc.start_time.to_bits(), ufsc.lba, ufsc.size);
+            ufscustom_dedup_map.insert(key)
+        });
+        let ufscustom_duplicates = ufscustom_total - ufscustom_traces.len();
 
         println!(
             "UFSCustom duplicate events removed: {} (in {:.2}s)",

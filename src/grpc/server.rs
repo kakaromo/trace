@@ -62,20 +62,25 @@ impl LogProcessorService {
     fn convert_filter_options(
         proto_filter: Option<log_processor::FilterOptions>,
     ) -> Option<FilterOptions> {
-        proto_filter.map(|f| FilterOptions {
-            start_time: f.start_time,
-            end_time: f.end_time,
-            start_sector: f.start_sector,
-            end_sector: f.end_sector,
-            min_dtoc: f.min_dtoc,
-            max_dtoc: f.max_dtoc,
-            min_ctoc: f.min_ctoc,
-            max_ctoc: f.max_ctoc,
-            min_ctod: f.min_ctod,
-            max_ctod: f.max_ctod,
-            min_qd: f.min_qd,
-            max_qd: f.max_qd,
-            cpu_list: f.cpu_list,
+        proto_filter.map(|f| {
+            let mut filter = FilterOptions {
+                start_time: f.start_time,
+                end_time: f.end_time,
+                start_sector: f.start_sector,
+                end_sector: f.end_sector,
+                min_dtoc: f.min_dtoc,
+                max_dtoc: f.max_dtoc,
+                min_ctoc: f.min_ctoc,
+                max_ctoc: f.max_ctoc,
+                min_ctod: f.min_ctod,
+                max_ctod: f.max_ctod,
+                min_qd: f.min_qd,
+                max_qd: f.max_qd,
+                cpu_list: f.cpu_list,
+                ..Default::default()
+            };
+            filter.build_cpu_set();
+            filter
         })
     }
 

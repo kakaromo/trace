@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::io::{self, BufRead};
 
 // 필터링 옵션을 저장할 구조체 정의
@@ -18,6 +19,8 @@ pub struct FilterOptions {
     pub min_qd: u32,        // 최소 Queue Depth
     pub max_qd: u32,        // 최대 Queue Depth
     pub cpu_list: Vec<u32>, // 필터링할 CPU 번호 목록
+    #[serde(skip)]
+    pub cpu_set: Option<HashSet<u32>>, // cpu_list의 O(1) 조회용 캐시
 }
 
 impl Default for FilterOptions {
@@ -36,6 +39,7 @@ impl Default for FilterOptions {
             min_qd: 0,
             max_qd: 0,
             cpu_list: Vec::new(),
+            cpu_set: None,
         }
     }
 }
@@ -71,6 +75,24 @@ impl FilterOptions {
         !self.cpu_list.is_empty()
     }
 
+    /// cpu_list에서 HashSet 캐시를 구축 (필터링 전 한 번 호출)
+    pub fn build_cpu_set(&mut self) {
+        if !self.cpu_list.is_empty() {
+            self.cpu_set = Some(self.cpu_list.iter().copied().collect());
+        } else {
+            self.cpu_set = None;
+        }
+    }
+
+    /// CPU 번호가 필터에 매칭되는지 O(1)로 확인
+    #[inline]
+    pub fn cpu_matches(&self, cpu: u32) -> bool {
+        match &self.cpu_set {
+            Some(set) => set.contains(&cpu),
+            None => self.cpu_list.contains(&cpu), // 캐시 미구축 시 fallback
+        }
+    }
+
     // UFS LBA로 변환 (4KB = 8 섹터)
     pub fn to_ufs_lba(&self) -> FilterOptions {
         FilterOptions {
@@ -95,6 +117,7 @@ impl FilterOptions {
             min_qd: self.min_qd,
             max_qd: self.max_qd,
             cpu_list: self.cpu_list.clone(),
+            cpu_set: self.cpu_set.clone(),
         }
     }
 }
@@ -247,6 +270,15 @@ pub fn filter_block_data(
     block_data: Vec<crate::Block>,
     filter: &FilterOptions,
 ) -> Vec<crate::Block> {
+    // cpu_set 캐시가 없으면 구축
+    let filter = if filter.is_cpu_filter_active() && filter.cpu_set.is_none() {
+        let mut f = filter.clone();
+        f.build_cpu_set();
+        std::borrow::Cow::Owned(f)
+    } else {
+        std::borrow::Cow::Borrowed(filter)
+    };
+    let filter = filter.as_ref();
     // 필터가 활성화되지 않은 경우 원본 데이터 반환
     if !filter.is_time_filter_active()
         && !filter.is_sector_filter_active()
@@ -405,7 +437,7 @@ pub fn filter_block_data(
 
             // CPU 필터 적용
             let cpu_match = if filter.is_cpu_filter_active() {
-                filter.cpu_list.contains(&item.cpu)
+                filter.cpu_matches(item.cpu)
             } else {
                 true
             };
@@ -424,6 +456,16 @@ pub fn filter_block_data(
 
 // UFS 데이터 필터링 함수 (4KB LBA로 변환 적용)
 pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec<crate::UFS> {
+    // cpu_set 캐시가 없으면 구축
+    let filter = if filter.is_cpu_filter_active() && filter.cpu_set.is_none() {
+        let mut f = filter.clone();
+        f.build_cpu_set();
+        std::borrow::Cow::Owned(f)
+    } else {
+        std::borrow::Cow::Borrowed(filter)
+    };
+    let filter = filter.as_ref();
+
     // 필터가 활성화되지 않은 경우 원본 데이터 반환
     if !filter.is_time_filter_active()
         && !filter.is_sector_filter_active()
@@ -585,7 +627,7 @@ pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec
 
             // CPU 필터 적용
             let cpu_match = if filter.is_cpu_filter_active() {
-                filter.cpu_list.contains(&item.cpu)
+                filter.cpu_matches(item.cpu)
             } else {
                 true
             };
@@ -607,6 +649,16 @@ pub fn filter_ufscustom_data(
     ufscustom_data: Vec<crate::UFSCUSTOM>,
     filter: &FilterOptions,
 ) -> Vec<crate::UFSCUSTOM> {
+    // cpu_set 캐시가 없으면 구축
+    let filter = if filter.is_cpu_filter_active() && filter.cpu_set.is_none() {
+        let mut f = filter.clone();
+        f.build_cpu_set();
+        std::borrow::Cow::Owned(f)
+    } else {
+        std::borrow::Cow::Borrowed(filter)
+    };
+    let filter = filter.as_ref();
+
     // 필터가 활성화되지 않은 경우 원본 데이터 반환
     if !filter.is_time_filter_active()
         && !filter.is_sector_filter_active()
