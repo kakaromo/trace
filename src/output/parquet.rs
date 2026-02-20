@@ -127,81 +127,71 @@ fn save_ufs_to_parquet(
     let props = create_writer_properties_with_compression(compression);
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
-    // 순차 처리로 메모리 안정성 향상 (대용량 데이터 처리 시)
-    let batches: Vec<_> = traces
-        .chunks(chunk_size)
-        .enumerate()
-        .map(|(chunk_idx, chunk)| {
-            if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
-                println!(
-                    "Processing UFS chunk {}/{} ({} records)",
-                    chunk_idx + 1,
-                    total_chunks,
-                    chunk.len()
-                );
-            }
+    // 스트리밍 방식: 청크를 하나씩 처리하고 즉시 기록 (메모리 절감)
+    for (chunk_idx, chunk) in traces.chunks(chunk_size).enumerate() {
+        if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
+            println!(
+                "Processing UFS chunk {}/{} ({} records)",
+                chunk_idx + 1,
+                total_chunks,
+                chunk.len()
+            );
+        }
 
-            // 사전 할당된 벡터로 메모리 할당 최적화
-            let len = chunk.len();
-            let mut time_vec = Vec::with_capacity(len);
-            let mut process_vec = Vec::with_capacity(len);
-            let mut cpu_vec = Vec::with_capacity(len);
-            let mut action_vec = Vec::with_capacity(len);
-            let mut tag_vec = Vec::with_capacity(len);
-            let mut opcode_vec = Vec::with_capacity(len);
-            let mut lba_vec = Vec::with_capacity(len);
-            let mut size_vec = Vec::with_capacity(len);
-            let mut groupid_vec = Vec::with_capacity(len);
-            let mut hwqid_vec = Vec::with_capacity(len);
-            let mut qd_vec = Vec::with_capacity(len);
-            let mut dtoc_vec = Vec::with_capacity(len);
-            let mut ctoc_vec = Vec::with_capacity(len);
-            let mut ctod_vec = Vec::with_capacity(len);
-            let mut continuous_vec = Vec::with_capacity(len);
+        let len = chunk.len();
+        let mut time_vec = Vec::with_capacity(len);
+        let mut process_vec = Vec::with_capacity(len);
+        let mut cpu_vec = Vec::with_capacity(len);
+        let mut action_vec = Vec::with_capacity(len);
+        let mut tag_vec = Vec::with_capacity(len);
+        let mut opcode_vec = Vec::with_capacity(len);
+        let mut lba_vec = Vec::with_capacity(len);
+        let mut size_vec = Vec::with_capacity(len);
+        let mut groupid_vec = Vec::with_capacity(len);
+        let mut hwqid_vec = Vec::with_capacity(len);
+        let mut qd_vec = Vec::with_capacity(len);
+        let mut dtoc_vec = Vec::with_capacity(len);
+        let mut ctoc_vec = Vec::with_capacity(len);
+        let mut ctod_vec = Vec::with_capacity(len);
+        let mut continuous_vec = Vec::with_capacity(len);
 
-            // 단일 루프로 모든 데이터 추출
-            for t in chunk {
-                time_vec.push(t.time);
-                process_vec.push(t.process.as_str());
-                cpu_vec.push(t.cpu);
-                action_vec.push(t.action.as_str());
-                tag_vec.push(t.tag);
-                opcode_vec.push(t.opcode.as_str());
-                lba_vec.push(t.lba);
-                size_vec.push(t.size);
-                groupid_vec.push(t.groupid);
-                hwqid_vec.push(t.hwqid);
-                qd_vec.push(t.qd);
-                dtoc_vec.push(t.dtoc);
-                ctoc_vec.push(t.ctoc);
-                ctod_vec.push(t.ctod);
-                continuous_vec.push(t.continuous);
-            }
+        for t in chunk {
+            time_vec.push(t.time);
+            process_vec.push(t.process.as_str());
+            cpu_vec.push(t.cpu);
+            action_vec.push(t.action.as_str());
+            tag_vec.push(t.tag);
+            opcode_vec.push(t.opcode.as_str());
+            lba_vec.push(t.lba);
+            size_vec.push(t.size);
+            groupid_vec.push(t.groupid);
+            hwqid_vec.push(t.hwqid);
+            qd_vec.push(t.qd);
+            dtoc_vec.push(t.dtoc);
+            ctoc_vec.push(t.ctoc);
+            ctod_vec.push(t.ctod);
+            continuous_vec.push(t.continuous);
+        }
 
-            let columns: Vec<ArrayRef> = vec![
-                Arc::new(Float64Array::from(time_vec)),
-                Arc::new(StringArray::from(process_vec)),
-                Arc::new(UInt32Array::from(cpu_vec)),
-                Arc::new(StringArray::from(action_vec)),
-                Arc::new(UInt32Array::from(tag_vec)),
-                Arc::new(StringArray::from(opcode_vec)),
-                Arc::new(UInt64Array::from(lba_vec)),
-                Arc::new(UInt32Array::from(size_vec)),
-                Arc::new(UInt32Array::from(groupid_vec)),
-                Arc::new(UInt32Array::from(hwqid_vec)),
-                Arc::new(UInt32Array::from(qd_vec)),
-                Arc::new(Float64Array::from(dtoc_vec)),
-                Arc::new(Float64Array::from(ctoc_vec)),
-                Arc::new(Float64Array::from(ctod_vec)),
-                Arc::new(BooleanArray::from(continuous_vec)),
-            ];
+        let columns: Vec<ArrayRef> = vec![
+            Arc::new(Float64Array::from(time_vec)),
+            Arc::new(StringArray::from(process_vec)),
+            Arc::new(UInt32Array::from(cpu_vec)),
+            Arc::new(StringArray::from(action_vec)),
+            Arc::new(UInt32Array::from(tag_vec)),
+            Arc::new(StringArray::from(opcode_vec)),
+            Arc::new(UInt64Array::from(lba_vec)),
+            Arc::new(UInt32Array::from(size_vec)),
+            Arc::new(UInt32Array::from(groupid_vec)),
+            Arc::new(UInt32Array::from(hwqid_vec)),
+            Arc::new(UInt32Array::from(qd_vec)),
+            Arc::new(Float64Array::from(dtoc_vec)),
+            Arc::new(Float64Array::from(ctoc_vec)),
+            Arc::new(Float64Array::from(ctod_vec)),
+            Arc::new(BooleanArray::from(continuous_vec)),
+        ];
 
-            RecordBatch::try_new(schema.clone(), columns)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // 순차적으로 배치 작성 (파일 I/O는 순차적이어야 함)
-    for batch in batches {
+        let batch = RecordBatch::try_new(schema.clone(), columns)?;
         writer.write(&batch)?;
     }
 
@@ -268,87 +258,77 @@ fn save_block_to_parquet(
     let props = create_writer_properties_with_compression(compression);
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
-    // 순차 처리로 메모리 안정성 향상 (대용량 데이터 처리 시)
-    let batches: Vec<_> = traces
-        .chunks(chunk_size)
-        .enumerate()
-        .map(|(chunk_idx, chunk)| {
-            if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
-                println!(
-                    "Processing Block chunk {}/{} ({} records)",
-                    chunk_idx + 1,
-                    total_chunks,
-                    chunk.len()
-                );
-            }
+    // 스트리밍 방식: 청크를 하나씩 처리하고 즉시 기록 (메모리 절감)
+    for (chunk_idx, chunk) in traces.chunks(chunk_size).enumerate() {
+        if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
+            println!(
+                "Processing Block chunk {}/{} ({} records)",
+                chunk_idx + 1,
+                total_chunks,
+                chunk.len()
+            );
+        }
 
-            // 사전 할당된 벡터로 메모리 할당 최적화
-            let len = chunk.len();
-            let mut time_vec = Vec::with_capacity(len);
-            let mut process_vec = Vec::with_capacity(len);
-            let mut cpu_vec = Vec::with_capacity(len);
-            let mut flags_vec = Vec::with_capacity(len);
-            let mut action_vec = Vec::with_capacity(len);
-            let mut devmajor_vec = Vec::with_capacity(len);
-            let mut devminor_vec = Vec::with_capacity(len);
-            let mut io_type_vec = Vec::with_capacity(len);
-            let mut extra_vec = Vec::with_capacity(len);
-            let mut sector_vec = Vec::with_capacity(len);
-            let mut size_vec = Vec::with_capacity(len);
-            let mut comm_vec = Vec::with_capacity(len);
-            let mut qd_vec = Vec::with_capacity(len);
-            let mut dtoc_vec = Vec::with_capacity(len);
-            let mut ctoc_vec = Vec::with_capacity(len);
-            let mut ctod_vec = Vec::with_capacity(len);
-            let mut continuous_vec = Vec::with_capacity(len);
+        let len = chunk.len();
+        let mut time_vec = Vec::with_capacity(len);
+        let mut process_vec = Vec::with_capacity(len);
+        let mut cpu_vec = Vec::with_capacity(len);
+        let mut flags_vec = Vec::with_capacity(len);
+        let mut action_vec = Vec::with_capacity(len);
+        let mut devmajor_vec = Vec::with_capacity(len);
+        let mut devminor_vec = Vec::with_capacity(len);
+        let mut io_type_vec = Vec::with_capacity(len);
+        let mut extra_vec = Vec::with_capacity(len);
+        let mut sector_vec = Vec::with_capacity(len);
+        let mut size_vec = Vec::with_capacity(len);
+        let mut comm_vec = Vec::with_capacity(len);
+        let mut qd_vec = Vec::with_capacity(len);
+        let mut dtoc_vec = Vec::with_capacity(len);
+        let mut ctoc_vec = Vec::with_capacity(len);
+        let mut ctod_vec = Vec::with_capacity(len);
+        let mut continuous_vec = Vec::with_capacity(len);
 
-            // 단일 루프로 모든 데이터 추출
-            for t in chunk {
-                time_vec.push(t.time);
-                process_vec.push(t.process.as_str());
-                cpu_vec.push(t.cpu);
-                flags_vec.push(t.flags.as_str());
-                action_vec.push(t.action.as_str());
-                devmajor_vec.push(t.devmajor);
-                devminor_vec.push(t.devminor);
-                io_type_vec.push(t.io_type.as_str());
-                extra_vec.push(t.extra);
-                sector_vec.push(t.sector);
-                size_vec.push(t.size);
-                comm_vec.push(t.comm.as_str());
-                qd_vec.push(t.qd);
-                dtoc_vec.push(t.dtoc);
-                ctoc_vec.push(t.ctoc);
-                ctod_vec.push(t.ctod);
-                continuous_vec.push(t.continuous);
-            }
+        for t in chunk {
+            time_vec.push(t.time);
+            process_vec.push(t.process.as_str());
+            cpu_vec.push(t.cpu);
+            flags_vec.push(t.flags.as_str());
+            action_vec.push(t.action.as_str());
+            devmajor_vec.push(t.devmajor);
+            devminor_vec.push(t.devminor);
+            io_type_vec.push(t.io_type.as_str());
+            extra_vec.push(t.extra);
+            sector_vec.push(t.sector);
+            size_vec.push(t.size);
+            comm_vec.push(t.comm.as_str());
+            qd_vec.push(t.qd);
+            dtoc_vec.push(t.dtoc);
+            ctoc_vec.push(t.ctoc);
+            ctod_vec.push(t.ctod);
+            continuous_vec.push(t.continuous);
+        }
 
-            let columns: Vec<ArrayRef> = vec![
-                Arc::new(Float64Array::from(time_vec)),
-                Arc::new(StringArray::from(process_vec)),
-                Arc::new(UInt32Array::from(cpu_vec)),
-                Arc::new(StringArray::from(flags_vec)),
-                Arc::new(StringArray::from(action_vec)),
-                Arc::new(UInt32Array::from(devmajor_vec)),
-                Arc::new(UInt32Array::from(devminor_vec)),
-                Arc::new(StringArray::from(io_type_vec)),
-                Arc::new(UInt32Array::from(extra_vec)),
-                Arc::new(UInt64Array::from(sector_vec)),
-                Arc::new(UInt32Array::from(size_vec)),
-                Arc::new(StringArray::from(comm_vec)),
-                Arc::new(UInt32Array::from(qd_vec)),
-                Arc::new(Float64Array::from(dtoc_vec)),
-                Arc::new(Float64Array::from(ctoc_vec)),
-                Arc::new(Float64Array::from(ctod_vec)),
-                Arc::new(BooleanArray::from(continuous_vec)),
-            ];
+        let columns: Vec<ArrayRef> = vec![
+            Arc::new(Float64Array::from(time_vec)),
+            Arc::new(StringArray::from(process_vec)),
+            Arc::new(UInt32Array::from(cpu_vec)),
+            Arc::new(StringArray::from(flags_vec)),
+            Arc::new(StringArray::from(action_vec)),
+            Arc::new(UInt32Array::from(devmajor_vec)),
+            Arc::new(UInt32Array::from(devminor_vec)),
+            Arc::new(StringArray::from(io_type_vec)),
+            Arc::new(UInt32Array::from(extra_vec)),
+            Arc::new(UInt64Array::from(sector_vec)),
+            Arc::new(UInt32Array::from(size_vec)),
+            Arc::new(StringArray::from(comm_vec)),
+            Arc::new(UInt32Array::from(qd_vec)),
+            Arc::new(Float64Array::from(dtoc_vec)),
+            Arc::new(Float64Array::from(ctoc_vec)),
+            Arc::new(Float64Array::from(ctod_vec)),
+            Arc::new(BooleanArray::from(continuous_vec)),
+        ];
 
-            RecordBatch::try_new(schema.clone(), columns)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // 순차적으로 배치 작성
-    for batch in batches {
+        let batch = RecordBatch::try_new(schema.clone(), columns)?;
         writer.write(&batch)?;
     }
 
@@ -410,69 +390,59 @@ fn save_ufscustom_to_parquet(
     let props = create_writer_properties_with_compression(compression);
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
 
-    // 순차 처리로 메모리 안정성 향상 (대용량 데이터 처리 시)
-    let batches: Vec<_> = traces
-        .chunks(chunk_size)
-        .enumerate()
-        .map(|(chunk_idx, chunk)| {
-            if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
-                println!(
-                    "Processing UFSCUSTOM chunk {}/{} ({} records)",
-                    chunk_idx + 1,
-                    total_chunks,
-                    chunk.len()
-                );
-            }
+    // 스트리밍 방식: 청크를 하나씩 처리하고 즉시 기록 (메모리 절감)
+    for (chunk_idx, chunk) in traces.chunks(chunk_size).enumerate() {
+        if chunk_idx % 20 == 0 || chunk_idx == total_chunks - 1 {
+            println!(
+                "Processing UFSCUSTOM chunk {}/{} ({} records)",
+                chunk_idx + 1,
+                total_chunks,
+                chunk.len()
+            );
+        }
 
-            // 사전 할당된 벡터로 메모리 할당 최적화
-            let len = chunk.len();
-            let mut opcode_vec = Vec::with_capacity(len);
-            let mut lba_vec = Vec::with_capacity(len);
-            let mut size_vec = Vec::with_capacity(len);
-            let mut start_time_vec = Vec::with_capacity(len);
-            let mut end_time_vec = Vec::with_capacity(len);
-            let mut dtoc_vec = Vec::with_capacity(len);
-            let mut start_qd_vec = Vec::with_capacity(len);
-            let mut end_qd_vec = Vec::with_capacity(len);
-            let mut ctoc_vec = Vec::with_capacity(len);
-            let mut ctod_vec = Vec::with_capacity(len);
-            let mut continuous_vec = Vec::with_capacity(len);
+        let len = chunk.len();
+        let mut opcode_vec = Vec::with_capacity(len);
+        let mut lba_vec = Vec::with_capacity(len);
+        let mut size_vec = Vec::with_capacity(len);
+        let mut start_time_vec = Vec::with_capacity(len);
+        let mut end_time_vec = Vec::with_capacity(len);
+        let mut dtoc_vec = Vec::with_capacity(len);
+        let mut start_qd_vec = Vec::with_capacity(len);
+        let mut end_qd_vec = Vec::with_capacity(len);
+        let mut ctoc_vec = Vec::with_capacity(len);
+        let mut ctod_vec = Vec::with_capacity(len);
+        let mut continuous_vec = Vec::with_capacity(len);
 
-            // 단일 루프로 모든 데이터 추출
-            for t in chunk {
-                opcode_vec.push(t.opcode.as_str());
-                lba_vec.push(t.lba);
-                size_vec.push(t.size);
-                start_time_vec.push(t.start_time);
-                end_time_vec.push(t.end_time);
-                dtoc_vec.push(t.dtoc);
-                start_qd_vec.push(t.start_qd);
-                end_qd_vec.push(t.end_qd);
-                ctoc_vec.push(t.ctoc);
-                ctod_vec.push(t.ctod);
-                continuous_vec.push(t.continuous);
-            }
+        for t in chunk {
+            opcode_vec.push(t.opcode.as_str());
+            lba_vec.push(t.lba);
+            size_vec.push(t.size);
+            start_time_vec.push(t.start_time);
+            end_time_vec.push(t.end_time);
+            dtoc_vec.push(t.dtoc);
+            start_qd_vec.push(t.start_qd);
+            end_qd_vec.push(t.end_qd);
+            ctoc_vec.push(t.ctoc);
+            ctod_vec.push(t.ctod);
+            continuous_vec.push(t.continuous);
+        }
 
-            let columns: Vec<ArrayRef> = vec![
-                Arc::new(StringArray::from(opcode_vec)),
-                Arc::new(UInt64Array::from(lba_vec)),
-                Arc::new(UInt32Array::from(size_vec)),
-                Arc::new(Float64Array::from(start_time_vec)),
-                Arc::new(Float64Array::from(end_time_vec)),
-                Arc::new(Float64Array::from(dtoc_vec)),
-                Arc::new(UInt32Array::from(start_qd_vec)), // 시작 QD
-                Arc::new(UInt32Array::from(end_qd_vec)),   // 종료 QD
-                Arc::new(Float64Array::from(ctoc_vec)),
-                Arc::new(Float64Array::from(ctod_vec)),
-                Arc::new(BooleanArray::from(continuous_vec)),
-            ];
+        let columns: Vec<ArrayRef> = vec![
+            Arc::new(StringArray::from(opcode_vec)),
+            Arc::new(UInt64Array::from(lba_vec)),
+            Arc::new(UInt32Array::from(size_vec)),
+            Arc::new(Float64Array::from(start_time_vec)),
+            Arc::new(Float64Array::from(end_time_vec)),
+            Arc::new(Float64Array::from(dtoc_vec)),
+            Arc::new(UInt32Array::from(start_qd_vec)),
+            Arc::new(UInt32Array::from(end_qd_vec)),
+            Arc::new(Float64Array::from(ctoc_vec)),
+            Arc::new(Float64Array::from(ctod_vec)),
+            Arc::new(BooleanArray::from(continuous_vec)),
+        ];
 
-            RecordBatch::try_new(schema.clone(), columns)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // 순차적으로 배치 작성
-    for batch in batches {
+        let batch = RecordBatch::try_new(schema.clone(), columns)?;
         writer.write(&batch)?;
     }
 

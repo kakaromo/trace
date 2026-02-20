@@ -2,6 +2,194 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{self, BufRead};
 
+/// 필터링 가능한 트레이스 데이터를 위한 트레이트
+pub trait Filterable {
+    /// 시간 필터 매칭 (단일 시점 또는 범위)
+    fn matches_time(&self, filter: &FilterOptions) -> bool;
+    /// 섹터/LBA 필터 매칭
+    fn matches_sector(&self, filter: &FilterOptions) -> bool;
+    fn dtoc(&self) -> f64;
+    fn ctoc(&self) -> f64;
+    fn ctod(&self) -> f64;
+    fn qd(&self) -> u32;
+    /// CPU 번호 (없는 경우 None 반환)
+    fn cpu(&self) -> Option<u32>;
+}
+
+impl Filterable for crate::Block {
+    fn matches_time(&self, filter: &FilterOptions) -> bool {
+        match_time_single(self.time, filter)
+    }
+    fn matches_sector(&self, filter: &FilterOptions) -> bool {
+        match_sector_range(self.sector, self.sector + self.size as u64, filter)
+    }
+    fn dtoc(&self) -> f64 { self.dtoc }
+    fn ctoc(&self) -> f64 { self.ctoc }
+    fn ctod(&self) -> f64 { self.ctod }
+    fn qd(&self) -> u32 { self.qd }
+    fn cpu(&self) -> Option<u32> { Some(self.cpu) }
+}
+
+impl Filterable for crate::UFS {
+    fn matches_time(&self, filter: &FilterOptions) -> bool {
+        match_time_single(self.time, filter)
+    }
+    fn matches_sector(&self, filter: &FilterOptions) -> bool {
+        let ufs_filter = filter.to_ufs_lba();
+        match_sector_range(self.lba, self.lba + self.size as u64 / 4096, &ufs_filter)
+    }
+    fn dtoc(&self) -> f64 { self.dtoc }
+    fn ctoc(&self) -> f64 { self.ctoc }
+    fn ctod(&self) -> f64 { self.ctod }
+    fn qd(&self) -> u32 { self.qd }
+    fn cpu(&self) -> Option<u32> { Some(self.cpu) }
+}
+
+impl Filterable for crate::UFSCUSTOM {
+    fn matches_time(&self, filter: &FilterOptions) -> bool {
+        match_time_range(self.start_time, self.end_time, filter)
+    }
+    fn matches_sector(&self, filter: &FilterOptions) -> bool {
+        let ufs_filter = filter.to_ufs_lba();
+        match_sector_range(self.lba, self.lba + self.size as u64 / 4096, &ufs_filter)
+    }
+    fn dtoc(&self) -> f64 { self.dtoc }
+    fn ctoc(&self) -> f64 { self.ctoc }
+    fn ctod(&self) -> f64 { self.ctod }
+    fn qd(&self) -> u32 { self.start_qd }
+    fn cpu(&self) -> Option<u32> { None }
+}
+
+/// 단일 시점 time에 대한 시간 필터 매칭
+#[inline]
+fn match_time_single(time: f64, filter: &FilterOptions) -> bool {
+    if !filter.is_time_filter_active() {
+        return true;
+    }
+    let start_check = filter.start_time > 0.0;
+    let end_check = filter.end_time > 0.0;
+    if start_check && !end_check {
+        time >= filter.start_time
+    } else if !start_check && end_check {
+        time >= 0.0 && time <= filter.end_time
+    } else if start_check && end_check {
+        time >= filter.start_time && time <= filter.end_time
+    } else {
+        true
+    }
+}
+
+/// 시간 범위(start_time~end_time)에 대한 시간 필터 매칭
+#[inline]
+fn match_time_range(start_time: f64, end_time: f64, filter: &FilterOptions) -> bool {
+    if !filter.is_time_filter_active() {
+        return true;
+    }
+    let start_check = filter.start_time > 0.0;
+    let end_check = filter.end_time > 0.0;
+    if start_check && !end_check {
+        end_time >= filter.start_time
+    } else if !start_check && end_check {
+        start_time <= filter.end_time
+    } else if start_check && end_check {
+        !(end_time < filter.start_time || start_time > filter.end_time)
+    } else {
+        true
+    }
+}
+
+/// 섹터/LBA 범위에 대한 필터 매칭
+#[inline]
+fn match_sector_range(start: u64, end: u64, filter: &FilterOptions) -> bool {
+    if !filter.is_sector_filter_active() {
+        return true;
+    }
+    let start_check = filter.start_sector > 0;
+    let end_check = filter.end_sector > 0;
+    if start_check && !end_check {
+        end >= filter.start_sector
+    } else if !start_check && end_check {
+        start <= filter.end_sector
+    } else if start_check && end_check {
+        !(end < filter.start_sector || start > filter.end_sector)
+    } else {
+        true
+    }
+}
+
+/// min/max 범위 필터 헬퍼
+#[inline]
+fn match_range_f64(value: f64, min: f64, max: f64) -> bool {
+    let min_check = min > 0.0;
+    let max_check = max > 0.0;
+    if min_check && !max_check {
+        value >= min
+    } else if !min_check && max_check {
+        value >= 0.0 && value <= max
+    } else if min_check && max_check {
+        value >= min && value <= max
+    } else {
+        true
+    }
+}
+
+#[inline]
+fn match_range_u32(value: u32, min: u32, max: u32) -> bool {
+    let min_check = min > 0;
+    let max_check = max > 0;
+    if min_check && !max_check {
+        value >= min
+    } else if !min_check && max_check {
+        value <= max
+    } else if min_check && max_check {
+        value >= min && value <= max
+    } else {
+        true
+    }
+}
+
+/// 제네릭 필터 함수: Filterable 트레이트를 구현하는 모든 타입에 적용
+pub fn filter_data<T: Filterable>(data: Vec<T>, filter: &FilterOptions) -> Vec<T> {
+    // cpu_set 캐시가 없으면 구축
+    let filter = if filter.is_cpu_filter_active() && filter.cpu_set.is_none() {
+        let mut f = filter.clone();
+        f.build_cpu_set();
+        std::borrow::Cow::Owned(f)
+    } else {
+        std::borrow::Cow::Borrowed(filter)
+    };
+    let filter = filter.as_ref();
+
+    // 필터가 활성화되지 않은 경우 원본 데이터 반환
+    if !filter.is_time_filter_active()
+        && !filter.is_sector_filter_active()
+        && !filter.is_dtoc_filter_active()
+        && !filter.is_ctoc_filter_active()
+        && !filter.is_ctod_filter_active()
+        && !filter.is_qd_filter_active()
+        && !filter.is_cpu_filter_active()
+    {
+        return data;
+    }
+
+    data.into_iter()
+        .filter(|item| {
+            item.matches_time(filter)
+                && item.matches_sector(filter)
+                && (!filter.is_dtoc_filter_active()
+                    || match_range_f64(item.dtoc(), filter.min_dtoc, filter.max_dtoc))
+                && (!filter.is_ctoc_filter_active()
+                    || match_range_f64(item.ctoc(), filter.min_ctoc, filter.max_ctoc))
+                && (!filter.is_ctod_filter_active()
+                    || match_range_f64(item.ctod(), filter.min_ctod, filter.max_ctod))
+                && (!filter.is_qd_filter_active()
+                    || match_range_u32(item.qd(), filter.min_qd, filter.max_qd))
+                && (!filter.is_cpu_filter_active()
+                    || item.cpu().is_none_or(|cpu| filter.cpu_matches(cpu)))
+        })
+        .collect()
+}
+
 // 필터링 옵션을 저장할 구조체 정의
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterOptions {
@@ -270,543 +458,18 @@ pub fn filter_block_data(
     block_data: Vec<crate::Block>,
     filter: &FilterOptions,
 ) -> Vec<crate::Block> {
-    // cpu_set 캐시가 없으면 구축
-    let filter = if filter.is_cpu_filter_active() && filter.cpu_set.is_none() {
-        let mut f = filter.clone();
-        f.build_cpu_set();
-        std::borrow::Cow::Owned(f)
-    } else {
-        std::borrow::Cow::Borrowed(filter)
-    };
-    let filter = filter.as_ref();
-    // 필터가 활성화되지 않은 경우 원본 데이터 반환
-    if !filter.is_time_filter_active()
-        && !filter.is_sector_filter_active()
-        && !filter.is_dtoc_filter_active()
-        && !filter.is_ctoc_filter_active()
-        && !filter.is_ctod_filter_active()
-        && !filter.is_qd_filter_active()
-        && !filter.is_cpu_filter_active()
-    {
-        return block_data;
-    }
-
-    block_data
-        .into_iter()
-        .filter(|item| {
-            // 시간 필터 적용
-            let time_match = if filter.is_time_filter_active() {
-                let start_check = filter.start_time > 0.0;
-                let end_check = filter.end_time > 0.0;
-
-                // start만 설정된 경우
-                if start_check && !end_check {
-                    item.time >= filter.start_time
-                }
-                // end만 설정된 경우: 0부터 end까지 허용
-                else if !start_check && end_check {
-                    item.time >= 0.0 && item.time <= filter.end_time
-                }
-                // 둘 다 설정된 경우
-                else if start_check && end_check {
-                    item.time >= filter.start_time && item.time <= filter.end_time
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // 섹터 필터 적용
-            let sector_match = if filter.is_sector_filter_active() {
-                let start_check = filter.start_sector > 0;
-                let end_check = filter.end_sector > 0;
-                let item_end_sector = item.sector + item.size as u64;
-
-                // start만 설정된 경우
-                if start_check && !end_check {
-                    // item의 섹터 범위가 filter.start_sector와 겹치는지 확인
-                    item_end_sector >= filter.start_sector
-                }
-                // end만 설정된 경우: 0부터 end까지 허용
-                else if !start_check && end_check {
-                    // item의 섹터 범위가 0부터 filter.end_sector 사이에 있는지 확인
-                    item.sector <= filter.end_sector
-                }
-                // 둘 다 설정된 경우 - 범위가 겹치는지 확인
-                else if start_check && end_check {
-                    !(item_end_sector < filter.start_sector || item.sector > filter.end_sector)
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // DTOC 필터 적용
-            let dtoc_match = if filter.is_dtoc_filter_active() {
-                let min_check = filter.min_dtoc > 0.0;
-                let max_check = filter.max_dtoc > 0.0;
-
-                // min만 설정된 경우
-                if min_check && !max_check {
-                    item.dtoc >= filter.min_dtoc
-                }
-                // max만 설정된 경우: 0부터 max까지 허용
-                else if !min_check && max_check {
-                    item.dtoc >= 0.0 && item.dtoc <= filter.max_dtoc
-                }
-                // 둘 다 설정된 경우
-                else if min_check && max_check {
-                    item.dtoc >= filter.min_dtoc && item.dtoc <= filter.max_dtoc
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // CTOC 필터 적용
-            let ctoc_match = if filter.is_ctoc_filter_active() {
-                let min_check = filter.min_ctoc > 0.0;
-                let max_check = filter.max_ctoc > 0.0;
-
-                // min만 설정된 경우
-                if min_check && !max_check {
-                    item.ctoc >= filter.min_ctoc
-                }
-                // max만 설정된 경우: 0부터 max까지 허용
-                else if !min_check && max_check {
-                    item.ctoc >= 0.0 && item.ctoc <= filter.max_ctoc
-                }
-                // 둘 다 설정된 경우
-                else if min_check && max_check {
-                    item.ctoc >= filter.min_ctoc && item.ctoc <= filter.max_ctoc
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // CTOD 필터 적용
-            let ctod_match = if filter.is_ctod_filter_active() {
-                let min_check = filter.min_ctod > 0.0;
-                let max_check = filter.max_ctod > 0.0;
-
-                // min만 설정된 경우
-                if min_check && !max_check {
-                    item.ctod >= filter.min_ctod
-                }
-                // max만 설정된 경우: 0부터 max까지 허용
-                else if !min_check && max_check {
-                    item.ctod >= 0.0 && item.ctod <= filter.max_ctod
-                }
-                // 둘 다 설정된 경우
-                else if min_check && max_check {
-                    item.ctod >= filter.min_ctod && item.ctod <= filter.max_ctod
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // QD 필터 적용
-            let qd_match = if filter.is_qd_filter_active() {
-                let min_check = filter.min_qd > 0;
-                let max_check = filter.max_qd > 0;
-
-                // min만 설정된 경우
-                if min_check && !max_check {
-                    item.qd >= filter.min_qd
-                }
-                // max만 설정된 경우: 0부터 max까지 허용
-                else if !min_check && max_check {
-                    item.qd <= filter.max_qd
-                }
-                // 둘 다 설정된 경우
-                else if min_check && max_check {
-                    item.qd >= filter.min_qd && item.qd <= filter.max_qd
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // CPU 필터 적용
-            let cpu_match = if filter.is_cpu_filter_active() {
-                filter.cpu_matches(item.cpu)
-            } else {
-                true
-            };
-
-            // 모든 필터 조건을 만족해야 함
-            time_match
-                && sector_match
-                && dtoc_match
-                && ctoc_match
-                && ctod_match
-                && qd_match
-                && cpu_match
-        })
-        .collect()
+    filter_data(block_data, filter)
 }
 
-// UFS 데이터 필터링 함수 (4KB LBA로 변환 적용)
+// UFS 데이터 필터링 함수
 pub fn filter_ufs_data(ufs_data: Vec<crate::UFS>, filter: &FilterOptions) -> Vec<crate::UFS> {
-    // cpu_set 캐시가 없으면 구축
-    let filter = if filter.is_cpu_filter_active() && filter.cpu_set.is_none() {
-        let mut f = filter.clone();
-        f.build_cpu_set();
-        std::borrow::Cow::Owned(f)
-    } else {
-        std::borrow::Cow::Borrowed(filter)
-    };
-    let filter = filter.as_ref();
-
-    // 필터가 활성화되지 않은 경우 원본 데이터 반환
-    if !filter.is_time_filter_active()
-        && !filter.is_sector_filter_active()
-        && !filter.is_dtoc_filter_active()
-        && !filter.is_ctoc_filter_active()
-        && !filter.is_ctod_filter_active()
-        && !filter.is_qd_filter_active()
-        && !filter.is_cpu_filter_active()
-    {
-        return ufs_data;
-    }
-
-    // UFS LBA로 변환된 필터 옵션 사용
-    let ufs_filter = filter.to_ufs_lba();
-
-    ufs_data
-        .into_iter()
-        .filter(|item| {
-            // 시간 필터 적용
-            let time_match = if filter.is_time_filter_active() {
-                let start_check = filter.start_time > 0.0;
-                let end_check = filter.end_time > 0.0;
-
-                // start만 설정된 경우
-                if start_check && !end_check {
-                    item.time >= filter.start_time
-                }
-                // end만 설정된 경우: 0부터 end까지 허용
-                else if !start_check && end_check {
-                    item.time >= 0.0 && item.time <= filter.end_time
-                }
-                // 둘 다 설정된 경우
-                else if start_check && end_check {
-                    item.time >= filter.start_time && item.time <= filter.end_time
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // LBA 필터 적용
-            let lba_match = if ufs_filter.is_sector_filter_active() {
-                let start_check = ufs_filter.start_sector > 0;
-                let end_check = ufs_filter.end_sector > 0;
-                let item_end_lba = item.lba + item.size as u64 / 4096;
-
-                // start만 설정된 경우
-                if start_check && !end_check {
-                    // item의 LBA 범위가 filter.start_sector와 겹치는지 확인
-                    item_end_lba >= ufs_filter.start_sector
-                }
-                // end만 설정된 경우: 0부터 end까지 허용
-                else if !start_check && end_check {
-                    // item의 LBA 범위가 0부터 filter.end_sector 사이에 있는지 확인
-                    item.lba <= ufs_filter.end_sector
-                }
-                // 둘 다 설정된 경우 - 범위가 겹치는지 확인
-                else if start_check && end_check {
-                    !(item_end_lba < ufs_filter.start_sector || item.lba > ufs_filter.end_sector)
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // DTOC 필터 적용
-            let dtoc_match = if filter.is_dtoc_filter_active() {
-                let min_check = filter.min_dtoc > 0.0;
-                let max_check = filter.max_dtoc > 0.0;
-
-                // min만 설정된 경우
-                if min_check && !max_check {
-                    item.dtoc >= filter.min_dtoc
-                }
-                // max만 설정된 경우: 0부터 max까지 허용
-                else if !min_check && max_check {
-                    item.dtoc >= 0.0 && item.dtoc <= filter.max_dtoc
-                }
-                // 둘 다 설정된 경우
-                else if min_check && max_check {
-                    item.dtoc >= filter.min_dtoc && item.dtoc <= filter.max_dtoc
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // CTOC 필터 적용
-            let ctoc_match = if filter.is_ctoc_filter_active() {
-                let min_check = filter.min_ctoc > 0.0;
-                let max_check = filter.max_ctoc > 0.0;
-
-                // min만 설정된 경우
-                if min_check && !max_check {
-                    item.ctoc >= filter.min_ctoc
-                }
-                // max만 설정된 경우: 0부터 max까지 허용
-                else if !min_check && max_check {
-                    item.ctoc >= 0.0 && item.ctoc <= filter.max_ctoc
-                }
-                // 둘 다 설정된 경우
-                else if min_check && max_check {
-                    item.ctoc >= filter.min_ctoc && item.ctoc <= filter.max_ctoc
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // CTOD 필터 적용
-            let ctod_match = if filter.is_ctod_filter_active() {
-                let min_check = filter.min_ctod > 0.0;
-                let max_check = filter.max_ctod > 0.0;
-
-                // min만 설정된 경우
-                if min_check && !max_check {
-                    item.ctod >= filter.min_ctod
-                }
-                // max만 설정된 경우: 0부터 max까지 허용
-                else if !min_check && max_check {
-                    item.ctod >= 0.0 && item.ctod <= filter.max_ctod
-                }
-                // 둘 다 설정된 경우
-                else if min_check && max_check {
-                    item.ctod >= filter.min_ctod && item.ctod <= filter.max_ctod
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // QD 필터 적용
-            let qd_match = if filter.is_qd_filter_active() {
-                let min_check = filter.min_qd > 0;
-                let max_check = filter.max_qd > 0;
-
-                // min만 설정된 경우
-                if min_check && !max_check {
-                    item.qd >= filter.min_qd
-                }
-                // max만 설정된 경우: 0부터 max까지 허용
-                else if !min_check && max_check {
-                    item.qd <= filter.max_qd
-                }
-                // 둘 다 설정된 경우
-                else if min_check && max_check {
-                    item.qd >= filter.min_qd && item.qd <= filter.max_qd
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // CPU 필터 적용
-            let cpu_match = if filter.is_cpu_filter_active() {
-                filter.cpu_matches(item.cpu)
-            } else {
-                true
-            };
-
-            // 모든 필터 조건을 만족해야 함
-            time_match
-                && lba_match
-                && dtoc_match
-                && ctoc_match
-                && ctod_match
-                && qd_match
-                && cpu_match
-        })
-        .collect()
+    filter_data(ufs_data, filter)
 }
 
-// UFSCUSTOM 데이터 필터링 함수 (start_lba 기준, dtoc만 적용)
+// UFSCUSTOM 데이터 필터링 함수
 pub fn filter_ufscustom_data(
     ufscustom_data: Vec<crate::UFSCUSTOM>,
     filter: &FilterOptions,
 ) -> Vec<crate::UFSCUSTOM> {
-    // cpu_set 캐시가 없으면 구축
-    let filter = if filter.is_cpu_filter_active() && filter.cpu_set.is_none() {
-        let mut f = filter.clone();
-        f.build_cpu_set();
-        std::borrow::Cow::Owned(f)
-    } else {
-        std::borrow::Cow::Borrowed(filter)
-    };
-    let filter = filter.as_ref();
-
-    // 필터가 활성화되지 않은 경우 원본 데이터 반환
-    if !filter.is_time_filter_active()
-        && !filter.is_sector_filter_active()
-        && !filter.is_dtoc_filter_active()
-        && !filter.is_ctoc_filter_active()
-        && !filter.is_ctod_filter_active()
-        && !filter.is_qd_filter_active()
-        && !filter.is_cpu_filter_active()
-    {
-        return ufscustom_data;
-    }
-
-    // UFS LBA로 변환된 필터 옵션 사용
-    let ufs_filter = filter.to_ufs_lba();
-
-    ufscustom_data
-        .into_iter()
-        .filter(|item| {
-            // 시간 필터 적용 (start_time과 end_time 사용)
-            let time_match = if filter.is_time_filter_active() {
-                let start_check = filter.start_time > 0.0;
-                let end_check = filter.end_time > 0.0;
-
-                // start만 설정된 경우
-                if start_check && !end_check {
-                    // item.end_time이 filter.start_time보다 크거나 같아야 함
-                    item.end_time >= filter.start_time
-                }
-                // end만 설정된 경우: 0부터 end까지 허용
-                else if !start_check && end_check {
-                    // item.start_time이 filter.end_time보다 작거나 같아야 함
-                    item.start_time <= filter.end_time
-                }
-                // 둘 다 설정된 경우 - 범위가 겹치는지 확인
-                else if start_check && end_check {
-                    !(item.end_time < filter.start_time || item.start_time > filter.end_time)
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // LBA 필터 적용 (start_lba 기준)
-            let lba_match = if ufs_filter.is_sector_filter_active() {
-                let start_check = ufs_filter.start_sector > 0;
-                let end_check = ufs_filter.end_sector > 0;
-                let item_end_lba = item.lba + item.size as u64 / 4096;
-
-                // start만 설정된 경우
-                if start_check && !end_check {
-                    // item의 LBA 범위가 filter.start_sector와 겹치는지 확인
-                    item_end_lba >= ufs_filter.start_sector
-                }
-                // end만 설정된 경우: 0부터 end까지 허용
-                else if !start_check && end_check {
-                    // item의 LBA 범위가 0부터 filter.end_sector 사이에 있는지 확인
-                    item.lba <= ufs_filter.end_sector
-                }
-                // 둘 다 설정된 경우 - 범위가 겹치는지 확인
-                else if start_check && end_check {
-                    !(item_end_lba < ufs_filter.start_sector || item.lba > ufs_filter.end_sector)
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // DTOC 필터 적용
-            let dtoc_match = if filter.is_dtoc_filter_active() {
-                let min_check = filter.min_dtoc > 0.0;
-                let max_check = filter.max_dtoc > 0.0;
-
-                // min만 설정된 경우
-                if min_check && !max_check {
-                    item.dtoc >= filter.min_dtoc
-                }
-                // max만 설정된 경우: 0부터 max까지 허용
-                else if !min_check && max_check {
-                    item.dtoc >= 0.0 && item.dtoc <= filter.max_dtoc
-                }
-                // 둘 다 설정된 경우
-                else if min_check && max_check {
-                    item.dtoc >= filter.min_dtoc && item.dtoc <= filter.max_dtoc
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // CTOC 필터 적용 (새로 추가된 필드)
-            let ctoc_match = if filter.is_ctoc_filter_active() {
-                let min_check = filter.min_ctoc > 0.0;
-                let max_check = filter.max_ctoc > 0.0;
-
-                if min_check && !max_check {
-                    item.ctoc >= filter.min_ctoc
-                } else if !min_check && max_check {
-                    item.ctoc >= 0.0 && item.ctoc <= filter.max_ctoc
-                } else if min_check && max_check {
-                    item.ctoc >= filter.min_ctoc && item.ctoc <= filter.max_ctoc
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // CTOD 필터 적용 (새로 추가된 필드)
-            let ctod_match = if filter.is_ctod_filter_active() {
-                let min_check = filter.min_ctod > 0.0;
-                let max_check = filter.max_ctod > 0.0;
-
-                if min_check && !max_check {
-                    item.ctod >= filter.min_ctod
-                } else if !min_check && max_check {
-                    item.ctod >= 0.0 && item.ctod <= filter.max_ctod
-                } else if min_check && max_check {
-                    item.ctod >= filter.min_ctod && item.ctod <= filter.max_ctod
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // QD 필터 적용 (새로 추가된 필드)
-            let qd_match = if filter.is_qd_filter_active() {
-                let min_check = filter.min_qd > 0;
-                let max_check = filter.max_qd > 0;
-
-                if min_check && !max_check {
-                    item.start_qd >= filter.min_qd
-                } else if !min_check && max_check {
-                    item.start_qd <= filter.max_qd
-                } else if min_check && max_check {
-                    item.start_qd >= filter.min_qd && item.start_qd <= filter.max_qd
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-
-            // 모든 필터 조건을 만족해야 함 (UFSCUSTOM은 CPU 필드가 없음)
-            time_match && lba_match && dtoc_match && ctoc_match && ctod_match && qd_match
-        })
-        .collect()
+    filter_data(ufscustom_data, filter)
 }

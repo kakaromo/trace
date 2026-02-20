@@ -26,7 +26,7 @@ fn process_chunk_streaming(
     let mut ufscustom_count = 0;
 
     for line in chunk {
-        match log_common::process_line(line) {
+        match log_common::process_line_optimized(line) {
             Some((Some(ufs), None, None)) => {
                 // Serialize to Bincode format
                 bincode::encode_into_std_write(&ufs, &mut *ufs_writer, bincode::config::standard())
@@ -73,7 +73,7 @@ fn process_lines(lines: Vec<String>) -> (Vec<UFS>, Vec<Block>, Vec<UFSCUSTOM>) {
     let mut ufscustom_items = Vec::new();
 
     for line in lines {
-        match log_common::process_line(&line) {
+        match log_common::process_line_optimized(&line) {
             Some((Some(ufs), None, None)) => ufs_items.push(ufs),
             Some((None, Some(block), None)) => block_items.push(block),
             Some((None, None, Some(ufscustom))) => ufscustom_items.push(ufscustom),

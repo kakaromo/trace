@@ -13,6 +13,17 @@ use std::io;
 use std::sync::Arc;
 use std::time::Instant;
 
+// action 문자열을 정렬용 숫자로 변환 (문자열 비교 제거)
+// complete_rsp=0 (우선), send_req=1, 기타=2
+#[inline]
+fn action_sort_key(action: &str) -> u8 {
+    match action.as_bytes().first() {
+        Some(b'c') => 0, // complete_rsp
+        Some(b's') => 1, // send_req
+        _ => 2,
+    }
+}
+
 // SIMD-optimized line splitting function
 fn find_line_boundaries(data: &[u8]) -> Vec<usize> {
     let mut boundaries = Vec::new();
@@ -235,15 +246,10 @@ pub fn parse_log_file_high_perf(
     // 하이퍼프 모드에서도 안정적 정렬 적용 (stable sort)
     ufs_traces.sort_by(|a, b| match a.time.partial_cmp(&b.time) {
         Some(std::cmp::Ordering::Equal) => {
-            // 타임스탬프가 동일할 경우:
-            // 1. complete_rsp가 send_req보다 우선 (QD를 먼저 낮춤)
-            if a.action == "complete_rsp" && b.action == "send_req" {
-                std::cmp::Ordering::Less
-            } else if a.action == "send_req" && b.action == "complete_rsp" {
-                std::cmp::Ordering::Greater
-            } else {
-                // 동일 액션인 경우 태그로 정렬
-                a.tag.cmp(&b.tag)
+            // action을 숫자로 변환하여 비교 (문자열 비교 제거)
+            match action_sort_key(&a.action).cmp(&action_sort_key(&b.action)) {
+                std::cmp::Ordering::Equal => a.tag.cmp(&b.tag),
+                ordering => ordering,
             }
         }
         Some(ordering) => ordering,
@@ -554,15 +560,10 @@ pub fn parse_log_file_streaming(
     // 스트리밍 모드에서 안정적 정렬 적용 (stable sort)
     ufs_traces.sort_by(|a, b| match a.time.partial_cmp(&b.time) {
         Some(std::cmp::Ordering::Equal) => {
-            // 타임스탬프가 동일할 경우:
-            // 1. complete_rsp가 send_req보다 우선 (QD를 먼저 낮춤)
-            if a.action == "complete_rsp" && b.action == "send_req" {
-                std::cmp::Ordering::Less
-            } else if a.action == "send_req" && b.action == "complete_rsp" {
-                std::cmp::Ordering::Greater
-            } else {
-                // 동일 액션인 경우 태그로 정렬
-                a.tag.cmp(&b.tag)
+            // action을 숫자로 변환하여 비교 (문자열 비교 제거)
+            match action_sort_key(&a.action).cmp(&action_sort_key(&b.action)) {
+                std::cmp::Ordering::Equal => a.tag.cmp(&b.tag),
+                ordering => ordering,
             }
         }
         Some(ordering) => ordering,
