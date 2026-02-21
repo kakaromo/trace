@@ -169,7 +169,7 @@ pub fn parse_blktrace_csv_event(line: &str) -> Result<Block, &'static str> {
     }
 }
 
-// Parse UFSCUSTOM event from a line
+// Parse UFSCUSTOM event from a line (manual CSV parsing for performance)
 pub fn parse_ufscustom_event(line: &str) -> Result<UFSCUSTOM, &'static str> {
     // Skip header line
     if line.starts_with("opcode,lba,size,start_time,end_time") {
@@ -181,44 +181,55 @@ pub fn parse_ufscustom_event(line: &str) -> Result<UFSCUSTOM, &'static str> {
         return Err("Comment or empty line");
     }
 
-    if let Some(caps) = UFSCUSTOM_RE.captures(line) {
-        // Use string references to reduce copying
-        let opcode = caps["opcode"].to_string().into_boxed_str();
-        let raw_lba: u64 = caps["lba"].parse().unwrap_or(0);
-        let size: u32 = caps["size"].parse().unwrap_or(0);
-        let start_time: f64 = caps["start_time"].parse().unwrap_or(0.0);
-        let end_time: f64 = caps["end_time"].parse().unwrap_or(0.0);
-
-        // Calculate dtoc (in milliseconds)
-        let dtoc = (end_time - start_time) * 1000.0;
-
-        // Debug 또는 비정상적으로 큰 LBA 값은 0으로 처리
-        let lba = if raw_lba == UFS_DEBUG_LBA || raw_lba > MAX_VALID_UFS_LBA {
-            0
-        } else {
-            raw_lba
-        };
-
-        let ufscustom = UFSCUSTOM {
-            opcode,
-            lba,
-            size,
-            start_time,
-            end_time,
-            dtoc,
-            // 새 필드들 초기값으로 설정 (후처리에서 계산됨)
-            start_qd: 0, // 요청 시작 시점의 QD
-            end_qd: 0,   // 요청 완료 시점의 QD
-            ctoc: 0.0,
-            ctod: 0.0,
-            continuous: false,
-            aligned: crate::utils::is_block_aligned(lba),
-        };
-
-        Ok(ufscustom)
-    } else {
-        Err("Line does not match UFSCUSTOM pattern")
+    // Must start with "0x" for opcode
+    if !line.starts_with("0x") {
+        return Err("Line does not match UFSCUSTOM pattern");
     }
+
+    // Manual CSV split: opcode,lba,size,start_time,end_time
+    let mut fields = line.splitn(5, ',');
+
+    let opcode_str = fields.next().ok_or("Missing opcode")?;
+    let lba_str = fields.next().ok_or("Missing lba")?;
+    let size_str = fields.next().ok_or("Missing size")?;
+    let start_time_str = fields.next().ok_or("Missing start_time")?;
+    let end_time_str = fields.next().ok_or("Missing end_time")?;
+
+    // Validate opcode format (0x followed by hex digits)
+    if opcode_str.len() < 3 || !opcode_str[2..].bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid opcode format");
+    }
+
+    let opcode: Box<str> = Box::from(opcode_str);
+    let raw_lba: u64 = lba_str.parse().map_err(|_| "Invalid lba")?;
+    let size: u32 = size_str.parse().map_err(|_| "Invalid size")?;
+    let start_time: f64 = start_time_str.parse().map_err(|_| "Invalid start_time")?;
+    let end_time: f64 = end_time_str.parse().map_err(|_| "Invalid end_time")?;
+
+    // Calculate dtoc (in milliseconds)
+    let dtoc = (end_time - start_time) * 1000.0;
+
+    // Debug 또는 비정상적으로 큰 LBA 값은 0으로 처리
+    let lba = if raw_lba == UFS_DEBUG_LBA || raw_lba > MAX_VALID_UFS_LBA {
+        0
+    } else {
+        raw_lba
+    };
+
+    Ok(UFSCUSTOM {
+        opcode,
+        lba,
+        size,
+        start_time,
+        end_time,
+        dtoc,
+        start_qd: 0,
+        end_qd: 0,
+        ctoc: 0.0,
+        ctod: 0.0,
+        continuous: false,
+        aligned: crate::utils::is_block_aligned(lba),
+    })
 }
 
 // Process a line and return parsed data structures
@@ -263,7 +274,11 @@ pub fn categorize_line_fast(line: &str) -> LineCategory {
         return LineCategory::Block;
     }
 
-    if UFSCUSTOM_QUICK_CHECK.is_match(line) {
+    // UFSCUSTOM: starts with "0x" followed by hex digit and contains comma
+    if line.starts_with("0x")
+        && line.as_bytes().get(2).map_or(false, |b| b.is_ascii_hexdigit())
+        && memchr::memchr(b',', line.as_bytes()).is_some()
+    {
         return LineCategory::UFSCustom;
     }
 
